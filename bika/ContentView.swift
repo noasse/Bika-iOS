@@ -1,24 +1,27 @@
-//
-//  ContentView.swift
-//  bika
-//
-//  Created by noasse on 3/17/26.
-//
-
 import SwiftUI
 
 struct ContentView: View {
-    var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
-        }
-        .padding()
-    }
-}
+    @Environment(AuthViewModel.self) private var authVM
 
-#Preview {
-    ContentView()
+    var body: some View {
+        Group {
+            if authVM.isAuthenticated {
+                MainTabView()
+            } else if authVM.isCheckingToken {
+                // Brief splash while checking saved token
+                ZStack {
+                    Color(.systemBackground).ignoresSafeArea()
+                    VStack(spacing: 12) {
+                        Image(systemName: "book.pages")
+                            .font(.system(size: 60))
+                            .foregroundStyle(Color.accentPink)
+                        ProgressView()
+                    }
+                }
+            } else {
+                LoginView()
+            }
+        }
+        .task { await authVM.checkToken() }
+    }
 }
