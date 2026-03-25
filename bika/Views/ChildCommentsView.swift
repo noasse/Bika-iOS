@@ -3,8 +3,6 @@ import SwiftUI
 struct ChildCommentsView: View {
     let parentComment: Comment
     @State private var viewModel: ChildCommentsViewModel
-    @State private var showPagination = false
-    @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var selectedUser: Creator?
     @Environment(\.colorScheme) private var colorScheme
 
@@ -46,35 +44,23 @@ struct ChildCommentsView: View {
                                     selectedUser = comment.user
                                 }
                             )
+                            .onAppear {
+                                if comment.id == viewModel.comments.last?.id {
+                                    Task { await viewModel.loadMore() }
+                                }
+                            }
+                        }
+
+                        // Loading indicator at bottom
+                        if viewModel.isLoading && !viewModel.comments.isEmpty {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding()
                         }
                     }
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 80)
-            }
-            .scrollPosition($scrollPosition)
-            .onScrollGeometryChange(for: Bool.self) { geo in
-                geo.contentOffset.y + geo.visibleRect.height >= geo.contentSize.height - 100
-            } action: { _, isAtBottom in
-                showPagination = isAtBottom
-            }
-            .overlay(alignment: .bottom) {
-                if showPagination && viewModel.totalPages > 1 {
-                    PaginationButtons(
-                        currentPage: viewModel.currentPage,
-                        totalPages: viewModel.totalPages,
-                        isLoading: viewModel.isLoading,
-                        onPrev: { Task {
-                            await viewModel.prevPage()
-                            scrollPosition.scrollTo(edge: .top)
-                        }},
-                        onNext: { Task {
-                            await viewModel.nextPage()
-                            scrollPosition.scrollTo(edge: .top)
-                        }}
-                    )
-                    .padding(.bottom, 56)
-                }
             }
 
             // Reply input bar
@@ -84,7 +70,7 @@ struct ChildCommentsView: View {
         .navigationTitle("回复")
         .navigationBarTitleDisplayMode(.inline)
         .userProfileOverlay(user: $selectedUser)
-        .task { await viewModel.loadPage(1) }
+        .task { await viewModel.loadFirstPage() }
     }
 
     private var inputBar: some View {

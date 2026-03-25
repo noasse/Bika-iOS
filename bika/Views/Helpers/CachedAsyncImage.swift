@@ -21,6 +21,7 @@ final class ImageCache: @unchecked Sendable {
 
 struct CachedAsyncImage<Placeholder: View>: View {
     let url: URL?
+    var onImageSize: ((CGSize) -> Void)? = nil
     @ViewBuilder let placeholder: () -> Placeholder
 
     @State private var image: UIImage?
@@ -45,6 +46,7 @@ struct CachedAsyncImage<Placeholder: View>: View {
 
         if let cached = ImageCache.shared.image(for: url) {
             image = cached
+            onImageSize?(cached.size)
             return
         }
 
@@ -53,6 +55,7 @@ struct CachedAsyncImage<Placeholder: View>: View {
             if let loaded = UIImage(data: data) {
                 ImageCache.shared.setImage(loaded, for: url)
                 image = loaded
+                onImageSize?(loaded.size)
             }
         } catch {
             // silently fail, placeholder remains

@@ -19,9 +19,9 @@ nonisolated struct Comment: Decodable, Sendable, Identifiable, Hashable {
     let isTop: Bool?
     let hide: Bool?
     let created_at: String?
-    let likesCount: Int?
+    var likesCount: Int?
     let commentsCount: Int?
-    let isLiked: Bool?
+    var isLiked: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id = "_id"

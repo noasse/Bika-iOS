@@ -353,7 +353,9 @@ struct AuthorSearchResultsView: View {
 
                 LazyVStack(spacing: 10) {
                     ForEach(filteredComics) { comic in
-                        NavigationLink(value: comic) {
+                        NavigationLink {
+                            ComicDetailView(comicId: comic.id)
+                        } label: {
                             ComicCardView(comic: comic, previewImageURL: $previewImageURL)
                         }
                         .buttonStyle(.plain)
@@ -407,9 +409,6 @@ struct AuthorSearchResultsView: View {
                     )
                 }
             }
-        }
-        .navigationDestination(for: Comic.self) { comic in
-            ComicDetailView(comicId: comic.id)
         }
         .imagePreviewSheet(url: $previewImageURL)
         .task { await loadPage(1) }
@@ -526,7 +525,9 @@ struct TagSearchResultsView: View {
 
                 LazyVStack(spacing: 10) {
                     ForEach(filteredComics) { comic in
-                        NavigationLink(value: comic) {
+                        NavigationLink {
+                            ComicDetailView(comicId: comic.id)
+                        } label: {
                             ComicCardView(comic: comic, previewImageURL: $previewImageURL)
                         }
                         .buttonStyle(.plain)
@@ -580,9 +581,6 @@ struct TagSearchResultsView: View {
                     )
                 }
             }
-        }
-        .navigationDestination(for: Comic.self) { comic in
-            ComicDetailView(comicId: comic.id)
         }
         .imagePreviewSheet(url: $previewImageURL)
         .task { await loadPage(1) }
