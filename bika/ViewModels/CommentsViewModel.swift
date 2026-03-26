@@ -14,16 +14,19 @@ final class CommentsViewModel {
     var hasMore: Bool { currentPage < totalPages }
 
     let comicId: String
-    private let client = APIClient.shared
+    private let client: any APIClientProtocol
+    private var lastPaginationTriggerCommentID: String?
 
-    init(comicId: String) {
+    init(comicId: String, client: any APIClientProtocol = APIClient.shared) {
         self.comicId = comicId
+        self.client = client
     }
 
     func loadFirstPage() async {
         guard !isLoading else { return }
         isLoading = true
         errorMessage = nil
+        lastPaginationTriggerCommentID = nil
         defer { isLoading = false }
 
         do {
@@ -33,8 +36,13 @@ final class CommentsViewModel {
             if let data = response.data {
                 comments = data.docs
                 currentPage = data.page
-                totalPages = data.pages
+                totalPages = max(data.pages, data.page)
                 topComments = data.topComments
+            } else {
+                comments = []
+                topComments = []
+                currentPage = 1
+                totalPages = 1
             }
         } catch let error as APIError {
             switch error {
@@ -63,22 +71,49 @@ final class CommentsViewModel {
         }
     }
 
+    func loadMoreIfNeeded(currentItemID: String) async {
+        guard currentItemID == comments.last?.id else { return }
+        guard lastPaginationTriggerCommentID != currentItemID else { return }
+
+        lastPaginationTriggerCommentID = currentItemID
+        await loadMore()
+    }
+
     func loadMore() async {
         guard hasMore, !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
 
         let nextPage = currentPage + 1
+        let existingCommentIDs = Set(comments.map(\.id))
         do {
             let response: APIResponse<CommentsData> = try await client.send(
                 .comments(comicId: comicId, page: nextPage)
             )
-            if let data = response.data {
-                comments.append(contentsOf: data.docs)
-                currentPage = data.page
-                totalPages = data.pages
+            guard let data = response.data else {
+                currentPage = totalPages
+                return
             }
-        } catch {}
+
+            let resolvedTotalPages = max(data.pages, data.page)
+            totalPages = resolvedTotalPages
+
+            guard data.page >= nextPage else {
+                currentPage = resolvedTotalPages
+                return
+            }
+
+            let newComments = data.docs.filter { !existingCommentIDs.contains($0.id) }
+            guard !newComments.isEmpty else {
+                currentPage = resolvedTotalPages
+                return
+            }
+
+            comments.append(contentsOf: newComments)
+            currentPage = data.page
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func postComment() async {
@@ -97,6 +132,7 @@ final class CommentsViewModel {
             topComments = []
             currentPage = 0
             totalPages = 1
+            lastPaginationTriggerCommentID = nil
             await loadFirstPage()
         } catch {}
     }
@@ -131,15 +167,18 @@ final class ChildCommentsViewModel {
     var hasMore: Bool { currentPage < totalPages }
 
     let commentId: String
-    private let client = APIClient.shared
+    private let client: any APIClientProtocol
+    private var lastPaginationTriggerCommentID: String?
 
-    init(commentId: String) {
+    init(commentId: String, client: any APIClientProtocol = APIClient.shared) {
         self.commentId = commentId
+        self.client = client
     }
 
     func loadFirstPage() async {
         guard !isLoading else { return }
         isLoading = true
+        lastPaginationTriggerCommentID = nil
         defer { isLoading = false }
 
         do {
@@ -149,9 +188,21 @@ final class ChildCommentsViewModel {
             if let data = response.data {
                 comments = data.docs
                 currentPage = data.page
-                totalPages = data.pages
+                totalPages = max(data.pages, data.page)
+            } else {
+                comments = []
+                currentPage = 1
+                totalPages = 1
             }
         } catch {}
+    }
+
+    func loadMoreIfNeeded(currentItemID: String) async {
+        guard currentItemID == comments.last?.id else { return }
+        guard lastPaginationTriggerCommentID != currentItemID else { return }
+
+        lastPaginationTriggerCommentID = currentItemID
+        await loadMore()
     }
 
     func loadMore() async {
@@ -160,15 +211,32 @@ final class ChildCommentsViewModel {
         defer { isLoading = false }
 
         let nextPage = currentPage + 1
+        let existingCommentIDs = Set(comments.map(\.id))
         do {
             let response: APIResponse<ChildCommentsData> = try await client.send(
                 .childComments(commentId: commentId, page: nextPage)
             )
-            if let data = response.data {
-                comments.append(contentsOf: data.docs)
-                currentPage = data.page
-                totalPages = data.pages
+            guard let data = response.data else {
+                currentPage = totalPages
+                return
             }
+
+            let resolvedTotalPages = max(data.pages, data.page)
+            totalPages = resolvedTotalPages
+
+            guard data.page >= nextPage else {
+                currentPage = resolvedTotalPages
+                return
+            }
+
+            let newComments = data.docs.filter { !existingCommentIDs.contains($0.id) }
+            guard !newComments.isEmpty else {
+                currentPage = resolvedTotalPages
+                return
+            }
+
+            comments.append(contentsOf: newComments)
+            currentPage = data.page
         } catch {}
     }
 
@@ -186,6 +254,7 @@ final class ChildCommentsViewModel {
             comments = []
             currentPage = 0
             totalPages = 1
+            lastPaginationTriggerCommentID = nil
             await loadFirstPage()
         } catch {}
     }

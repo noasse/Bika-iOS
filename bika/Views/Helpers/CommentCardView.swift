@@ -98,6 +98,9 @@ struct CommentCardView: View {
         .background(Color.cardBg(for: colorScheme))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(comment.content ?? "")
+        .accessibilityIdentifier("comment.card.\(comment.id)")
         .onTapGesture { onTap?() }
     }
 

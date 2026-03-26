@@ -21,6 +21,7 @@ struct PaginationButtons: View {
                     .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
             }
             .disabled(currentPage <= 1 || isLoading)
+            .accessibilityIdentifier("pagination.previous")
 
             Spacer()
 
@@ -44,6 +45,7 @@ struct PaginationButtons: View {
                     .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
             }
             .disabled(currentPage >= totalPages || isLoading)
+            .accessibilityIdentifier("pagination.next")
         }
         .padding(.horizontal, 40)
         .padding(.bottom, 16)
@@ -83,6 +85,7 @@ struct PageJumpToolbarItem: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
+            .accessibilityIdentifier("pagination.pageIndicator")
         }
         .alert("跳转到页面", isPresented: $showPageInput) {
             TextField("页码 (1-\(totalPages))", text: $pageInputText)

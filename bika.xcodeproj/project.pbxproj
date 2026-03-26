@@ -8,6 +8,10 @@
 
 /* Begin PBXFileReference section */
 		ECC781FD2F694FA800F6AB0F /* bika.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = bika.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F10000012F694FA800F6AB0F /* bikaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = bikaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F10000022F694FA800F6AB0F /* bikaUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = bikaUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F10000032F694FA800F6AB0F /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = Platforms/iPhoneOS.platform/Developer/Library/Frameworks/XCTest.framework; sourceTree = DEVELOPER_DIR; };
+		F10000202F694FA800F6AB0F /* bika.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = bika.xctestplan; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -16,13 +20,61 @@
 			path = bika;
 			sourceTree = "<group>";
 		};
+		F10000042F694FA800F6AB0F /* bikaTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = bikaTests;
+			sourceTree = "<group>";
+		};
+		F10000052F694FA800F6AB0F /* bikaUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = bikaUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXBuildFile section */
+		F10000062F694FA800F6AB0F /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000032F694FA800F6AB0F /* XCTest.framework */; };
+		F10000072F694FA800F6AB0F /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000032F694FA800F6AB0F /* XCTest.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		F100000E2F694FA800F6AB0F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = ECC781F52F694FA800F6AB0F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ECC781FC2F694FA800F6AB0F;
+			remoteInfo = bika;
+		};
+		F100000F2F694FA800F6AB0F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = ECC781F52F694FA800F6AB0F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ECC781FC2F694FA800F6AB0F;
+			remoteInfo = bika;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		ECC781FA2F694FA800F6AB0F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F10000082F694FA800F6AB0F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F10000062F694FA800F6AB0F /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F10000092F694FA800F6AB0F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F10000072F694FA800F6AB0F /* XCTest.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -33,6 +85,9 @@
 			isa = PBXGroup;
 			children = (
 				ECC781FF2F694FA800F6AB0F /* bika */,
+				F10000042F694FA800F6AB0F /* bikaTests */,
+				F10000052F694FA800F6AB0F /* bikaUITests */,
+				F10000202F694FA800F6AB0F /* bika.xctestplan */,
 				ECC781FE2F694FA800F6AB0F /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +96,8 @@
 			isa = PBXGroup;
 			children = (
 				ECC781FD2F694FA800F6AB0F /* bika.app */,
+				F10000012F694FA800F6AB0F /* bikaTests.xctest */,
+				F10000022F694FA800F6AB0F /* bikaUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -70,6 +127,52 @@
 			productReference = ECC781FD2F694FA800F6AB0F /* bika.app */;
 			productType = "com.apple.product-type.application";
 		};
+		F10000122F694FA800F6AB0F /* bikaTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F10000182F694FA800F6AB0F /* Build configuration list for PBXNativeTarget "bikaTests" */;
+			buildPhases = (
+				F100000A2F694FA800F6AB0F /* Sources */,
+				F10000082F694FA800F6AB0F /* Frameworks */,
+				F100000C2F694FA800F6AB0F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F10000102F694FA800F6AB0F /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				F10000042F694FA800F6AB0F /* bikaTests */,
+			);
+			name = bikaTests;
+			packageProductDependencies = (
+			);
+			productName = bikaTests;
+			productReference = F10000012F694FA800F6AB0F /* bikaTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		F10000132F694FA800F6AB0F /* bikaUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F10000192F694FA800F6AB0F /* Build configuration list for PBXNativeTarget "bikaUITests" */;
+			buildPhases = (
+				F100000B2F694FA800F6AB0F /* Sources */,
+				F10000092F694FA800F6AB0F /* Frameworks */,
+				F100000D2F694FA800F6AB0F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F10000112F694FA800F6AB0F /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				F10000052F694FA800F6AB0F /* bikaUITests */,
+			);
+			name = bikaUITests;
+			packageProductDependencies = (
+			);
+			productName = bikaUITests;
+			productReference = F10000022F694FA800F6AB0F /* bikaUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -82,6 +185,14 @@
 				TargetAttributes = {
 					ECC781FC2F694FA800F6AB0F = {
 						CreatedOnToolsVersion = 26.3;
+					};
+					F10000122F694FA800F6AB0F = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = ECC781FC2F694FA800F6AB0F;
+					};
+					F10000132F694FA800F6AB0F = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = ECC781FC2F694FA800F6AB0F;
 					};
 				};
 			};
@@ -100,12 +211,28 @@
 			projectRoot = "";
 			targets = (
 				ECC781FC2F694FA800F6AB0F /* bika */,
+				F10000122F694FA800F6AB0F /* bikaTests */,
+				F10000132F694FA800F6AB0F /* bikaUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		ECC781FB2F694FA800F6AB0F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F100000C2F694FA800F6AB0F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F100000D2F694FA800F6AB0F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +249,34 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F100000A2F694FA800F6AB0F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F100000B2F694FA800F6AB0F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		F10000102F694FA800F6AB0F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = ECC781FC2F694FA800F6AB0F /* bika */;
+			targetProxy = F100000E2F694FA800F6AB0F /* PBXContainerItemProxy */;
+		};
+		F10000112F694FA800F6AB0F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = ECC781FC2F694FA800F6AB0F /* bika */;
+			targetProxy = F100000F2F694FA800F6AB0F /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		ECC782062F694FA800F6AB0F /* Debug */ = {
@@ -331,6 +485,110 @@
 			};
 			name = Release;
 		};
+		F10000142F694FA800F6AB0F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 55VZ848FFU;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.noasse.bikaTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/bika.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/bika";
+				TEST_TARGET_NAME = bika;
+			};
+			name = Debug;
+		};
+		F10000152F694FA800F6AB0F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 55VZ848FFU;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.noasse.bikaTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/bika.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/bika";
+				TEST_TARGET_NAME = bika;
+			};
+			name = Release;
+		};
+		F10000162F694FA800F6AB0F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 55VZ848FFU;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.noasse.bikaUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = bika;
+			};
+			name = Debug;
+		};
+		F10000172F694FA800F6AB0F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 55VZ848FFU;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.noasse.bikaUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = bika;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -348,6 +606,24 @@
 			buildConfigurations = (
 				ECC782092F694FA800F6AB0F /* Debug */,
 				ECC7820A2F694FA800F6AB0F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F10000182F694FA800F6AB0F /* Build configuration list for PBXNativeTarget "bikaTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F10000142F694FA800F6AB0F /* Debug */,
+				F10000152F694FA800F6AB0F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F10000192F694FA800F6AB0F /* Build configuration list for PBXNativeTarget "bikaUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F10000162F694FA800F6AB0F /* Debug */,
+				F10000172F694FA800F6AB0F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -57,6 +57,7 @@ struct ZoomableImageView: UIViewRepresentable {
     func updateUIView(_ scrollView: UIScrollView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.loadImageIfNeeded(in: scrollView)
+        context.coordinator.relayoutIfNeeded(in: scrollView)
     }
 
     // MARK: - Coordinator
@@ -67,6 +68,7 @@ struct ZoomableImageView: UIViewRepresentable {
         var spinner: UIActivityIndicatorView?
         private var loadedURL: URL?
         private var loadTask: Task<Void, Never>?
+        private var lastBoundsSize: CGSize = .zero
 
         init(parent: ZoomableImageView) {
             self.parent = parent
@@ -90,11 +92,11 @@ struct ZoomableImageView: UIViewRepresentable {
 
         func loadImageIfNeeded(in scrollView: UIScrollView) {
             guard let url = parent.url, url != loadedURL else { return }
-            loadedURL = url
             loadTask?.cancel()
 
             // Check cache first
             if let cached = ImageCache.shared.image(for: url) {
+                loadedURL = url
                 displayImage(cached, in: scrollView)
                 return
             }
@@ -102,16 +104,28 @@ struct ZoomableImageView: UIViewRepresentable {
             // Async load
             loadTask = Task { [weak self] in
                 do {
-                    let (data, _) = try await URLSession.shared.data(from: url)
-                    guard !Task.isCancelled, let image = UIImage(data: data) else { return }
+                    let data = try await AppDependencies.shared.imageDataLoader.data(from: url)
+                    guard !Task.isCancelled, let image = UIImage(data: data) else {
+                        await MainActor.run { self?.loadedURL = nil }
+                        return
+                    }
                     ImageCache.shared.setImage(image, for: url)
                     await MainActor.run {
+                        self?.loadedURL = url
                         self?.displayImage(image, in: scrollView)
                     }
                 } catch {
-                    // silently fail, spinner remains
+                    await MainActor.run { self?.loadedURL = nil }
                 }
             }
+        }
+
+        func relayoutIfNeeded(in scrollView: UIScrollView) {
+            let boundsSize = scrollView.bounds.size
+            guard boundsSize.width > 0, boundsSize.height > 0 else { return }
+            guard imageView.image != nil else { return }
+            guard boundsSize != lastBoundsSize else { return }
+            layoutImage(in: scrollView)
         }
 
         private func displayImage(_ image: UIImage, in scrollView: UIScrollView) {
@@ -132,6 +146,7 @@ struct ZoomableImageView: UIViewRepresentable {
             guard let image = imageView.image else { return }
             let boundsSize = scrollView.bounds.size
             guard boundsSize.width > 0, boundsSize.height > 0 else { return }
+            lastBoundsSize = boundsSize
 
             // Fit image width to scroll view width (aspect fit)
             let imageSize = image.size
@@ -243,7 +258,10 @@ struct ComicReaderView: View {
         }
         .statusBar(hidden: !viewModel.showToolbar)
         .task {
-            await viewModel.loadPages()
+            viewModel.startLoadingPages()
+            if AppDependencies.shared.isUITesting {
+                viewModel.showToolbar = true
+            }
         }
         .onDisappear {
             saveProgress()
@@ -259,10 +277,14 @@ struct ComicReaderView: View {
             }
         }
         .onChange(of: viewModel.pages.count) { _, count in
-            if !hasJumpedToStart && startPageIndex > 0 && count > startPageIndex {
-                hasJumpedToStart = true
-                scrollPosition = startPageIndex
-                currentPage = startPageIndex
+            guard !hasJumpedToStart, count > 0 else { return }
+            let restoredPage = min(startPageIndex, count - 1)
+            hasJumpedToStart = true
+            if restoredPage > 0 {
+                scrollPosition = restoredPage
+                currentPage = restoredPage
+            } else {
+                currentPage = 0
             }
         }
     }
@@ -367,6 +389,7 @@ struct ComicReaderView: View {
                     Image(systemName: "xmark")
                         .font(.title3)
                 }
+                .accessibilityIdentifier("reader.close")
 
                 Spacer()
 
@@ -390,16 +413,15 @@ struct ComicReaderView: View {
             // 底部栏：背景延伸到底部安全区
             HStack(spacing: 20) {
                 Button {
-                    Task {
-                        await viewModel.previousEpisode()
-                        scrollPosition = 0
-                        currentPage = 0
-                    }
+                    scrollPosition = 0
+                    currentPage = 0
+                    viewModel.previousEpisode()
                 } label: {
                     Image(systemName: "chevron.left")
                     Text("上一章")
                 }
-                .disabled(!viewModel.hasPreviousEpisode)
+                .disabled(!viewModel.hasPreviousEpisode || viewModel.isLoading)
+                .accessibilityIdentifier("reader.previousEpisode")
 
                 Spacer()
 
@@ -411,20 +433,20 @@ struct ComicReaderView: View {
                     Image(systemName: viewModel.readerMode == .horizontal ? "arrow.up.arrow.down" : "arrow.left.arrow.right")
                     Text(viewModel.readerMode == .horizontal ? "滚动" : "翻页")
                 }
+                .accessibilityIdentifier("reader.toggleMode")
 
                 Spacer()
 
                 Button {
-                    Task {
-                        await viewModel.nextEpisode()
-                        scrollPosition = 0
-                        currentPage = 0
-                    }
+                    scrollPosition = 0
+                    currentPage = 0
+                    viewModel.nextEpisode()
                 } label: {
                     Text("下一章")
                     Image(systemName: "chevron.right")
                 }
-                .disabled(!viewModel.hasNextEpisode)
+                .disabled(!viewModel.hasNextEpisode || viewModel.isLoading)
+                .accessibilityIdentifier("reader.nextEpisode")
             }
             .font(.subheadline)
             .padding()

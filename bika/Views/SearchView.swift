@@ -36,6 +36,7 @@ struct SearchView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.gray)
                 TextField("搜索漫画...", text: $viewModel.keyword)
+                    .accessibilityIdentifier("search.keywordField")
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onSubmit {
@@ -75,6 +76,7 @@ struct SearchView: View {
                                     .foregroundStyle(viewModel.sortMode == option.mode ? .white : .primary)
                                     .clipShape(Capsule())
                             }
+                            .accessibilityIdentifier("search.sort.\(option.mode.rawValue)")
                         }
                     }
                     .padding(.horizontal)
@@ -99,6 +101,7 @@ struct SearchView: View {
                                 ComicCardView(comic: comic, previewImageURL: $previewImageURL)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("search.result.\(comic.id)")
                         }
                     }
                     .padding(.horizontal)

@@ -60,7 +60,7 @@ struct CommentsView: View {
                             commentCard(comment)
                                 .onAppear {
                                     if comment.id == viewModel.comments.last?.id {
-                                        Task { await viewModel.loadMore() }
+                                        Task { await viewModel.loadMoreIfNeeded(currentItemID: comment.id) }
                                     }
                                 }
                         }
@@ -76,6 +76,7 @@ struct CommentsView: View {
                     .padding(.bottom, 80)
                 }
             }
+            .accessibilityIdentifier("comments.list")
 
             // Input bar
             inputBar

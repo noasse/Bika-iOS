@@ -6,16 +6,16 @@ final class ReaderViewModel {
     var isLoading = false
     var currentPageIndex = 0
     var showToolbar = false
-    var readerMode: ReaderMode = {
-        let saved = UserDefaults.standard.string(forKey: "readerMode") ?? "horizontal"
-        return ReaderMode(rawValue: saved) ?? .horizontal
-    }()
+    var readerMode: ReaderMode
 
     let comicId: String
     let episodes: [Episode]
     var currentEpisodeIndex: Int
 
-    private let client = APIClient.shared
+    private let client: any APIClientProtocol
+    private let keyValueStore: any KeyValueStore
+    private var loadTask: Task<Void, Never>?
+    private var activeLoadSequence = 0
     private var paginationPage = 0
     private var paginationTotalPages = 1
 
@@ -23,10 +23,20 @@ final class ReaderViewModel {
         case horizontal, vertical
     }
 
-    init(comicId: String, episodes: [Episode], startEpisodeIndex: Int) {
+    init(
+        comicId: String,
+        episodes: [Episode],
+        startEpisodeIndex: Int,
+        client: any APIClientProtocol = APIClient.shared,
+        keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore
+    ) {
         self.comicId = comicId
         self.episodes = episodes
         self.currentEpisodeIndex = startEpisodeIndex
+        self.client = client
+        self.keyValueStore = keyValueStore
+        let savedMode = keyValueStore.string(forKey: "readerMode") ?? ReaderMode.horizontal.rawValue
+        readerMode = ReaderMode(rawValue: savedMode) ?? .horizontal
     }
 
     var currentEpisode: Episode? {
@@ -37,44 +47,102 @@ final class ReaderViewModel {
     var hasPreviousEpisode: Bool { currentEpisodeIndex > 0 }
     var hasNextEpisode: Bool { currentEpisodeIndex < episodes.count - 1 }
 
-    func loadPages() async {
-        guard let episode = currentEpisode else { return }
-        isLoading = true
-        defer { isLoading = false }
+    func startLoadingPages() {
+        activeLoadSequence += 1
+        let loadSequence = activeLoadSequence
+        guard let episode = currentEpisode else {
+            loadTask?.cancel()
+            pages = []
+            paginationPage = 0
+            paginationTotalPages = 1
+            isLoading = false
+            return
+        }
 
+        loadTask?.cancel()
+        isLoading = true
         pages = []
         paginationPage = 0
         paginationTotalPages = 1
 
-        while paginationPage < paginationTotalPages {
-            let page = paginationPage + 1
-            do {
-                let response: APIResponse<ComicPagesData> = try await client.send(
-                    .comicPages(comicId: comicId, epsOrder: episode.order, page: page)
-                )
-                if let data = response.data {
-                    pages.append(contentsOf: data.pages.docs)
-                    paginationPage = data.pages.page
-                    paginationTotalPages = data.pages.pages
-                }
-            } catch {
-                break
-            }
+        loadTask = Task { [weak self] in
+            await self?.loadPages(for: episode, loadSequence: loadSequence)
         }
     }
 
-    func goToEpisode(_ index: Int) async {
+    private func loadPages(for episode: Episode, loadSequence: Int) async {
+        defer {
+            if activeLoadSequence == loadSequence {
+                isLoading = false
+            }
+        }
+
+        var loadedPages: [ComicPage] = []
+        var nextPage = 1
+        var resolvedPaginationPage = 0
+        var resolvedTotalPages = 1
+
+        while nextPage <= resolvedTotalPages {
+            guard !Task.isCancelled, activeLoadSequence == loadSequence else { return }
+            do {
+                let response: APIResponse<ComicPagesData> = try await client.send(
+                    .comicPages(comicId: comicId, epsOrder: episode.order, page: nextPage)
+                )
+                guard !Task.isCancelled, activeLoadSequence == loadSequence else { return }
+
+                guard let data = response.data else {
+                    break
+                }
+
+                let resolvedPage = data.pages.page
+                let resolvedPages = max(data.pages.pages, resolvedPage)
+
+                guard resolvedPage >= nextPage else {
+                    resolvedPaginationPage = resolvedPages
+                    resolvedTotalPages = resolvedPages
+                    break
+                }
+
+                guard !data.pages.docs.isEmpty else {
+                    resolvedPaginationPage = resolvedPage
+                    resolvedTotalPages = resolvedPages
+                    break
+                }
+
+                loadedPages.append(contentsOf: data.pages.docs)
+                resolvedPaginationPage = resolvedPage
+                resolvedTotalPages = resolvedPages
+
+                let upcomingPage = resolvedPage + 1
+                if upcomingPage <= nextPage && nextPage <= resolvedTotalPages {
+                    break
+                }
+
+                nextPage = upcomingPage
+            } catch {
+                guard !Task.isCancelled, activeLoadSequence == loadSequence else { return }
+                break
+            }
+        }
+
+        guard !Task.isCancelled, activeLoadSequence == loadSequence else { return }
+        pages = loadedPages
+        paginationPage = resolvedPaginationPage
+        paginationTotalPages = resolvedTotalPages
+    }
+
+    func goToEpisode(_ index: Int) {
         guard episodes.indices.contains(index) else { return }
         currentEpisodeIndex = index
-        await loadPages()
+        startLoadingPages()
     }
 
-    func nextEpisode() async {
-        await goToEpisode(currentEpisodeIndex + 1)
+    func nextEpisode() {
+        goToEpisode(currentEpisodeIndex + 1)
     }
 
-    func previousEpisode() async {
-        await goToEpisode(currentEpisodeIndex - 1)
+    func previousEpisode() {
+        goToEpisode(currentEpisodeIndex - 1)
     }
 
     func toggleToolbar() {
@@ -83,6 +151,6 @@ final class ReaderViewModel {
 
     func setReaderMode(_ mode: ReaderMode) {
         readerMode = mode
-        UserDefaults.standard.set(mode.rawValue, forKey: "readerMode")
+        keyValueStore.set(mode.rawValue, forKey: "readerMode")
     }
 }

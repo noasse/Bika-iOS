@@ -1,0 +1,43 @@
+{
+  "configurations" : [
+    {
+      "id" : "0C5DF8BF-A86A-4A27-84A4-1DAD891D6A01",
+      "name" : "Unit",
+      "options" : {
+        "codeCoverage" : true
+      }
+    },
+    {
+      "id" : "5B6F5A44-B0CF-4AE6-B6B9-E3F3912207E4",
+      "name" : "UI Smoke",
+      "options" : {
+        "codeCoverage" : false
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:bika.xcodeproj",
+      "identifier" : "ECC781FC2F694FA800F6AB0F",
+      "name" : "bika"
+    },
+    "testTimeoutsEnabled" : true
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:bika.xcodeproj",
+        "identifier" : "F10000122F694FA800F6AB0F",
+        "name" : "bikaTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:bika.xcodeproj",
+        "identifier" : "F10000132F694FA800F6AB0F",
+        "name" : "bikaUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

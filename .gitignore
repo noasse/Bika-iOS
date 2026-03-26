@@ -1,0 +1,9 @@
+.DS_Store
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate
+
+# Test artifacts
+artifacts/test-results/
+*.xcresult

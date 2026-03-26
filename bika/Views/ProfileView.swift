@@ -100,6 +100,7 @@ struct ProfileView: View {
                     } label: {
                         menuContent(icon: "gearshape", title: "设置")
                     }
+                    .accessibilityIdentifier("profile.openSettings")
                 }
                 .background(Color.cardBg(for: colorScheme))
                 .clipShape(RoundedRectangle(cornerRadius: 12))

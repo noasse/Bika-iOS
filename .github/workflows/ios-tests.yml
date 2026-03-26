@@ -1,0 +1,57 @@
+name: iOS Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Unit
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      SIMULATOR_NAME: iPhone 17
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Run unit tests
+        run: ./scripts/test.sh unit
+
+      - name: Upload unit xcresult
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-xcresult
+          path: artifacts/test-results/unit.xcresult
+          if-no-files-found: warn
+
+  ui-smoke:
+    name: UI Smoke
+    runs-on: macos-latest
+    timeout-minutes: 40
+    env:
+      SIMULATOR_NAME: iPhone 17
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Run UI smoke tests
+        run: ./scripts/test.sh ui-smoke
+
+      - name: Upload UI smoke xcresult
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-smoke-xcresult
+          path: artifacts/test-results/ui-smoke.xcresult
+          if-no-files-found: warn

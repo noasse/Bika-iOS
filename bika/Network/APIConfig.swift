@@ -17,6 +17,16 @@ nonisolated enum APIConfig {
     static let accept: String = "application/vnd.picacomic.com.v1+json"
     static let appUUID: String = "defaultUuid"
     static let imageQualityDefault: String = "original"
+    static let imageQualityKey = "imageQuality"
+
+    static var currentImageQuality: ImageQuality {
+        let saved = AppDependencies.shared.keyValueStore.string(forKey: imageQualityKey) ?? imageQualityDefault
+        return ImageQuality(rawValue: saved) ?? .original
+    }
+
+    static func setCurrentImageQuality(_ quality: ImageQuality) {
+        AppDependencies.shared.keyValueStore.set(quality.rawValue, forKey: imageQualityKey)
+    }
 }
 
 nonisolated enum ImageQuality: String, Sendable, CaseIterable {

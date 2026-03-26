@@ -3,16 +3,19 @@ import Foundation
 // MARK: - Token Store (persisted to UserDefaults)
 
 actor TokenStore {
-    private static let tokenKey = "com.bika.authToken"
-    private var token: String? = UserDefaults.standard.string(forKey: tokenKey)
+    static let tokenKey = "com.bika.authToken"
+
+    private let store: any KeyValueStore
+    private var token: String?
+
+    init(store: any KeyValueStore = AppDependencies.shared.keyValueStore) {
+        self.store = store
+        token = store.string(forKey: Self.tokenKey)
+    }
 
     func setToken(_ token: String?) {
         self.token = token
-        if let token {
-            UserDefaults.standard.set(token, forKey: Self.tokenKey)
-        } else {
-            UserDefaults.standard.removeObject(forKey: Self.tokenKey)
-        }
+        store.set(token, forKey: Self.tokenKey)
     }
 
     func getToken() -> String? {
@@ -21,7 +24,7 @@ actor TokenStore {
 
     func clear() {
         token = nil
-        UserDefaults.standard.removeObject(forKey: Self.tokenKey)
+        store.removeObject(forKey: Self.tokenKey)
     }
 }
 
@@ -34,15 +37,19 @@ nonisolated protocol APIClientProtocol: Sendable {
 // MARK: - API Client
 
 final nonisolated class APIClient: APIClientProtocol, Sendable {
-    static let shared = APIClient()
+    static var shared = APIClient()
 
-    let tokenStore = TokenStore()
+    let tokenStore: TokenStore
     private let session: URLSession
     private let decoder: JSONDecoder
 
-    init(session: URLSession = .shared) {
+    init(
+        session: URLSession = .shared,
+        tokenStore: TokenStore = TokenStore(),
+        decoder: JSONDecoder = JSONDecoder()
+    ) {
+        self.tokenStore = tokenStore
         self.session = session
-        let decoder = JSONDecoder()
         self.decoder = decoder
     }
 
@@ -75,7 +82,7 @@ final nonisolated class APIClient: APIClientProtocol, Sendable {
         request.setValue(APIConfig.platform, forHTTPHeaderField: "app-platform")
         request.setValue(APIConfig.appUUID, forHTTPHeaderField: "app-uuid")
         request.setValue(APIConfig.userAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue(APIConfig.imageQualityDefault, forHTTPHeaderField: "image-quality")
+        request.setValue(APIConfig.currentImageQuality.rawValue, forHTTPHeaderField: "image-quality")
         request.setValue("application/json; charset=UTF-8", forHTTPHeaderField: "Content-Type")
 
         // Auth token
@@ -110,11 +117,39 @@ final nonisolated class APIClient: APIClientProtocol, Sendable {
             }
         }
 
+        if let businessError = extractBusinessError(from: data) {
+            throw businessError
+        }
+
         // Decode
         do {
-            return try decoder.decode(T.self, from: data)
+            let decoded = try decoder.decode(T.self, from: data)
+            try validateBusinessResponseIfNeeded(decoded)
+            return decoded
+        } catch let error as APIError {
+            throw error
         } catch {
             throw APIError.decodingError(error)
+        }
+    }
+
+    private func extractBusinessError(from data: Data) -> APIError? {
+        guard
+            let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let code = jsonObject["code"] as? Int,
+            let message = jsonObject["message"] as? String,
+            !(200...299).contains(code)
+        else {
+            return nil
+        }
+
+        return .apiError(code: code, message: message)
+    }
+
+    private func validateBusinessResponseIfNeeded<T>(_ decoded: T) throws {
+        guard let response = decoded as? any APIBusinessResponse else { return }
+        guard (200...299).contains(response.code) else {
+            throw APIError.apiError(code: response.code, message: response.message)
         }
     }
 

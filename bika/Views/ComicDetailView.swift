@@ -165,6 +165,7 @@ struct ComicDetailView: View {
                                             .clipShape(RoundedRectangle(cornerRadius: 6))
                                     }
                                     .buttonStyle(.plain)
+                                    .accessibilityIdentifier("comicDetail.episode.\(episode.order)")
                                 }
                             }
                             .padding(.horizontal)
@@ -192,6 +193,7 @@ struct ComicDetailView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                         .padding(.horizontal)
+                        .accessibilityIdentifier("comicDetail.continueReading")
                     }
 
                     // Comments entry
@@ -211,6 +213,7 @@ struct ComicDetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                     .padding(.horizontal)
+                    .accessibilityIdentifier("comicDetail.openComments")
 
                     // Recommended comics
                     VStack(alignment: .leading, spacing: 10) {
@@ -218,7 +221,12 @@ struct ComicDetailView: View {
                             .font(.headline)
                             .padding(.horizontal)
 
-                        if !viewModel.recommended.isEmpty {
+                        if viewModel.isLoadingRecommended {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .accessibilityIdentifier("comicDetail.recommended.loading")
+                        } else if !viewModel.recommended.isEmpty {
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 12) {
                                     ForEach(viewModel.recommended) { comic in
@@ -256,13 +264,42 @@ struct ComicDetailView: View {
                                 .font(.caption)
                                 .buttonStyle(.borderedProminent)
                                 .tint(Color.accentPink)
+                                .accessibilityIdentifier("comicDetail.recommended.retry")
                             }
                             .frame(maxWidth: .infinity)
                             .padding()
+                        } else {
+                            Text("暂无相关推荐")
+                                .font(.caption)
+                                .foregroundStyle(Color.secondaryText(for: colorScheme))
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .accessibilityIdentifier("comicDetail.recommended.empty")
                         }
                     }
                 }
                 .padding(.vertical)
+            } else if let error = viewModel.errorMessage {
+                VStack(spacing: 12) {
+                    Text("加载详情失败")
+                        .font(.headline)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(Color.secondaryText(for: colorScheme))
+                        .multilineTextAlignment(.center)
+                    Button("重试") {
+                        Task { await viewModel.load() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.accentPink)
+                    .accessibilityIdentifier("comicDetail.error.retry")
+                }
+                .frame(maxWidth: .infinity, minHeight: 400)
+                .padding(.horizontal, 24)
+            } else {
+                Text("暂无详情")
+                    .foregroundStyle(Color.secondaryText(for: colorScheme))
+                    .frame(maxWidth: .infinity, minHeight: 400)
             }
         }
         .background(Color.mainBg(for: colorScheme))

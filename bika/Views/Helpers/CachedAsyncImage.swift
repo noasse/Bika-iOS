@@ -51,7 +51,7 @@ struct CachedAsyncImage<Placeholder: View>: View {
         }
 
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let data = try await AppDependencies.shared.imageDataLoader.data(from: url)
             if let loaded = UIImage(data: data) {
                 ImageCache.shared.setImage(loaded, for: url)
                 image = loaded

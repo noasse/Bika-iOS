@@ -12,6 +12,13 @@ nonisolated struct APIResponse<T: Decodable & Sendable>: Decodable, Sendable {
     }
 }
 
+nonisolated protocol APIBusinessResponse: Sendable {
+    var code: Int { get }
+    var message: String { get }
+}
+
+extension APIResponse: APIBusinessResponse {}
+
 nonisolated struct PaginatedResponse<T: Decodable & Sendable>: Decodable, Sendable {
     let docs: [T]
     let total: Int

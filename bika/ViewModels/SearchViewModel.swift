@@ -4,6 +4,7 @@ import SwiftUI
 final class SearchViewModel {
     var comics: [Comic] = []
     var keyword = ""
+    var activeKeyword = ""
     var isLoading = false
     var hasSearched = false
     var errorMessage: String?
@@ -12,16 +13,28 @@ final class SearchViewModel {
     var totalPages = 1
     var lastVisitedPage = 0
 
-    private let client = APIClient.shared
+    private let client: any APIClientProtocol
+    private let keyValueStore: any KeyValueStore
+
+    init(
+        client: any APIClientProtocol = APIClient.shared,
+        keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore
+    ) {
+        self.client = client
+        self.keyValueStore = keyValueStore
+    }
 
     func search() async {
         let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        keyword = trimmed
+        activeKeyword = trimmed
 
-        lastVisitedPage = UserDefaults.standard.integer(forKey: "lastPage_search_\(trimmed)")
+        lastVisitedPage = keyValueStore.integer(forKey: "lastPage_search_\(activeKeyword)")
 
         isLoading = true
         hasSearched = true
+        errorMessage = nil
         comics = []
         currentPage = 0
         totalPages = 1
@@ -31,13 +44,13 @@ final class SearchViewModel {
     }
 
     func loadPage(_ page: Int) async {
-        guard page >= 1 else { return }
+        guard page >= 1, !activeKeyword.isEmpty else { return }
         isLoading = true
         defer { isLoading = false }
 
         do {
             let response: APIResponse<ComicsData> = try await client.send(
-                .search(keyword: keyword, page: page, sort: sortMode)
+                .search(keyword: activeKeyword, page: page, sort: sortMode)
             )
             if let data = response.data {
                 comics = data.comics.docs
@@ -70,14 +83,16 @@ final class SearchViewModel {
         guard mode != sortMode else { return }
         sortMode = mode
         lastVisitedPage = currentPage
+        errorMessage = nil
         comics = []
         currentPage = 0
         totalPages = 1
-        await search()
+        await loadPage(1)
     }
 
     func reset() {
         keyword = ""
+        activeKeyword = ""
         comics = []
         hasSearched = false
         currentPage = 0
@@ -88,8 +103,7 @@ final class SearchViewModel {
     }
 
     func persistPage() {
-        let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard currentPage > 0, !trimmed.isEmpty else { return }
-        UserDefaults.standard.set(currentPage, forKey: "lastPage_search_\(trimmed)")
+        guard currentPage > 0, !activeKeyword.isEmpty else { return }
+        keyValueStore.set(currentPage, forKey: "lastPage_search_\(activeKeyword)")
     }
 }

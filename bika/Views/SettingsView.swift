@@ -2,11 +2,10 @@ import SwiftUI
 
 struct SettingsView: View {
     @State private var themeManager = ThemeManager.shared
-    @State private var imageQuality: ImageQuality = {
-        let saved = UserDefaults.standard.string(forKey: "imageQuality") ?? "original"
-        return ImageQuality(rawValue: saved) ?? .original
-    }()
+    @State private var imageQuality = APIConfig.currentImageQuality
+    @State private var lastRecordedImageQuality = "未记录"
     @Environment(\.colorScheme) private var colorScheme
+    private let keyValueStore = AppDependencies.shared.keyValueStore
 
     var body: some View {
         List {
@@ -34,7 +33,7 @@ struct SettingsView: View {
                 ForEach(ImageQuality.allCases, id: \.self) { quality in
                     Button {
                         imageQuality = quality
-                        UserDefaults.standard.set(quality.rawValue, forKey: "imageQuality")
+                        APIConfig.setCurrentImageQuality(quality)
                     } label: {
                         HStack {
                             Text(quality.displayName)
@@ -46,6 +45,7 @@ struct SettingsView: View {
                             }
                         }
                     }
+                    .accessibilityIdentifier("settings.imageQuality.\(quality.rawValue)")
                 }
             }
 
@@ -79,9 +79,28 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            if AppDependencies.shared.isUITesting {
+                Section("测试诊断") {
+                    HStack {
+                        Text("最近请求图片质量")
+                        Spacer()
+                        Text(lastRecordedImageQuality)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("settings.lastMockImageQualityValue")
+                    }
+                }
+            }
         }
         .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            refreshDiagnostics()
+        }
+    }
+
+    private func refreshDiagnostics() {
+        lastRecordedImageQuality = keyValueStore.string(forKey: MockURLProtocol.lastImageQualityHeaderKey) ?? "未记录"
     }
 }
 

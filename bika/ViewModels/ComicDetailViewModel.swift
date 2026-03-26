@@ -7,34 +7,48 @@ final class ComicDetailViewModel {
     var recommended: [Comic] = []
     var isLoading = false
     var isLoadingEpisodes = false
+    var isLoadingRecommended = false
     var errorMessage: String?
     var recommendedError: String?
 
     let comicId: String
-    private let client = APIClient.shared
+    private let client: any APIClientProtocol
     private var episodePage = 0
     private var episodeTotalPages = 1
 
-    init(comicId: String) {
+    init(comicId: String, client: any APIClientProtocol = APIClient.shared) {
         self.comicId = comicId
+        self.client = client
     }
 
+    @MainActor
     func load() async {
         guard detail == nil else { return }
         isLoading = true
-        defer { isLoading = false }
+        errorMessage = nil
 
         do {
             let response: APIResponse<ComicDetailData> = try await client.send(.comicDetail(id: comicId))
-            detail = response.data?.comic
+            guard let comic = response.data?.comic else {
+                errorMessage = "漫画详情为空"
+                isLoading = false
+                return
+            }
+            detail = comic
         } catch {
             errorMessage = error.localizedDescription
+            isLoading = false
+            return
         }
 
-        await loadAllEpisodes()
-        await loadRecommended()
+        isLoading = false
+
+        async let recommendedTask: Void = loadRecommended()
+        async let episodesTask: Void = loadAllEpisodes()
+        _ = await (recommendedTask, episodesTask)
     }
 
+    @MainActor
     private func loadAllEpisodes() async {
         isLoadingEpisodes = true
         defer { isLoadingEpisodes = false }
@@ -42,25 +56,60 @@ final class ComicDetailViewModel {
         episodeTotalPages = 1
         episodes = []
 
-        while episodePage < episodeTotalPages {
-            let page = episodePage + 1
+        var loadedEpisodes: [Episode] = []
+        var nextPage = 1
+        var resolvedEpisodePage = 0
+        var resolvedEpisodeTotalPages = 1
+
+        while nextPage <= resolvedEpisodeTotalPages {
             do {
                 let response: APIResponse<EpisodesData> = try await client.send(
-                    .episodes(comicId: comicId, page: page)
+                    .episodes(comicId: comicId, page: nextPage)
                 )
-                if let data = response.data {
-                    episodes.append(contentsOf: data.eps.docs)
-                    episodePage = data.eps.page
-                    episodeTotalPages = data.eps.pages
+
+                guard let data = response.data else {
+                    break
                 }
+
+                let resolvedPage = data.eps.page
+                let resolvedPages = max(data.eps.pages, resolvedPage)
+                let existingEpisodeIDs = Set(loadedEpisodes.map(\.id))
+                let newEpisodes = data.eps.docs.filter { !existingEpisodeIDs.contains($0.id) }
+
+                guard !newEpisodes.isEmpty else {
+                    resolvedEpisodePage = resolvedPage
+                    resolvedEpisodeTotalPages = resolvedPages
+                    break
+                }
+
+                loadedEpisodes.append(contentsOf: newEpisodes)
+
+                guard resolvedPage >= nextPage else {
+                    resolvedEpisodePage = resolvedPages
+                    resolvedEpisodeTotalPages = resolvedPages
+                    break
+                }
+
+                resolvedEpisodePage = resolvedPage
+                resolvedEpisodeTotalPages = resolvedPages
+
+                let upcomingPage = resolvedPage + 1
+                if upcomingPage <= nextPage && nextPage <= resolvedEpisodeTotalPages {
+                    break
+                }
+
+                nextPage = upcomingPage
             } catch {
                 break
             }
         }
 
-        episodes.sort { $0.order < $1.order }
+        episodePage = resolvedEpisodePage
+        episodeTotalPages = resolvedEpisodeTotalPages
+        episodes = loadedEpisodes.sorted { $0.order < $1.order }
     }
 
+    @MainActor
     func toggleLike() async {
         do {
             let _: APIResponse<LikeActionData> = try await client.send(.likeComic(id: comicId))
@@ -70,6 +119,7 @@ final class ComicDetailViewModel {
         } catch {}
     }
 
+    @MainActor
     func toggleFavourite() async {
         do {
             let _: APIResponse<FavouriteData> = try await client.send(.favouriteComic(id: comicId))
@@ -78,8 +128,12 @@ final class ComicDetailViewModel {
         } catch {}
     }
 
+    @MainActor
     func loadRecommended() async {
+        isLoadingRecommended = true
         recommendedError = nil
+        defer { isLoadingRecommended = false }
+
         do {
             let response: APIResponse<RecommendedData> = try await client.send(
                 .recommended(comicId: comicId)

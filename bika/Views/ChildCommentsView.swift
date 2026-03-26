@@ -46,7 +46,7 @@ struct ChildCommentsView: View {
                             )
                             .onAppear {
                                 if comment.id == viewModel.comments.last?.id {
-                                    Task { await viewModel.loadMore() }
+                                    Task { await viewModel.loadMoreIfNeeded(currentItemID: comment.id) }
                                 }
                             }
                         }
