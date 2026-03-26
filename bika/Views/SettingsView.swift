@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var lastRecordedImageQuality = "未记录"
     @Environment(\.colorScheme) private var colorScheme
     private let keyValueStore = AppDependencies.shared.keyValueStore
+    private let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知版本"
 
     var body: some View {
         List {
@@ -75,7 +76,7 @@ struct SettingsView: View {
                 HStack {
                     Text("版本")
                     Spacer()
-                    Text("1.0.0")
+                    Text("v\(appVersion)")
                         .foregroundStyle(.secondary)
                 }
             }
