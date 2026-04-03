@@ -6,11 +6,16 @@ final class CategoriesViewModel {
     var isLoading = false
     var errorMessage: String?
 
-    private let client = APIClient.shared
+    private let client: any APIClientProtocol
 
-    func loadCategories() async {
-        guard categories.isEmpty else { return }
+    init(client: any APIClientProtocol = APIClient.shared) {
+        self.client = client
+    }
+
+    func loadCategories(forceReload: Bool = false) async {
+        guard forceReload || categories.isEmpty else { return }
         isLoading = true
+        errorMessage = nil
         defer { isLoading = false }
 
         do {

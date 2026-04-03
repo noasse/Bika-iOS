@@ -2,7 +2,7 @@ import Foundation
 
 extension NSLock {
     @discardableResult
-    func withLock<T>(_ action: () throws -> T) rethrows -> T {
+    nonisolated func withLock<T>(_ action: () throws -> T) rethrows -> T {
         lock()
         defer { unlock() }
         return try action()
@@ -23,7 +23,7 @@ nonisolated protocol KeyValueStore: AnyObject, Sendable {
     func resetPersistentState()
 }
 
-final class UserDefaultsKeyValueStore: @unchecked Sendable, KeyValueStore {
+final nonisolated class UserDefaultsKeyValueStore: @unchecked Sendable, KeyValueStore {
     static let standard = UserDefaultsKeyValueStore(userDefaults: .standard)
 
     private let userDefaults: UserDefaults
@@ -101,7 +101,7 @@ final class UserDefaultsKeyValueStore: @unchecked Sendable, KeyValueStore {
     }
 }
 
-final class InMemoryKeyValueStore: @unchecked Sendable, KeyValueStore {
+final nonisolated class InMemoryKeyValueStore: @unchecked Sendable, KeyValueStore {
     private let lock = NSLock()
     private var strings: [String: String] = [:]
     private var integers: [String: Int] = [:]

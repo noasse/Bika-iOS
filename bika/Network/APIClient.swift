@@ -31,7 +31,9 @@ actor TokenStore {
 // MARK: - Protocol
 
 nonisolated protocol APIClientProtocol: Sendable {
+    var tokenStore: TokenStore { get }
     func send<T: Decodable & Sendable>(_ endpoint: APIEndpoint<T>) async throws -> T
+    func signIn(email: String, password: String) async throws -> String
 }
 
 // MARK: - API Client

@@ -15,6 +15,7 @@ final class SearchViewModel {
 
     private let client: any APIClientProtocol
     private let keyValueStore: any KeyValueStore
+    private var activeRequestID = 0
 
     init(
         client: any APIClientProtocol = APIClient.shared,
@@ -31,35 +32,36 @@ final class SearchViewModel {
         activeKeyword = trimmed
 
         lastVisitedPage = keyValueStore.integer(forKey: "lastPage_search_\(activeKeyword)")
-
-        isLoading = true
         hasSearched = true
         errorMessage = nil
         comics = []
         currentPage = 0
         totalPages = 1
-        defer { isLoading = false }
-
-        await loadPage(1)
+        await loadPage(max(lastVisitedPage, 1))
     }
 
     func loadPage(_ page: Int) async {
         guard page >= 1, !activeKeyword.isEmpty else { return }
-        isLoading = true
-        defer { isLoading = false }
+        let requestID = beginRequest()
+        let requestedKeyword = activeKeyword
+        let requestedSort = sortMode
 
         do {
             let response: APIResponse<ComicsData> = try await client.send(
-                .search(keyword: activeKeyword, page: page, sort: sortMode)
+                .search(keyword: requestedKeyword, page: page, sort: requestedSort)
             )
+            guard requestID == activeRequestID else { return }
             if let data = response.data {
                 comics = data.comics.docs
                 currentPage = data.comics.page
                 totalPages = data.comics.pages
             }
         } catch {
+            guard requestID == activeRequestID else { return }
             errorMessage = error.localizedDescription
         }
+
+        finishRequest(requestID)
     }
 
     func nextPage() async {
@@ -105,5 +107,16 @@ final class SearchViewModel {
     func persistPage() {
         guard currentPage > 0, !activeKeyword.isEmpty else { return }
         keyValueStore.set(currentPage, forKey: "lastPage_search_\(activeKeyword)")
+    }
+
+    private func beginRequest() -> Int {
+        activeRequestID += 1
+        isLoading = true
+        return activeRequestID
+    }
+
+    private func finishRequest(_ requestID: Int) {
+        guard requestID == activeRequestID else { return }
+        isLoading = false
     }
 }

@@ -6,10 +6,12 @@ final class CommentsViewModel {
     var topComments: [Comment] = []
     var currentPage = 0
     var totalPages = 1
+    var totalVisibleComments = 0
     var isLoading = false
     var commentText = ""
     var isSending = false
     var errorMessage: String?
+    var actionErrorMessage: String?
 
     var hasMore: Bool { currentPage < totalPages }
 
@@ -34,15 +36,17 @@ final class CommentsViewModel {
                 .comments(comicId: comicId, page: 1)
             )
             if let data = response.data {
-                comments = data.docs
+                topComments = uniqueComments(in: data.topComments)
+                comments = data.regularComments()
                 currentPage = data.page
                 totalPages = max(data.pages, data.page)
-                topComments = data.topComments
+                totalVisibleComments = data.topLevelCommentDisplayCount
             } else {
                 comments = []
                 topComments = []
                 currentPage = 1
                 totalPages = 1
+                totalVisibleComments = 0
             }
         } catch let error as APIError {
             switch error {
@@ -85,7 +89,6 @@ final class CommentsViewModel {
         defer { isLoading = false }
 
         let nextPage = currentPage + 1
-        let existingCommentIDs = Set(comments.map(\.id))
         do {
             let response: APIResponse<CommentsData> = try await client.send(
                 .comments(comicId: comicId, page: nextPage)
@@ -103,7 +106,12 @@ final class CommentsViewModel {
                 return
             }
 
-            let newComments = data.docs.filter { !existingCommentIDs.contains($0.id) }
+            if !data.topComments.isEmpty {
+                topComments = uniqueComments(in: topComments + data.topComments)
+            }
+
+            let excludedCommentIDs = Set(comments.map(\.id)).union(topComments.map(\.id))
+            let newComments = data.docs.filter { !excludedCommentIDs.contains($0.id) }
             guard !newComments.isEmpty else {
                 currentPage = resolvedTotalPages
                 return
@@ -120,6 +128,7 @@ final class CommentsViewModel {
         let text = commentText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isSending else { return }
         isSending = true
+        actionErrorMessage = nil
         defer { isSending = false }
 
         do {
@@ -132,9 +141,12 @@ final class CommentsViewModel {
             topComments = []
             currentPage = 0
             totalPages = 1
+            totalVisibleComments = 0
             lastPaginationTriggerCommentID = nil
             await loadFirstPage()
-        } catch {}
+        } catch {
+            actionErrorMessage = error.localizedDescription
+        }
     }
 
     func likeComment(id: String) async {
@@ -142,7 +154,9 @@ final class CommentsViewModel {
             let _: APIResponse<LikeActionData> = try await client.send(.likeComment(id: id))
             toggleLike(id: id, in: &comments)
             toggleLike(id: id, in: &topComments)
-        } catch {}
+        } catch {
+            actionErrorMessage = error.localizedDescription
+        }
     }
 
     private func toggleLike(id: String, in list: inout [Comment]) {
@@ -150,6 +164,13 @@ final class CommentsViewModel {
         let wasLiked = list[idx].isLiked ?? false
         list[idx].isLiked = !wasLiked
         list[idx].likesCount = (list[idx].likesCount ?? 0) + (wasLiked ? -1 : 1)
+    }
+
+    private func uniqueComments(in comments: [Comment]) -> [Comment] {
+        var seenIDs = Set<String>()
+        return comments.filter { comment in
+            seenIDs.insert(comment.id).inserted
+        }
     }
 }
 
@@ -163,6 +184,8 @@ final class ChildCommentsViewModel {
     var isLoading = false
     var replyText = ""
     var isSending = false
+    var errorMessage: String?
+    var actionErrorMessage: String?
 
     var hasMore: Bool { currentPage < totalPages }
 
@@ -178,6 +201,7 @@ final class ChildCommentsViewModel {
     func loadFirstPage() async {
         guard !isLoading else { return }
         isLoading = true
+        errorMessage = nil
         lastPaginationTriggerCommentID = nil
         defer { isLoading = false }
 
@@ -194,7 +218,9 @@ final class ChildCommentsViewModel {
                 currentPage = 1
                 totalPages = 1
             }
-        } catch {}
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func loadMoreIfNeeded(currentItemID: String) async {
@@ -237,13 +263,16 @@ final class ChildCommentsViewModel {
 
             comments.append(contentsOf: newComments)
             currentPage = data.page
-        } catch {}
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func postReply() async {
         let text = replyText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isSending else { return }
         isSending = true
+        actionErrorMessage = nil
         defer { isSending = false }
 
         do {
@@ -256,7 +285,9 @@ final class ChildCommentsViewModel {
             totalPages = 1
             lastPaginationTriggerCommentID = nil
             await loadFirstPage()
-        } catch {}
+        } catch {
+            actionErrorMessage = error.localizedDescription
+        }
     }
 
     func likeComment(id: String) async {
@@ -266,6 +297,8 @@ final class ChildCommentsViewModel {
             let wasLiked = comments[idx].isLiked ?? false
             comments[idx].isLiked = !wasLiked
             comments[idx].likesCount = (comments[idx].likesCount ?? 0) + (wasLiked ? -1 : 1)
-        } catch {}
+        } catch {
+            actionErrorMessage = error.localizedDescription
+        }
     }
 }

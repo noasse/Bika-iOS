@@ -13,10 +13,12 @@ struct CommentsView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             ScrollView {
-                if viewModel.isLoading && viewModel.comments.isEmpty {
+                if viewModel.isLoading && viewModel.comments.isEmpty && viewModel.topComments.isEmpty {
                     ProgressView()
                         .frame(maxWidth: .infinity, minHeight: 300)
-                } else if let error = viewModel.errorMessage {
+                } else if let error = viewModel.errorMessage,
+                          viewModel.comments.isEmpty,
+                          viewModel.topComments.isEmpty {
                     VStack(spacing: 12) {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.title)
@@ -88,6 +90,13 @@ struct CommentsView: View {
             ChildCommentsView(parentComment: comment)
         }
         .userProfileOverlay(user: $selectedUser)
+        .alert("操作失败", isPresented: actionErrorIsPresented) {
+            Button("确定", role: .cancel) {
+                viewModel.actionErrorMessage = nil
+            }
+        } message: {
+            Text(viewModel.actionErrorMessage ?? "")
+        }
         .task { await viewModel.loadFirstPage() }
     }
 
@@ -127,5 +136,16 @@ struct CommentsView: View {
         .padding(.horizontal)
         .padding(.vertical, 8)
         .background(.ultraThinMaterial)
+    }
+
+    private var actionErrorIsPresented: Binding<Bool> {
+        Binding(
+            get: { viewModel.actionErrorMessage != nil },
+            set: { isPresented in
+                if !isPresented {
+                    viewModel.actionErrorMessage = nil
+                }
+            }
+        )
     }
 }

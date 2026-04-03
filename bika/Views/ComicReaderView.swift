@@ -5,6 +5,8 @@ import UIKit
 
 struct ZoomableImageView: UIViewRepresentable {
     let url: URL?
+    let imageLoader: any ImageDataLoading
+    let imageCache: ImageCache
     var onImageSize: ((CGSize) -> Void)?
     var onSingleTap: ((CGPoint) -> Void)?
 
@@ -92,10 +94,12 @@ struct ZoomableImageView: UIViewRepresentable {
 
         func loadImageIfNeeded(in scrollView: UIScrollView) {
             guard let url = parent.url, url != loadedURL else { return }
+            let targetSize = imageTargetSize(in: scrollView)
+            guard targetSize.width > 0, targetSize.height > 0 else { return }
             loadTask?.cancel()
 
             // Check cache first
-            if let cached = ImageCache.shared.image(for: url) {
+            if let cached = parent.imageCache.image(for: url, targetSize: targetSize) {
                 loadedURL = url
                 displayImage(cached, in: scrollView)
                 return
@@ -104,12 +108,24 @@ struct ZoomableImageView: UIViewRepresentable {
             // Async load
             loadTask = Task { [weak self] in
                 do {
-                    let data = try await AppDependencies.shared.imageDataLoader.data(from: url)
-                    guard !Task.isCancelled, let image = UIImage(data: data) else {
+                    let data = try await self?.parent.imageLoader.data(from: url)
+                    guard let data else {
                         await MainActor.run { self?.loadedURL = nil }
                         return
                     }
-                    ImageCache.shared.setImage(image, for: url)
+                    let decodedImage = await Task.detached(priority: .userInitiated) {
+                        ImageDecoding.decodeImage(
+                            from: data,
+                            targetSize: targetSize,
+                            overscan: 2
+                        )
+                    }.value
+
+                    guard !Task.isCancelled, let image = decodedImage else {
+                        await MainActor.run { self?.loadedURL = nil }
+                        return
+                    }
+                    self?.parent.imageCache.setImage(image, for: url, targetSize: targetSize)
                     await MainActor.run {
                         self?.loadedURL = url
                         self?.displayImage(image, in: scrollView)
@@ -179,6 +195,10 @@ struct ZoomableImageView: UIViewRepresentable {
             imageView.frame = frameToCenter
         }
 
+        private func imageTargetSize(in scrollView: UIScrollView) -> CGSize {
+            scrollView.bounds.size
+        }
+
         // MARK: Tap Gestures
 
         @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
@@ -217,17 +237,37 @@ struct ComicReaderView: View {
     @State private var scrollPosition: Int?
     @State private var hasJumpedToStart = false
     @State private var imageSizes: [Int: CGSize] = [:]
+    @State private var sampledIndices: [Int] = []
+    @State private var sampledAspectRatios: [Int: CGFloat] = [:]
+    @State private var estimatedAspectRatio: CGFloat?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     private let startPageIndex: Int
+    private let readingProgressManager: ReadingProgressManager
+    private let imageDataLoader: any ImageDataLoading
+    private let imageCache: ImageCache
+    private let isUITesting: Bool
 
-    init(comicId: String, episodes: [Episode], startEpisodeIndex: Int, startPageIndex: Int = 0) {
+    init(
+        comicId: String,
+        episodes: [Episode],
+        startEpisodeIndex: Int,
+        startPageIndex: Int = 0,
+        readingProgressManager: ReadingProgressManager = .shared,
+        imageDataLoader: any ImageDataLoading = AppDependencies.shared.imageDataLoader,
+        imageCache: ImageCache = .shared,
+        isUITesting: Bool = AppDependencies.shared.isUITesting
+    ) {
         _viewModel = State(initialValue: ReaderViewModel(
             comicId: comicId,
             episodes: episodes,
             startEpisodeIndex: startEpisodeIndex
         ))
         self.startPageIndex = startPageIndex
+        self.readingProgressManager = readingProgressManager
+        self.imageDataLoader = imageDataLoader
+        self.imageCache = imageCache
+        self.isUITesting = isUITesting
     }
 
     var body: some View {
@@ -237,6 +277,22 @@ struct ComicReaderView: View {
             if viewModel.isLoading && viewModel.pages.isEmpty {
                 ProgressView()
                     .tint(.white)
+            } else if let errorMessage = viewModel.errorMessage, viewModel.pages.isEmpty {
+                VStack(spacing: 12) {
+                    Text("页面加载失败")
+                        .font(.headline)
+                    Text(errorMessage)
+                        .font(.caption)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white.opacity(0.8))
+                    Button("重试") {
+                        viewModel.startLoadingPages()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.accentPink)
+                }
+                .padding(24)
+                .foregroundStyle(.white)
             } else if viewModel.pages.isEmpty {
                 Text("暂无页面")
                     .foregroundStyle(.white)
@@ -259,7 +315,7 @@ struct ComicReaderView: View {
         .statusBar(hidden: !viewModel.showToolbar)
         .task {
             viewModel.startLoadingPages()
-            if AppDependencies.shared.isUITesting {
+            if isUITesting {
                 viewModel.showToolbar = true
             }
         }
@@ -287,6 +343,9 @@ struct ComicReaderView: View {
                 currentPage = 0
             }
         }
+        .onChange(of: viewModel.currentEpisodeIndex) { _, _ in
+            resetImageLayoutState()
+        }
     }
 
     // MARK: - Tap to Toggle Toolbar
@@ -308,7 +367,12 @@ struct ComicReaderView: View {
         ScrollView(.horizontal) {
             LazyHStack(spacing: 0) {
                 ForEach(Array(viewModel.pages.enumerated()), id: \.offset) { index, page in
-                    ZoomableImageView(url: page.media.imageURL, onSingleTap: handleTap)
+                    ZoomableImageView(
+                        url: page.media.imageURL,
+                        imageLoader: imageDataLoader,
+                        imageCache: imageCache,
+                        onSingleTap: handleTap
+                    )
                         .containerRelativeFrame(.horizontal)
                         .id(index)
                 }
@@ -327,9 +391,18 @@ struct ComicReaderView: View {
         ScrollView(.vertical) {
             LazyVStack(spacing: 0) {
                 ForEach(Array(viewModel.pages.enumerated()), id: \.offset) { index, page in
-                    ZoomableImageView(url: page.media.imageURL, onImageSize: { size in
-                        imageSizes[index] = size
-                    }, onSingleTap: handleTap)
+                    ZoomableImageView(
+                        url: page.media.imageURL,
+                        imageLoader: imageDataLoader,
+                        imageCache: imageCache,
+                        onImageSize: { size in
+                            updateImageSize(size, for: index)
+                        },
+                        onSingleTap: handleTap
+                    )
+                    .onAppear {
+                        registerSampleIndexIfNeeded(index)
+                    }
                     .frame(minHeight: minHeight(for: index))
                     .id(index)
                 }
@@ -341,32 +414,63 @@ struct ComicReaderView: View {
         .ignoresSafeArea()
     }
 
-    private var modeAspectRatio: CGFloat? {
-        let ratios = imageSizes.values
-            .filter { $0.width > 0 }
-            .map { round(($0.height / $0.width) * 100) / 100 }
-        guard !ratios.isEmpty else { return nil }
-        var counts: [CGFloat: Int] = [:]
-        for r in ratios { counts[r, default: 0] += 1 }
-        return counts.max(by: { $0.value < $1.value })?.key
-    }
-
     private func minHeight(for index: Int) -> CGFloat {
         let screenWidth = UIScreen.main.bounds.width
         if let size = imageSizes[index], size.width > 0 {
             return screenWidth * (size.height / size.width)
         }
-        if let ratio = modeAspectRatio {
+        if let ratio = estimatedAspectRatio {
             return screenWidth * ratio
         }
         return 500
+    }
+
+    private func registerSampleIndexIfNeeded(_ index: Int) {
+        guard sampledIndices.count < 3 else { return }
+        guard !sampledIndices.contains(index) else { return }
+        sampledIndices.append(index)
+    }
+
+    private func updateImageSize(_ size: CGSize, for index: Int) {
+        guard size.width > 0, size.height > 0 else { return }
+
+        if let previous = imageSizes[index], isNearlyEqual(previous, size) {
+            return
+        }
+
+        imageSizes[index] = size
+
+        guard sampledIndices.contains(index) else { return }
+        sampledAspectRatios[index] = size.height / size.width
+        estimatedAspectRatio = sampledMedianAspectRatio()
+    }
+
+    private func sampledMedianAspectRatio() -> CGFloat? {
+        let ratios = sampledIndices.compactMap { sampledAspectRatios[$0] }.sorted()
+        guard !ratios.isEmpty else { return nil }
+        let mid = ratios.count / 2
+        if ratios.count.isMultiple(of: 2) {
+            return (ratios[mid - 1] + ratios[mid]) / 2
+        }
+        return ratios[mid]
+    }
+
+    private func resetImageLayoutState() {
+        imageSizes = [:]
+        sampledIndices = []
+        sampledAspectRatios = [:]
+        estimatedAspectRatio = nil
+    }
+
+    private func isNearlyEqual(_ lhs: CGSize, _ rhs: CGSize) -> Bool {
+        abs(lhs.width - rhs.width) < 1 && abs(lhs.height - rhs.height) < 1
     }
 
     // MARK: - Save Progress
 
     private func saveProgress() {
         guard let episode = viewModel.currentEpisode else { return }
-        ReadingProgressManager.shared.save(
+        readingProgressManager.save(
             comicId: viewModel.comicId,
             progress: .init(
                 episodeOrder: episode.order,

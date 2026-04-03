@@ -1,7 +1,7 @@
 import Foundation
 
-struct UITestLaunchConfig: Sendable {
-    enum Scenario: String, Sendable {
+nonisolated struct UITestLaunchConfig: Sendable {
+    nonisolated enum Scenario: String, Sendable {
         case smoke
     }
 

@@ -4,17 +4,20 @@ import SwiftUI
 final class BlockedCategoriesManager {
     static let shared = BlockedCategoriesManager()
 
+    private let keyValueStore: any KeyValueStore
+
     var blockedCategories: Set<String> {
         didSet { save() }
     }
 
-    private init() {
-        let saved = UserDefaults.standard.stringArray(forKey: "blockedCategories") ?? []
+    init(keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore) {
+        self.keyValueStore = keyValueStore
+        let saved = keyValueStore.stringArray(forKey: "blockedCategories") ?? []
         blockedCategories = Set(saved)
     }
 
     private func save() {
-        UserDefaults.standard.set(Array(blockedCategories), forKey: "blockedCategories")
+        keyValueStore.set(Array(blockedCategories), forKey: "blockedCategories")
     }
 
     func isBlocked(_ category: String) -> Bool {

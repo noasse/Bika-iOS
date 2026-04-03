@@ -1,12 +1,12 @@
 import Foundation
 
-struct MockHTTPResponse: Sendable {
+nonisolated struct MockHTTPResponse: Sendable {
     let statusCode: Int
     let headers: [String: String]
     let data: Data
 }
 
-enum MockURLProtocolError: Error {
+nonisolated enum MockURLProtocolError: Error {
     case missingResponse
     case unsupportedScenario
 }
@@ -14,7 +14,7 @@ enum MockURLProtocolError: Error {
 typealias MockURLProtocolHandler = @Sendable (URLRequest) async throws -> MockHTTPResponse
 
 extension URLRequest {
-    func resolvedHTTPBodyData() -> Data? {
+    nonisolated func resolvedHTTPBodyData() -> Data? {
         if let httpBody {
             return httpBody
         }
@@ -47,7 +47,7 @@ extension URLRequest {
     }
 }
 
-final class MockURLProtocol: URLProtocol, @unchecked Sendable {
+final nonisolated class MockURLProtocol: URLProtocol, @unchecked Sendable {
     static let lastImageQualityHeaderKey = "uiTest.lastImageQualityHeader"
 
     nonisolated(unsafe) static var requestHandler: MockURLProtocolHandler?

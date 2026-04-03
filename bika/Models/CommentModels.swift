@@ -1,5 +1,11 @@
 import Foundation
 
+private extension KeyedDecodingContainer {
+    nonisolated func decodeLossyIfPresent<T: Decodable>(_ type: T.Type, forKey key: Key) -> T? {
+        try? decodeIfPresent(type, forKey: key)
+    }
+}
+
 // MARK: - Comment
 
 nonisolated struct Comment: Decodable, Sendable, Identifiable, Hashable {
@@ -36,16 +42,16 @@ nonisolated struct Comment: Decodable, Sendable, Identifiable, Hashable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
-        content = try? container.decode(String.self, forKey: .content)
-        user = try? container.decode(Creator.self, forKey: .user)
-        comic = try? container.decode(String.self, forKey: .comic)
-        totalComments = try? container.decode(Int.self, forKey: .totalComments)
-        isTop = try? container.decode(Bool.self, forKey: .isTop)
-        hide = try? container.decode(Bool.self, forKey: .hide)
-        created_at = try? container.decode(String.self, forKey: .created_at)
-        likesCount = try? container.decode(Int.self, forKey: .likesCount)
-        commentsCount = try? container.decode(Int.self, forKey: .commentsCount)
-        isLiked = try? container.decode(Bool.self, forKey: .isLiked)
+        content = container.decodeLossyIfPresent(String.self, forKey: .content)
+        user = container.decodeLossyIfPresent(Creator.self, forKey: .user)
+        comic = container.decodeLossyIfPresent(String.self, forKey: .comic)
+        totalComments = container.decodeLossyIfPresent(Int.self, forKey: .totalComments)
+        isTop = container.decodeLossyIfPresent(Bool.self, forKey: .isTop)
+        hide = container.decodeLossyIfPresent(Bool.self, forKey: .hide)
+        created_at = container.decodeLossyIfPresent(String.self, forKey: .created_at)
+        likesCount = container.decodeLossyIfPresent(Int.self, forKey: .likesCount)
+        commentsCount = container.decodeLossyIfPresent(Int.self, forKey: .commentsCount)
+        isLiked = container.decodeLossyIfPresent(Bool.self, forKey: .isLiked)
     }
 }
 
@@ -67,11 +73,38 @@ nonisolated struct CommentsData: Decodable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let pg = try container.nestedContainer(keyedBy: PaginationKeys.self, forKey: .comments)
-        docs = (try? pg.decode([Comment].self, forKey: .docs)) ?? []
-        page = (try? pg.decode(Int.self, forKey: .page)) ?? 1
-        pages = (try? pg.decode(Int.self, forKey: .pages)) ?? 1
-        total = (try? pg.decode(Int.self, forKey: .total)) ?? 0
-        topComments = (try? container.decode([Comment].self, forKey: .topComments)) ?? []
+        docs = try pg.decode([Comment].self, forKey: .docs)
+        page = try pg.decode(Int.self, forKey: .page)
+        pages = try pg.decode(Int.self, forKey: .pages)
+        total = try pg.decode(Int.self, forKey: .total)
+        topComments = try container.decodeIfPresent([Comment].self, forKey: .topComments) ?? []
+    }
+}
+
+extension CommentsData {
+    var pinnedCommentIDs: Set<String> {
+        Set(topComments.map(\.id))
+    }
+
+    var containsPinnedCommentsInDocs: Bool {
+        !pinnedCommentIDs.isDisjoint(with: Set(docs.map(\.id)))
+    }
+
+    var topLevelCommentDisplayCount: Int {
+        if pinnedCommentIDs.isEmpty {
+            return total
+        }
+
+        if containsPinnedCommentsInDocs {
+            return total
+        }
+
+        return total + pinnedCommentIDs.count
+    }
+
+    func regularComments(excluding existingIDs: Set<String> = []) -> [Comment] {
+        let excludedIDs = pinnedCommentIDs.union(existingIDs)
+        return docs.filter { !excludedIDs.contains($0.id) }
     }
 }
 
@@ -91,9 +124,9 @@ nonisolated struct ChildCommentsData: Decodable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let pg = try container.nestedContainer(keyedBy: PaginationKeys.self, forKey: .comments)
-        docs = (try? pg.decode([Comment].self, forKey: .docs)) ?? []
-        page = (try? pg.decode(Int.self, forKey: .page)) ?? 1
-        pages = (try? pg.decode(Int.self, forKey: .pages)) ?? 1
+        docs = try pg.decode([Comment].self, forKey: .docs)
+        page = try pg.decode(Int.self, forKey: .page)
+        pages = try pg.decode(Int.self, forKey: .pages)
     }
 }
 

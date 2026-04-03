@@ -148,6 +148,33 @@ final class CommentsViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.errorMessage, "API error (500): 评论加载失败")
     }
 
+    func testLoadFirstPageFiltersPinnedCommentsOutOfRegularList() async {
+        let (client, _) = TestSupport.makeAPIClient { _ in
+            TestSupport.jsonResponse(data: [
+                "comments": [
+                    "docs": [
+                        comment(id: "comment-top", content: "重复置顶评论", commentsCount: 0),
+                        comment(id: "comment-1", content: "普通评论", commentsCount: 0),
+                    ],
+                    "total": 2,
+                    "limit": 2,
+                    "page": 1,
+                    "pages": 1,
+                ],
+                "topComments": [
+                    comment(id: "comment-top", content: "置顶评论", commentsCount: 0),
+                ],
+            ])
+        }
+
+        let viewModel = CommentsViewModel(comicId: "comic-1", client: client)
+        await viewModel.loadFirstPage()
+
+        XCTAssertEqual(viewModel.topComments.map(\.id), ["comment-top"])
+        XCTAssertEqual(viewModel.comments.map(\.id), ["comment-1"])
+        XCTAssertEqual(viewModel.totalVisibleComments, 2)
+    }
+
     func testChildCommentsStopWhenResponseContainsDuplicateDocs() async throws {
         let (client, _) = TestSupport.makeAPIClient { request in
             let page = TestSupport.page(from: request)

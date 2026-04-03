@@ -3,11 +3,13 @@ import SwiftUI
 struct SearchView: View {
     @State private var viewModel = SearchViewModel()
     @State private var previewImageURL: URL?
-    @State private var showPagination = false
-    @State private var scrollPosition = ScrollPosition(edge: .top)
     @Environment(\.colorScheme) private var colorScheme
 
-    private let blockedManager = BlockedCategoriesManager.shared
+    private let blockedManager: BlockedCategoriesManager
+
+    init(blockedManager: BlockedCategoriesManager = .shared) {
+        self.blockedManager = blockedManager
+    }
 
     private var filteredComics: [Comic] {
         blockedManager.filterComics(viewModel.comics)
@@ -57,77 +59,29 @@ struct SearchView: View {
             .padding(.horizontal)
             .padding(.top)
 
-            // Sort bar
-            if viewModel.hasSearched && !viewModel.comics.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(searchSortOptions, id: \.mode) { option in
-                            Button {
-                                Task {
-                                    await viewModel.changeSort(option.mode)
-                                    scrollPosition.scrollTo(edge: .top)
-                                }
-                            } label: {
-                                Text(option.label)
-                                    .font(.caption)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 5)
-                                    .background(viewModel.sortMode == option.mode ? Color.accentPink : Color.cardBg(for: colorScheme))
-                                    .foregroundStyle(viewModel.sortMode == option.mode ? .white : .primary)
-                                    .clipShape(Capsule())
-                            }
-                            .accessibilityIdentifier("search.sort.\(option.mode.rawValue)")
-                        }
-                    }
-                    .padding(.horizontal)
-                }
-                .padding(.vertical, 6)
-            }
-
-            if viewModel.isLoading && viewModel.comics.isEmpty && viewModel.hasSearched {
-                Spacer()
-                ProgressView()
-                Spacer()
-            } else if viewModel.comics.isEmpty && viewModel.hasSearched {
-                Spacer()
-                Text("没有找到相关漫画")
-                    .foregroundStyle(Color.secondaryText(for: colorScheme))
-                Spacer()
-            } else if !viewModel.comics.isEmpty {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(filteredComics) { comic in
-                            NavigationLink(value: comic) {
-                                ComicCardView(comic: comic, previewImageURL: $previewImageURL)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("search.result.\(comic.id)")
-                        }
-                    }
-                    .padding(.horizontal)
-                }
-                .scrollPosition($scrollPosition)
-                .onScrollGeometryChange(for: Bool.self) { geo in
-                    geo.contentOffset.y + geo.visibleRect.height >= geo.contentSize.height - 100
-                } action: { _, isAtBottom in
-                    showPagination = isAtBottom
-                }
-                .overlay(alignment: .bottom) {
-                    if showPagination && viewModel.totalPages > 1 {
-                        PaginationButtons(
-                            currentPage: viewModel.currentPage,
-                            totalPages: viewModel.totalPages,
-                            isLoading: viewModel.isLoading,
-                            onPrev: { Task {
-                                await viewModel.prevPage()
-                                scrollPosition.scrollTo(edge: .top)
-                            }},
-                            onNext: { Task {
-                                await viewModel.nextPage()
-                                scrollPosition.scrollTo(edge: .top)
-                            }}
-                        )
-                    }
+            if viewModel.hasSearched {
+                PaginatedComicResultsView(
+                    comics: filteredComics,
+                    isLoading: viewModel.isLoading,
+                    errorMessage: viewModel.errorMessage,
+                    emptyMessage: "没有找到相关漫画",
+                    currentPage: viewModel.currentPage,
+                    totalPages: viewModel.totalPages,
+                    lastVisitedPage: viewModel.lastVisitedPage,
+                    pendingRestoreComicID: nil,
+                    identifierPrefix: "search.result",
+                    onConsumePendingRestoreComicID: {},
+                    onRememberNavigationAnchor: { _ in },
+                    onLoadPage: viewModel.loadPage(_:),
+                    onPrevPage: viewModel.prevPage,
+                    onNextPage: viewModel.nextPage,
+                    onRestoreLastPage: viewModel.goToLastVisited,
+                    onRetry: { await viewModel.loadPage(max(viewModel.currentPage, 1)) },
+                    previewImageURL: $previewImageURL
+                ) {
+                    sortBar
+                } leadingContent: { _, _ in
+                    EmptyView()
                 }
             } else {
                 quickCategoriesGrid
@@ -136,30 +90,6 @@ struct SearchView: View {
         .background(Color.mainBg(for: colorScheme))
         .navigationTitle("搜索")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if viewModel.hasSearched && viewModel.totalPages > 0 && viewModel.currentPage > 0 {
-                ToolbarItem(placement: .topBarTrailing) {
-                    PageJumpToolbarItem(
-                        currentPage: viewModel.currentPage,
-                        totalPages: viewModel.totalPages,
-                        lastVisitedPage: viewModel.lastVisitedPage,
-                        isLoading: viewModel.isLoading,
-                        onGoToPage: { page in Task {
-                            await viewModel.loadPage(page)
-                            scrollPosition.scrollTo(edge: .top)
-                        }},
-                        onRestoreLast: { Task {
-                            await viewModel.goToLastVisited()
-                            scrollPosition.scrollTo(edge: .top)
-                        }}
-                    )
-                }
-            }
-        }
-        .navigationDestination(for: Comic.self) { comic in
-            ComicDetailView(comicId: comic.id)
-        }
-        .imagePreviewSheet(url: $previewImageURL)
         .onDisappear { viewModel.persistPage() }
     }
 
@@ -202,5 +132,32 @@ struct SearchView: View {
             (.newest, "从新到旧"),
             (.oldest, "从旧到新"),
         ]
+    }
+
+    private var sortBar: some View {
+        Group {
+            if viewModel.hasSearched && !viewModel.comics.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(searchSortOptions, id: \.mode) { option in
+                            Button {
+                                Task { await viewModel.changeSort(option.mode) }
+                            } label: {
+                                Text(option.label)
+                                    .font(.caption)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(viewModel.sortMode == option.mode ? Color.accentPink : Color.cardBg(for: colorScheme))
+                                    .foregroundStyle(viewModel.sortMode == option.mode ? .white : .primary)
+                                    .clipShape(Capsule())
+                            }
+                            .accessibilityIdentifier("search.sort.\(option.mode.rawValue)")
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+                .padding(.vertical, 6)
+            }
+        }
     }
 }

@@ -17,11 +17,12 @@ final class ReadingHistoryManager {
 
     var items: [HistoryItem] = []
 
-    private let defaults = UserDefaults.standard
+    private let keyValueStore: any KeyValueStore
     private let storageKey = "readingHistory"
     private let maxItems = 200
 
-    private init() {
+    init(keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore) {
+        self.keyValueStore = keyValueStore
         load()
     }
 
@@ -59,13 +60,13 @@ final class ReadingHistoryManager {
     }
 
     private func load() {
-        guard let data = defaults.data(forKey: storageKey) else { return }
+        guard let data = keyValueStore.data(forKey: storageKey) else { return }
         items = (try? JSONDecoder().decode([HistoryItem].self, from: data)) ?? []
     }
 
     private func save() {
         if let data = try? JSONEncoder().encode(items) {
-            defaults.set(data, forKey: storageKey)
+            keyValueStore.set(data, forKey: storageKey)
         }
     }
 }

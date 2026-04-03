@@ -5,11 +5,14 @@ final class ComicDetailViewModel {
     var detail: ComicDetail?
     var episodes: [Episode] = []
     var recommended: [Comic] = []
+    var commentEntryCount: Int?
     var isLoading = false
     var isLoadingEpisodes = false
     var isLoadingRecommended = false
     var errorMessage: String?
+    var episodesError: String?
     var recommendedError: String?
+    var actionErrorMessage: String?
 
     let comicId: String
     private let client: any APIClientProtocol
@@ -45,12 +48,14 @@ final class ComicDetailViewModel {
 
         async let recommendedTask: Void = loadRecommended()
         async let episodesTask: Void = loadAllEpisodes()
-        _ = await (recommendedTask, episodesTask)
+        async let commentCountTask: Void = loadCommentEntryCount()
+        _ = await (recommendedTask, episodesTask, commentCountTask)
     }
 
     @MainActor
     private func loadAllEpisodes() async {
         isLoadingEpisodes = true
+        episodesError = nil
         defer { isLoadingEpisodes = false }
         episodePage = 0
         episodeTotalPages = 1
@@ -100,6 +105,7 @@ final class ComicDetailViewModel {
 
                 nextPage = upcomingPage
             } catch {
+                episodesError = error.localizedDescription
                 break
             }
         }
@@ -110,13 +116,20 @@ final class ComicDetailViewModel {
     }
 
     @MainActor
+    func reloadEpisodes() async {
+        await loadAllEpisodes()
+    }
+
+    @MainActor
     func toggleLike() async {
         do {
             let _: APIResponse<LikeActionData> = try await client.send(.likeComic(id: comicId))
             // Refresh detail to get updated state
             let response: APIResponse<ComicDetailData> = try await client.send(.comicDetail(id: comicId))
             detail = response.data?.comic
-        } catch {}
+        } catch {
+            actionErrorMessage = error.localizedDescription
+        }
     }
 
     @MainActor
@@ -125,7 +138,9 @@ final class ComicDetailViewModel {
             let _: APIResponse<FavouriteData> = try await client.send(.favouriteComic(id: comicId))
             let response: APIResponse<ComicDetailData> = try await client.send(.comicDetail(id: comicId))
             detail = response.data?.comic
-        } catch {}
+        } catch {
+            actionErrorMessage = error.localizedDescription
+        }
     }
 
     @MainActor
@@ -141,6 +156,18 @@ final class ComicDetailViewModel {
             recommended = response.data?.comics ?? []
         } catch {
             recommendedError = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func loadCommentEntryCount() async {
+        do {
+            let response: APIResponse<CommentsData> = try await client.send(
+                .comments(comicId: comicId, page: 1)
+            )
+            commentEntryCount = response.data?.topLevelCommentDisplayCount
+        } catch {
+            commentEntryCount = nil
         }
     }
 }

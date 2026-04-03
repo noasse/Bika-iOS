@@ -1,10 +1,14 @@
 import SwiftUI
 
 struct ReadingHistoryView: View {
-    private let historyManager = ReadingHistoryManager.shared
+    private let historyManager: ReadingHistoryManager
     @State private var previewImageURL: URL?
     @State private var showClearAlert = false
     @Environment(\.colorScheme) private var colorScheme
+
+    init(historyManager: ReadingHistoryManager = .shared) {
+        self.historyManager = historyManager
+    }
 
     var body: some View {
         ScrollView {

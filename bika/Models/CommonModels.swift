@@ -8,7 +8,8 @@ nonisolated struct Media: Decodable, Sendable, Hashable {
     var imageURL: URL? {
         let server = fileServer ?? "https://storage1.picacomic.com"
         let base = server.hasSuffix("/") ? server : server + "/"
-        return URL(string: "\(base)static/\(path)")
+        let normalizedPath = path.hasPrefix("static/") ? path : "static/\(path)"
+        return URL(string: "\(base)\(normalizedPath)")
     }
 }
 

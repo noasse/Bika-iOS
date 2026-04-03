@@ -7,10 +7,15 @@ final class ProfileViewModel {
     var isPunching = false
     var errorMessage: String?
 
-    private let client = APIClient.shared
+    private let client: any APIClientProtocol
+
+    init(client: any APIClientProtocol = APIClient.shared) {
+        self.client = client
+    }
 
     func loadProfile() async {
         isLoading = true
+        errorMessage = nil
         defer { isLoading = false }
 
         do {
@@ -23,6 +28,7 @@ final class ProfileViewModel {
 
     func punchIn() async {
         isPunching = true
+        errorMessage = nil
         defer { isPunching = false }
 
         do {
@@ -35,6 +41,7 @@ final class ProfileViewModel {
     }
 
     func updateSlogan(_ slogan: String) async {
+        errorMessage = nil
         do {
             let _: APIResponse<EmptyData> = try await client.send(.setSlogan(slogan))
             profile = profile // trigger observation

@@ -9,7 +9,7 @@ struct ComicCardView: View {
     var body: some View {
         HStack(spacing: 12) {
             // Cover image — tap for large preview
-            MediaImageView(media: comic.thumb, cornerRadius: 6)
+            MediaImageView(media: comic.thumb, cornerRadius: 6, targetSize: CGSize(width: 80, height: 110))
                 .frame(width: 80, height: 110)
                 .highPriorityGesture(
                     TapGesture().onEnded {
@@ -32,7 +32,7 @@ struct ComicCardView: View {
                 Spacer()
 
                 HStack(spacing: 12) {
-                    if let views = comic.totalViews ?? comic.likesCount {
+                    if let views = comic.totalViews ?? comic.viewsCount {
                         Label("\(views)", systemImage: "eye")
                     }
                     if let likes = comic.totalLikes ?? comic.likesCount {

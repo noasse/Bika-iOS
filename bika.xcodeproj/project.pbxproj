@@ -6,6 +6,28 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		F10000062F694FA800F6AB0F /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000032F694FA800F6AB0F /* XCTest.framework */; };
+		F10000072F694FA800F6AB0F /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000032F694FA800F6AB0F /* XCTest.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		F100000E2F694FA800F6AB0F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = ECC781F52F694FA800F6AB0F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ECC781FC2F694FA800F6AB0F;
+			remoteInfo = bika;
+		};
+		F100000F2F694FA800F6AB0F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = ECC781F52F694FA800F6AB0F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ECC781FC2F694FA800F6AB0F;
+			remoteInfo = bika;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		ECC781FD2F694FA800F6AB0F /* bika.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = bika.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F10000012F694FA800F6AB0F /* bikaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = bikaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -31,28 +53,6 @@
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
-
-/* Begin PBXBuildFile section */
-		F10000062F694FA800F6AB0F /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000032F694FA800F6AB0F /* XCTest.framework */; };
-		F10000072F694FA800F6AB0F /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000032F694FA800F6AB0F /* XCTest.framework */; };
-/* End PBXBuildFile section */
-
-/* Begin PBXContainerItemProxy section */
-		F100000E2F694FA800F6AB0F /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = ECC781F52F694FA800F6AB0F /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = ECC781FC2F694FA800F6AB0F;
-			remoteInfo = bika;
-		};
-		F100000F2F694FA800F6AB0F /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = ECC781F52F694FA800F6AB0F /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = ECC781FC2F694FA800F6AB0F;
-			remoteInfo = bika;
-		};
-/* End PBXContainerItemProxy section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		ECC781FA2F694FA800F6AB0F /* Frameworks */ = {
@@ -81,6 +81,14 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		5AAE48612F7F0F73005ACF4E /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				F10000032F694FA800F6AB0F /* XCTest.framework */,
+			);
+			name = "Recovered References";
+			sourceTree = "<group>";
+		};
 		ECC781F42F694FA800F6AB0F = {
 			isa = PBXGroup;
 			children = (
@@ -89,6 +97,7 @@
 				F10000052F694FA800F6AB0F /* bikaUITests */,
 				F10000202F694FA800F6AB0F /* bika.xctestplan */,
 				ECC781FE2F694FA800F6AB0F /* Products */,
+				5AAE48612F7F0F73005ACF4E /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};

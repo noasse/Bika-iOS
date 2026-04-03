@@ -18,8 +18,10 @@ enum ThemeMode: String, CaseIterable {
 final class ThemeManager {
     static let shared = ThemeManager()
 
+    private let keyValueStore: any KeyValueStore
+
     var themeMode: ThemeMode {
-        didSet { UserDefaults.standard.set(themeMode.rawValue, forKey: "themeMode") }
+        didSet { keyValueStore.set(themeMode.rawValue, forKey: "themeMode") }
     }
 
     var colorScheme: ColorScheme? {
@@ -30,8 +32,9 @@ final class ThemeManager {
         }
     }
 
-    private init() {
-        let saved = UserDefaults.standard.string(forKey: "themeMode") ?? "dark"
+    init(keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore) {
+        self.keyValueStore = keyValueStore
+        let saved = keyValueStore.string(forKey: "themeMode") ?? "dark"
         themeMode = ThemeMode(rawValue: saved) ?? .dark
     }
 }

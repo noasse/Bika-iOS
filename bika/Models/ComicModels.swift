@@ -28,6 +28,7 @@ nonisolated struct Comic: Decodable, Sendable, Identifiable, Hashable {
     let title: String
     let author: String?
     let totalViews: Int?
+    let viewsCount: Int?
     let totalLikes: Int?
     let pagesCount: Int?
     let epsCount: Int?
@@ -38,7 +39,7 @@ nonisolated struct Comic: Decodable, Sendable, Identifiable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id = "_id"
-        case title, author, totalViews, totalLikes, pagesCount
+        case title, author, totalViews, viewsCount, totalLikes, pagesCount
         case epsCount, finished, categories, thumb, likesCount
     }
 }

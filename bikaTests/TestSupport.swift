@@ -63,6 +63,15 @@ enum TestSupport {
         return Int(components.queryItems?.first(where: { $0.name == "page" })?.value ?? "1") ?? 1
     }
 
+    static func queryValue(named name: String, from request: URLRequest) -> String? {
+        guard let url = request.url,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        return components.queryItems?.first(where: { $0.name == name })?.value
+    }
+
     static func restoreLiveDependencies() {
         MockURLProtocol.reset()
         AppDependencies.shared.configureForLaunch()

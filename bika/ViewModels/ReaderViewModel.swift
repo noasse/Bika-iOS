@@ -4,6 +4,7 @@ import SwiftUI
 final class ReaderViewModel {
     var pages: [ComicPage] = []
     var isLoading = false
+    var errorMessage: String?
     var currentPageIndex = 0
     var showToolbar = false
     var readerMode: ReaderMode
@@ -50,6 +51,7 @@ final class ReaderViewModel {
     func startLoadingPages() {
         activeLoadSequence += 1
         let loadSequence = activeLoadSequence
+        errorMessage = nil
         guard let episode = currentEpisode else {
             loadTask?.cancel()
             pages = []
@@ -121,6 +123,7 @@ final class ReaderViewModel {
                 nextPage = upcomingPage
             } catch {
                 guard !Task.isCancelled, activeLoadSequence == loadSequence else { return }
+                errorMessage = error.localizedDescription
                 break
             }
         }

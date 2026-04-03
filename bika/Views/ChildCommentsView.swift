@@ -28,6 +28,21 @@ struct ChildCommentsView: View {
                     if viewModel.isLoading && viewModel.comments.isEmpty {
                         ProgressView()
                             .frame(maxWidth: .infinity, minHeight: 200)
+                    } else if let errorMessage = viewModel.errorMessage, viewModel.comments.isEmpty {
+                        VStack(spacing: 12) {
+                            Text("加载失败")
+                                .font(.headline)
+                            Text(errorMessage)
+                                .font(.caption)
+                                .foregroundStyle(Color.secondaryText(for: colorScheme))
+                                .multilineTextAlignment(.center)
+                            Button("重试") {
+                                Task { await viewModel.loadFirstPage() }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(Color.accentPink)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 200)
                     } else if viewModel.comments.isEmpty && viewModel.currentPage > 0 {
                         Text("暂无回复")
                             .foregroundStyle(Color.secondaryText(for: colorScheme))
@@ -70,6 +85,13 @@ struct ChildCommentsView: View {
         .navigationTitle("回复")
         .navigationBarTitleDisplayMode(.inline)
         .userProfileOverlay(user: $selectedUser)
+        .alert("操作失败", isPresented: actionErrorIsPresented) {
+            Button("确定", role: .cancel) {
+                viewModel.actionErrorMessage = nil
+            }
+        } message: {
+            Text(viewModel.actionErrorMessage ?? "")
+        }
         .task { await viewModel.loadFirstPage() }
     }
 
@@ -94,5 +116,16 @@ struct ChildCommentsView: View {
         .padding(.horizontal)
         .padding(.vertical, 8)
         .background(.ultraThinMaterial)
+    }
+
+    private var actionErrorIsPresented: Binding<Bool> {
+        Binding(
+            get: { viewModel.actionErrorMessage != nil },
+            set: { isPresented in
+                if !isPresented {
+                    viewModel.actionErrorMessage = nil
+                }
+            }
+        )
     }
 }

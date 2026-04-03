@@ -1,6 +1,6 @@
 import Foundation
 
-enum SmokeFixtureRouter {
+nonisolated enum SmokeFixtureRouter {
     static func response(for request: URLRequest) throws -> MockHTTPResponse {
         guard let url = request.url else { throw URLError(.badURL) }
 
@@ -349,7 +349,7 @@ enum SmokeFixtureRouter {
     }
 }
 
-private struct SearchRequestBody: Decodable {
+private nonisolated struct SearchRequestBody: Decodable {
     let keyword: String
     let sort: String?
     let categories: [String]?

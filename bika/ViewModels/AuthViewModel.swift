@@ -7,7 +7,11 @@ final class AuthViewModel {
     var isCheckingToken = true
     var errorMessage: String?
 
-    private let client = APIClient.shared
+    private let client: any APIClientProtocol
+
+    init(client: any APIClientProtocol = APIClient.shared) {
+        self.client = client
+    }
 
     func login(email: String, password: String) async {
         isLoading = true

@@ -28,6 +28,23 @@ final class ComicDetailViewModelTests: XCTestCase {
                 ])
             }
 
+            if path == "/comics/comic-1/comments" {
+                return TestSupport.jsonResponse(data: [
+                    "comments": [
+                        "docs": [
+                            comment(id: "comment-1", content: "第一页评论", commentsCount: 0),
+                        ],
+                        "total": 3,
+                        "limit": 1,
+                        "page": 1,
+                        "pages": 3,
+                    ],
+                    "topComments": [
+                        comment(id: "comment-top", content: "置顶评论", commentsCount: 0, isTop: true),
+                    ],
+                ])
+            }
+
             let page = TestSupport.page(from: request)
             switch page {
             case 1:
@@ -74,7 +91,8 @@ final class ComicDetailViewModelTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertEqual(viewModel.episodes.map(\.order), [1, 2, 3])
-        XCTAssertEqual(requestCount.value, 5)
+        XCTAssertEqual(viewModel.commentEntryCount, 4)
+        XCTAssertEqual(requestCount.value, 6)
     }
 
     func testLoadStartsRecommendedRequestBeforeEpisodesFinish() async {
@@ -98,6 +116,21 @@ final class ComicDetailViewModelTests: XCTestCase {
                     "comics": [
                         comic(id: "recommended-1", title: "相关推荐"),
                     ],
+                ])
+            }
+
+            if path == "/comics/comic-1/comments" {
+                return TestSupport.jsonResponse(data: [
+                    "comments": [
+                        "docs": [
+                            comment(id: "comment-1", content: "第一页评论", commentsCount: 0),
+                        ],
+                        "total": 1,
+                        "limit": 1,
+                        "page": 1,
+                        "pages": 1,
+                    ],
+                    "topComments": [],
                 ])
             }
 
@@ -131,6 +164,7 @@ final class ComicDetailViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.recommended.map(\.id), ["recommended-1"])
         XCTAssertEqual(viewModel.episodes.map(\.order), [1])
+        XCTAssertEqual(viewModel.commentEntryCount, 1)
     }
 
     func testLoadStopsWhenDetailRequestFails() async {
@@ -199,5 +233,23 @@ private func episode(id: String, title: String, order: Int) -> [String: Any] {
         "title": title,
         "order": order,
         "updated_at": "2024-01-01T00:00:00.000Z",
+    ]
+}
+
+private func comment(id: String, content: String, commentsCount: Int, isTop: Bool = false) -> [String: Any] {
+    [
+        "_id": id,
+        "content": content,
+        "_user": [
+            "_id": "user-\(id)",
+            "name": "评论用户",
+        ],
+        "totalComments": commentsCount,
+        "commentsCount": commentsCount,
+        "isTop": isTop,
+        "hide": false,
+        "created_at": "2024-01-01T00:00:00.000Z",
+        "likesCount": 0,
+        "isLiked": false,
     ]
 }

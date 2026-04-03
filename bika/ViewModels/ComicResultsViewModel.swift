@@ -1,7 +1,50 @@
 import SwiftUI
 
+nonisolated enum ComicResultsQuery: Sendable {
+    case favourites
+    case author(String)
+    case tag(String)
+
+    var pageStorageKey: String {
+        switch self {
+        case .favourites:
+            return "lastPage_favourites"
+        case .author(let author):
+            return "lastPage_author_\(author)"
+        case .tag(let keyword):
+            return "lastPage_tag_\(keyword)"
+        }
+    }
+
+    var restorationKey: String {
+        switch self {
+        case .favourites:
+            return "comicResults_favourites"
+        case .author(let author):
+            return "comicResults_author_\(author)"
+        case .tag(let keyword):
+            return "comicResults_tag_\(keyword)"
+        }
+    }
+
+    func loadPage(
+        using client: any APIClientProtocol,
+        page: Int,
+        sort: SortMode
+    ) async throws -> APIResponse<ComicsData> {
+        switch self {
+        case .favourites:
+            return try await client.send(.favourites(page: page, sort: sort))
+        case .author(let author):
+            return try await client.send(.search(keyword: author, page: page, sort: sort))
+        case .tag(let keyword):
+            return try await client.send(.search(keyword: keyword, page: page, sort: sort))
+        }
+    }
+}
+
 @Observable
-final class ComicListViewModel {
+final class ComicResultsViewModel {
     var comics: [Comic] = []
     var isLoading = false
     var currentPage = 0
@@ -11,28 +54,27 @@ final class ComicListViewModel {
     var errorMessage: String?
     var pendingRestoreComicID: String?
 
-    let category: String
+    let query: ComicResultsQuery
+
     private let client: any APIClientProtocol
     private let keyValueStore: any KeyValueStore
     private let navigationStateStore: NavigationStateStore
-    private var storageKey: String { "lastPage_category_\(category)" }
-    private var restorationKey: String { "comicList_\(category)" }
     private var activeRequestID = 0
     private var initialPageToLoad: Int?
 
     init(
-        category: String,
+        query: ComicResultsQuery,
         client: any APIClientProtocol = APIClient.shared,
         keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore,
         navigationStateStore: NavigationStateStore = .shared
     ) {
-        self.category = category
+        self.query = query
         self.client = client
         self.keyValueStore = keyValueStore
         self.navigationStateStore = navigationStateStore
-        self.lastVisitedPage = keyValueStore.integer(forKey: storageKey)
+        lastVisitedPage = keyValueStore.integer(forKey: query.pageStorageKey)
 
-        if let savedState = navigationStateStore.comicListState(for: restorationKey) {
+        if let savedState = navigationStateStore.comicListState(for: query.restorationKey) {
             sortMode = SortMode(rawValue: savedState.sortModeRawValue) ?? .defaultSort
             initialPageToLoad = max(savedState.currentPage, 1)
             pendingRestoreComicID = savedState.anchorComicID
@@ -50,17 +92,23 @@ final class ComicListViewModel {
         guard page >= 1 else { return }
         let requestID = beginRequest()
         let requestedSort = sortMode
+        errorMessage = nil
 
         do {
-            let response: APIResponse<ComicsData> = try await client.send(
-                .comics(category: category, page: page, sort: requestedSort)
-            )
+            let response = try await query.loadPage(using: client, page: page, sort: requestedSort)
             guard requestID == activeRequestID else { return }
+
             if let data = response.data {
                 comics = data.comics.docs
                 currentPage = data.comics.page
                 totalPages = data.comics.pages
                 lastVisitedPage = data.comics.page
+                saveNavigationState(anchorComicID: pendingRestoreComicID)
+            } else {
+                comics = []
+                currentPage = max(page, 1)
+                totalPages = 1
+                lastVisitedPage = currentPage
                 saveNavigationState(anchorComicID: pendingRestoreComicID)
             }
         } catch {
@@ -103,7 +151,7 @@ final class ComicListViewModel {
 
     func persistPage() {
         guard currentPage > 0 else { return }
-        keyValueStore.set(currentPage, forKey: storageKey)
+        keyValueStore.set(currentPage, forKey: query.pageStorageKey)
         saveNavigationState(anchorComicID: pendingRestoreComicID)
     }
 
@@ -134,6 +182,6 @@ final class ComicListViewModel {
             sortModeRawValue: sortMode.rawValue,
             anchorComicID: anchorComicID
         )
-        navigationStateStore.saveComicListState(state, for: restorationKey)
+        navigationStateStore.saveComicListState(state, for: query.restorationKey)
     }
 }
