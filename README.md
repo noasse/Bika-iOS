@@ -1,122 +1,150 @@
 # Bika-iOS
 
-一个基于 SwiftUI 构建的 iOS 漫画阅读应用工程，当前重点放在可维护性、测试稳定性和渐进式重构，而不是一次性推翻重写。
+A SwiftUI-based iOS comic reader project focused on browsing, reading, commenting, and progress recovery.
 
-## 项目状态
+> Status: actively maintainable  
+> Platform: iOS 18.0+  
+> Stack: SwiftUI, `@Observable`, async/await, Xcode Test Plan
 
-当前项目已经完成一轮面向维护性的收口，重点解决了这些问题：
+## Overview
 
-- 依赖注入边界不清
-- 分页列表逻辑重复
-- 评论解码过于宽松
-- 用户动作失败时提示不明确
-- 详情页和阅读器职责过重
+Bika-iOS is a full-featured mobile reading client built around a real user flow instead of isolated demos.  
+The project covers the core experience of a comic reader app:
 
-截至 `2026-04-03`，本地验证结果：
+- discover content through categories, ranking, and search
+- inspect comic details, tags, authors, and recommendations
+- read chapters with progress persistence and resume support
+- browse comments and child comments
+- manage favourites, reading history, theme, and image quality
 
-- `build-for-testing` 通过
-- `unit` 通过
-- `ui-smoke` 通过
+Besides being a working app project, the repository is also useful as a reference for:
 
-## 技术栈
+- SwiftUI app architecture with `@Observable`
+- async/await driven networking and state updates
+- reusable paginated list patterns
+- mock-first testing for unit and UI smoke coverage
 
-- Swift 5
-- SwiftUI
-- `@Observable`
-- async/await
-- Xcode Test Plan
-- `xcodebuild` + shell script 测试入口
+## Features
 
-## 主要能力
+- Category browsing with paginated comic lists
+- Ranking pages for multiple time ranges
+- Search with sorting, pagination, and result restoration
+- Comic detail pages with metadata, episodes, comments entry, and recommendations
+- Reader with horizontal paging and vertical scrolling modes
+- Reading progress persistence and continue-reading recovery
+- Comment and child-comment browsing with like and reply actions
+- Favourites and reading history
+- Theme mode, image quality, and content filtering settings
 
-- 分类浏览
-- 漫画搜索
-- 排行榜
-- 漫画详情
-- 评论与子评论
-- 阅读器进度恢复
-- 收藏与阅读记录
-- 主题与图片质量设置
+## Highlights
 
-## 当前架构方向
+### Reusable paginated list flow
 
-项目当前不是“完全重做架构”，而是在现有 SwiftUI 方向上做渐进式治理。
+Multiple comic result pages share the same pagination behavior, restoration logic, and error handling through:
 
-核心原则：
+- [ComicResultsViewModel.swift](bika/ViewModels/ComicResultsViewModel.swift)
+- [PaginatedComicResultsView.swift](bika/Views/Helpers/PaginatedComicResultsView.swift)
 
-- View 负责布局与轻量编排
-- ViewModel 负责状态和异步动作
-- 共享对象作为默认注入源，而不是页面里的直接业务入口
-- 分页漫画列表优先复用统一模式
-- 模型解码遵循“关键字段严格、非关键字段宽容”
+### Split detail screen composition
 
-关键实现位置：
+The detail page is organized into dedicated sections instead of one oversized view file:
 
-- 统一分页列表：
-  - [ComicResultsViewModel.swift](bika/ViewModels/ComicResultsViewModel.swift)
-  - [PaginatedComicResultsView.swift](bika/Views/Helpers/PaginatedComicResultsView.swift)
-- 详情页拆分：
-  - [ComicDetailView.swift](bika/Views/ComicDetailView.swift)
-  - [ComicDetailSections.swift](bika/Views/ComicDetailSections.swift)
-- 依赖装配：
-  - [AppDependencies.swift](bika/Support/AppDependencies.swift)
-- 测试 mock 基础设施：
-  - [MockURLProtocol.swift](bika/Support/MockURLProtocol.swift)
-  - [SmokeFixtureRouter.swift](bika/Support/SmokeFixtureRouter.swift)
+- [ComicDetailView.swift](bika/Views/ComicDetailView.swift)
+- [ComicDetailSections.swift](bika/Views/ComicDetailSections.swift)
 
-## 目录结构
+### Reader progress recovery
+
+The reading flow persists chapter and page position so users can jump back in quickly:
+
+- [ComicReaderView.swift](bika/Views/ComicReaderView.swift)
+- [ReadingProgressManager.swift](bika/Views/Helpers/ReadingProgressManager.swift)
+
+### Mock-first testing infrastructure
+
+The app can switch to fixture-backed dependencies for repeatable automated tests:
+
+- [AppDependencies.swift](bika/Support/AppDependencies.swift)
+- [MockURLProtocol.swift](bika/Support/MockURLProtocol.swift)
+- [SmokeFixtureRouter.swift](bika/Support/SmokeFixtureRouter.swift)
+
+## Project Structure
 
 ```text
 .
-├── bika/                  # App 源码
+├── bika/                  # Application source code
 ├── bikaTests/             # Unit tests
 ├── bikaUITests/           # UI smoke tests
-├── scripts/test.sh        # 统一测试入口
-├── TESTING.md             # 测试说明
-├── bika项目文档.md         # 架构与维护文档
-└── .github/workflows/     # CI
+├── scripts/test.sh        # Unified local test entry
+├── TESTING.md             # Testing guide
+├── bika项目文档.md         # Architecture and maintenance notes
+└── .github/workflows/     # CI workflows
 ```
 
-## 本地运行与测试
+Within `bika/`, the source tree is organized by responsibility:
 
-环境要求：
+- `Models`: response models and decoding rules
+- `Network`: endpoints, client, signing, and API errors
+- `Support`: dependency setup, mocks, navigation restoration, image helpers
+- `ViewModels`: page state and async business flow
+- `Views`: screens and page composition
+- `Views/Helpers`: shared UI, pagination, images, and managers
+
+## Getting Started
+
+### Requirements
 
 - Xcode `26.4`
-- 模拟器默认 `iPhone 17`
+- iOS Simulator
+- Default simulator target: `iPhone 17`
 
-常用命令：
+### Common Commands
 
 ```bash
 chmod +x ./scripts/test.sh
+./scripts/test.sh build-for-testing
 ./scripts/test.sh unit
 ./scripts/test.sh ui-smoke
 ./scripts/test.sh all
 ```
 
-更多测试说明见 [TESTING.md](TESTING.md)。
+## Testing
+
+The repository currently uses two automated test layers:
+
+- `Unit`
+- `UI Smoke`
+
+Tests are mock-based by default, so they do not require a real backend or live account.
+
+More details:
+
+- [TESTING.md](TESTING.md)
 
 ## CI
 
-GitHub Actions 配置位于：
+GitHub Actions workflow:
 
 - [.github/workflows/ios-tests.yml](.github/workflows/ios-tests.yml)
 
-当前包含两个 job：
+Current checks on `push` and `pull_request`:
 
 - `unit`
 - `ui-smoke`
 
-## 维护建议
+## Roadmap
 
-如果你要继续在这个仓库上开发，最值得坚持的约束是：
+Current maintenance direction:
 
-- 新增分页列表页时优先复用统一分页模式
-- 新增网络请求通过可注入 client 进入
-- 不要在 View 里直接扩散 `APIClient.shared` 或 `UserDefaults.standard`
-- 用户动作失败要给可见反馈
-- 新增模型解码时明确关键字段与降级字段
+- continue reusing the shared paginated list pattern for new comic list pages
+- keep shrinking direct singleton usage inside views
+- expand unit coverage around ViewModels and support utilities
+- keep failure paths visible instead of silently degrading critical actions
 
-## 文档
+## Documentation
 
-- 项目架构与维护约定：[bika项目文档.md](bika项目文档.md)
-- 测试说明：[TESTING.md](TESTING.md)
+- Testing guide: [TESTING.md](TESTING.md)
+- Architecture and maintenance notes: [bika项目文档.md](bika项目文档.md)
+
+## License
+
+No license file is currently included in this repository.
