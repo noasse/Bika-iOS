@@ -45,9 +45,6 @@ struct LeaderboardView: View {
             .background(Color.mainBg(for: colorScheme))
             .navigationTitle("排行榜")
             .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: Comic.self) { comic in
-                ComicDetailView(comicId: comic.id)
-            }
             .imagePreviewSheet(url: $previewImageURL)
             .task {
                 await viewModel.loadIfNeeded()
@@ -92,7 +89,9 @@ struct LeaderboardView: View {
 
                 LazyVStack(spacing: 10) {
                     ForEach(Array(filteredComics.enumerated()), id: \.element.id) { index, comic in
-                        NavigationLink(value: comic) {
+                        NavigationLink {
+                            ComicDetailView(comicId: comic.id)
+                        } label: {
                             HStack(spacing: 0) {
                                 Text("\(index + 1)")
                                     .font(.headline)

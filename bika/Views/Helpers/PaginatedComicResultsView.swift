@@ -64,7 +64,9 @@ struct PaginatedComicResultsView<Header: View, LeadingContent: View>: View {
                 } else {
                     LazyVStack(spacing: 10) {
                         ForEach(Array(comics.enumerated()), id: \.element.id) { index, comic in
-                            NavigationLink(value: comic) {
+                            NavigationLink {
+                                ComicDetailView(comicId: comic.id)
+                            } label: {
                                 HStack(spacing: 0) {
                                     leadingContent(index, comic)
                                     ComicCardView(comic: comic, previewImageURL: $previewImageURL)
@@ -124,9 +126,6 @@ struct PaginatedComicResultsView<Header: View, LeadingContent: View>: View {
                         )
                     }
                 }
-            }
-            .navigationDestination(for: Comic.self) { comic in
-                ComicDetailView(comicId: comic.id)
             }
             .imagePreviewSheet(url: $previewImageURL)
             .onChange(of: comics.map(\.id)) { _, _ in

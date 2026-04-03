@@ -101,6 +101,44 @@ final class BikaSmokeUITests: XCTestCase {
         XCTAssertEqual(recordedQualityValue.label, "high")
     }
 
+    func testAuthorResultsReturnToListAfterOpeningComicDetail() throws {
+        let app = launchApp(resetState: true)
+
+        openComicDetail(in: app)
+
+        let authorButton = app.buttons["测试作者"]
+        XCTAssertTrue(authorButton.waitForExistence(timeout: 5))
+        authorButton.tap()
+
+        let authorResult = app.buttons["author.result.comic-search-1"]
+        XCTAssertTrue(authorResult.waitForExistence(timeout: 5))
+        authorResult.tap()
+
+        XCTAssertTrue(app.buttons["comicDetail.openComments"].waitForExistence(timeout: 5))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        XCTAssertTrue(authorResult.waitForExistence(timeout: 5))
+    }
+
+    func testFavouritesReturnToListAfterOpeningComicDetail() throws {
+        let app = launchApp(resetState: true)
+
+        app.tabBars.buttons["我的"].tap()
+
+        let favouritesButton = app.buttons["我的收藏"]
+        XCTAssertTrue(favouritesButton.waitForExistence(timeout: 5))
+        favouritesButton.tap()
+
+        let favouriteResult = app.buttons["favourites.result.comic-favourite-1"]
+        XCTAssertTrue(favouriteResult.waitForExistence(timeout: 5))
+        favouriteResult.tap()
+
+        XCTAssertTrue(app.buttons["comicDetail.openComments"].waitForExistence(timeout: 5))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        XCTAssertTrue(favouriteResult.waitForExistence(timeout: 5))
+    }
+
     @discardableResult
     private func launchApp(resetState: Bool) -> XCUIApplication {
         let app = XCUIApplication()

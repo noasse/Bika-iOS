@@ -27,6 +27,10 @@ nonisolated enum SmokeFixtureRouter {
             let sort = requestBody?.sort ?? SortMode.defaultSort.rawValue
             return jsonResponse(data: ["comics": searchResults(page: page, sort: sort)])
 
+        case ("GET", "/users/favourite"):
+            let sort = queryItems.first(where: { $0.name == "s" })?.value ?? SortMode.defaultSort.rawValue
+            return jsonResponse(data: ["comics": favouriteResults(page: page, sort: sort)])
+
         case ("GET", let detailPath) where detailPath.hasPrefix("/comics/") && !detailPath.contains("/eps") && !detailPath.contains("/comments") && !detailPath.contains("/recommendation"):
             return jsonResponse(data: ["comic": comicDetail(id: comicIdentifier(from: detailPath))])
 
@@ -159,11 +163,43 @@ nonisolated enum SmokeFixtureRouter {
         ]
     }
 
+    private static func favouriteResults(page: Int, sort: String) -> [String: Any] {
+        let allDocs: [[String: Any]]
+        if sort == SortMode.liked.rawValue {
+            allDocs = [
+                comic(id: "comic-favourite-2", title: "收藏高赞漫画", likes: 88, views: 160),
+                comic(id: "comic-favourite-1", title: "收藏漫画 Alpha", likes: 42, views: 120),
+                comic(id: "comic-favourite-3", title: "收藏漫画 Beta", likes: 12, views: 80),
+            ]
+        } else {
+            allDocs = [
+                comic(id: "comic-favourite-1", title: "收藏漫画 Alpha", likes: 42, views: 120),
+                comic(id: "comic-favourite-2", title: "收藏高赞漫画", likes: 88, views: 160),
+                comic(id: "comic-favourite-3", title: "收藏漫画 Beta", likes: 12, views: 80),
+            ]
+        }
+
+        let pageSize = 2
+        let startIndex = max((page - 1) * pageSize, 0)
+        let docs = Array(allDocs.dropFirst(startIndex).prefix(pageSize))
+
+        return [
+            "docs": docs,
+            "total": allDocs.count,
+            "limit": pageSize,
+            "page": page,
+            "pages": Int(ceil(Double(allDocs.count) / Double(pageSize))),
+        ]
+    }
+
     private static func comicDetail(id: String) -> [String: Any] {
         let titleMap = [
             "comic-search-1": "冒烟漫画 Alpha",
             "comic-search-2": "爱心榜首",
             "comic-search-3": "冒烟漫画 Gamma",
+            "comic-favourite-1": "收藏漫画 Alpha",
+            "comic-favourite-2": "收藏高赞漫画",
+            "comic-favourite-3": "收藏漫画 Beta",
         ]
 
         return [
@@ -288,19 +324,24 @@ nonisolated enum SmokeFixtureRouter {
         ]
     }
 
-    private static func comic(id: String, title: String) -> [String: Any] {
+    private static func comic(
+        id: String,
+        title: String,
+        likes: Int = 50,
+        views: Int = 100
+    ) -> [String: Any] {
         [
             "_id": id,
             "title": title,
             "author": "测试作者",
-            "totalViews": 100,
-            "totalLikes": 50,
+            "totalViews": views,
+            "totalLikes": likes,
             "pagesCount": 120,
             "epsCount": 2,
             "finished": false,
             "categories": ["嗶咔漢化", "测试"],
             "thumb": media(path: "comics/\(id)/thumb.png"),
-            "likesCount": 50,
+            "likesCount": likes,
         ]
     }
 
