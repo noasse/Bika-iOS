@@ -190,6 +190,320 @@ final class ComicDetailViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.recommended.isEmpty)
         XCTAssertTrue(viewModel.episodes.isEmpty)
     }
+
+    func testToggleFavouriteAcceptsEmptySuccessResponseAndRefreshesDetail() async {
+        let detailRequestCount = LockedValue(0)
+        let (client, _) = TestSupport.makeAPIClient { request in
+            let path = request.url?.path ?? ""
+            let method = request.httpMethod ?? "GET"
+
+            if method == "POST", path == "/comics/comic-1/favourite" {
+                let body = try? JSONSerialization.data(withJSONObject: [
+                    "code": 200,
+                    "message": "success",
+                ])
+                return MockHTTPResponse(
+                    statusCode: 200,
+                    headers: ["Content-Type": "application/json"],
+                    data: body ?? Data()
+                )
+            }
+
+            if method == "GET", path == "/comics/comic-1" {
+                detailRequestCount.value += 1
+                return TestSupport.jsonResponse(data: [
+                    "comic": [
+                        "_id": "comic-1",
+                        "title": "测试漫画",
+                        "isFavourite": detailRequestCount.value > 1,
+                    ],
+                ])
+            }
+
+            if path == "/comics/comic-1/recommendation" {
+                return TestSupport.jsonResponse(data: [
+                    "comics": [],
+                ])
+            }
+
+            if path == "/comics/comic-1/comments" {
+                return TestSupport.jsonResponse(data: [
+                    "comments": [
+                        "docs": [],
+                        "total": 0,
+                        "limit": 1,
+                        "page": 1,
+                        "pages": 1,
+                    ],
+                    "topComments": [],
+                ])
+            }
+
+            if path == "/comics/comic-1/eps" {
+                return TestSupport.jsonResponse(data: [
+                    "eps": [
+                        "docs": [],
+                        "total": 0,
+                        "limit": 40,
+                        "page": 1,
+                        "pages": 1,
+                    ],
+                ])
+            }
+
+            return TestSupport.jsonResponse(data: [:])
+        }
+
+        let viewModel = ComicDetailViewModel(comicId: "comic-1", client: client)
+        await viewModel.load()
+        await viewModel.toggleFavourite()
+
+        XCTAssertEqual(detailRequestCount.value, 2)
+        XCTAssertEqual(viewModel.detail?.isFavourite, true)
+        XCTAssertNil(viewModel.actionErrorMessage)
+    }
+
+    func testLoadRecommendedAcceptsNumericStringMetrics() async {
+        let (client, _) = TestSupport.makeAPIClient { request in
+            let path = request.url?.path ?? ""
+
+            if path == "/comics/comic-1" {
+                return TestSupport.jsonResponse(data: [
+                    "comic": [
+                        "_id": "comic-1",
+                        "title": "测试漫画",
+                    ],
+                ])
+            }
+
+            if path == "/comics/comic-1/recommendation" {
+                return TestSupport.jsonResponse(data: [
+                    "comics": [
+                        [
+                            "_id": "recommended-1",
+                            "title": "相关推荐",
+                            "totalViews": "12",
+                            "totalLikes": "34",
+                            "pagesCount": "56",
+                            "epsCount": "2",
+                            "likesCount": "7",
+                        ],
+                    ],
+                ])
+            }
+
+            if path == "/comics/comic-1/comments" {
+                return TestSupport.jsonResponse(data: [
+                    "comments": [
+                        "docs": [],
+                        "total": 0,
+                        "limit": 1,
+                        "page": 1,
+                        "pages": 1,
+                    ],
+                    "topComments": [],
+                ])
+            }
+
+            if path == "/comics/comic-1/eps" {
+                return TestSupport.jsonResponse(data: [
+                    "eps": [
+                        "docs": [],
+                        "total": 0,
+                        "limit": 40,
+                        "page": 1,
+                        "pages": 1,
+                    ],
+                ])
+            }
+
+            return TestSupport.jsonResponse(data: [:])
+        }
+
+        let viewModel = ComicDetailViewModel(comicId: "comic-1", client: client)
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.recommended.map(\.id), ["recommended-1"])
+        XCTAssertNil(viewModel.recommendedError)
+    }
+
+    func testLoadRecommendedShowsErrorWhenAllRecommendedComicsAreMalformed() async {
+        let (client, _) = TestSupport.makeAPIClient { request in
+            let path = request.url?.path ?? ""
+
+            if path == "/comics/comic-1" {
+                return TestSupport.jsonResponse(data: [
+                    "comic": [
+                        "_id": "comic-1",
+                        "title": "测试漫画",
+                    ],
+                ])
+            }
+
+            if path == "/comics/comic-1/recommendation" {
+                return TestSupport.jsonResponse(data: [
+                    "comics": [
+                        [
+                            "title": "缺少 id",
+                        ],
+                        [
+                            "_id": "recommended-2",
+                        ],
+                    ],
+                ])
+            }
+
+            if path == "/comics/comic-1/comments" {
+                return TestSupport.jsonResponse(data: [
+                    "comments": [
+                        "docs": [],
+                        "total": 0,
+                        "limit": 1,
+                        "page": 1,
+                        "pages": 1,
+                    ],
+                    "topComments": [],
+                ])
+            }
+
+            if path == "/comics/comic-1/eps" {
+                return TestSupport.jsonResponse(data: [
+                    "eps": [
+                        "docs": [],
+                        "total": 0,
+                        "limit": 40,
+                        "page": 1,
+                        "pages": 1,
+                    ],
+                ])
+            }
+
+            return TestSupport.jsonResponse(data: [:])
+        }
+
+        let viewModel = ComicDetailViewModel(comicId: "comic-1", client: client)
+        await viewModel.load()
+
+        XCTAssertTrue(viewModel.recommended.isEmpty)
+        XCTAssertNotNil(viewModel.recommendedError)
+    }
+
+    func testLoadRecommendedShowsErrorWhenRecommendationDataIsMissing() async {
+        let (client, _) = TestSupport.makeAPIClient { request in
+            let path = request.url?.path ?? ""
+
+            if path == "/comics/comic-1" {
+                return TestSupport.jsonResponse(data: [
+                    "comic": [
+                        "_id": "comic-1",
+                        "title": "测试漫画",
+                    ],
+                ])
+            }
+
+            if path == "/comics/comic-1/recommendation" {
+                let body = try? JSONSerialization.data(withJSONObject: [
+                    "code": 200,
+                    "message": "success",
+                    "data": NSNull(),
+                ])
+                return MockHTTPResponse(
+                    statusCode: 200,
+                    headers: ["Content-Type": "application/json"],
+                    data: body ?? Data()
+                )
+            }
+
+            if path == "/comics/comic-1/comments" {
+                return TestSupport.jsonResponse(data: [
+                    "comments": [
+                        "docs": [],
+                        "total": 0,
+                        "limit": 1,
+                        "page": 1,
+                        "pages": 1,
+                    ],
+                    "topComments": [],
+                ])
+            }
+
+            if path == "/comics/comic-1/eps" {
+                return TestSupport.jsonResponse(data: [
+                    "eps": [
+                        "docs": [],
+                        "total": 0,
+                        "limit": 40,
+                        "page": 1,
+                        "pages": 1,
+                    ],
+                ])
+            }
+
+            return TestSupport.jsonResponse(data: [:])
+        }
+
+        let viewModel = ComicDetailViewModel(comicId: "comic-1", client: client)
+        await viewModel.load()
+
+        XCTAssertTrue(viewModel.recommended.isEmpty)
+        XCTAssertEqual(viewModel.recommendedError, "推荐数据为空")
+    }
+
+    func testLoadKeepsDetailCommentCountWhenCommentsPaginationUsesStrings() async {
+        let (client, _) = TestSupport.makeAPIClient { request in
+            let path = request.url?.path ?? ""
+
+            if path == "/comics/comic-1" {
+                return TestSupport.jsonResponse(data: [
+                    "comic": [
+                        "_id": "comic-1",
+                        "title": "测试漫画",
+                        "totalComments": 6,
+                    ],
+                ])
+            }
+
+            if path == "/comics/comic-1/recommendation" {
+                return TestSupport.jsonResponse(data: [
+                    "comics": [],
+                ])
+            }
+
+            if path == "/comics/comic-1/comments" {
+                return TestSupport.jsonResponse(data: [
+                    "comments": [
+                        "docs": [
+                            comment(id: "comment-1", content: "第一页评论", commentsCount: 0),
+                        ],
+                        "total": "6",
+                        "limit": 1,
+                        "page": "1",
+                        "pages": "1",
+                    ],
+                    "topComments": [],
+                ])
+            }
+
+            if path == "/comics/comic-1/eps" {
+                return TestSupport.jsonResponse(data: [
+                    "eps": [
+                        "docs": [],
+                        "total": 0,
+                        "limit": 40,
+                        "page": 1,
+                        "pages": 1,
+                    ],
+                ])
+            }
+
+            return TestSupport.jsonResponse(data: [:])
+        }
+
+        let viewModel = ComicDetailViewModel(comicId: "comic-1", client: client)
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.commentEntryCount, 6)
+    }
 }
 
 private actor AsyncGate {

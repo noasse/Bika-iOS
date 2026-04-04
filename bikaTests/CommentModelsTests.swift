@@ -32,6 +32,21 @@ final class CommentModelsTests: XCTestCase {
         XCTAssertNil(comment.isLiked)
     }
 
+    func testCommentDecodingAcceptsNumericStringsForCounts() throws {
+        let data = jsonData([
+            "_id": "comment-1",
+            "totalComments": "2",
+            "commentsCount": "3",
+            "likesCount": "4",
+        ])
+
+        let comment = try JSONDecoder().decode(Comment.self, from: data)
+
+        XCTAssertEqual(comment.totalComments, 2)
+        XCTAssertEqual(comment.commentsCount, 3)
+        XCTAssertEqual(comment.likesCount, 4)
+    }
+
     func testCommentsDataDecodingFailsWhenCriticalPaginationFieldIsMissing() {
         let data = jsonData([
             "comments": [
@@ -68,6 +83,27 @@ final class CommentModelsTests: XCTestCase {
 
         XCTAssertEqual(comments.docs.map(\.id), ["comment-1"])
         XCTAssertTrue(comments.topComments.isEmpty)
+    }
+
+    func testCommentsDataDecodesNumericStringPaginationFields() throws {
+        let data = jsonData([
+            "comments": [
+                "docs": [
+                    ["_id": "comment-1"],
+                ],
+                "total": "5",
+                "page": "1",
+                "pages": "3",
+            ],
+            "topComments": [],
+        ])
+
+        let comments = try JSONDecoder().decode(CommentsData.self, from: data)
+
+        XCTAssertEqual(comments.docs.map(\.id), ["comment-1"])
+        XCTAssertEqual(comments.total, 5)
+        XCTAssertEqual(comments.page, 1)
+        XCTAssertEqual(comments.pages, 3)
     }
 }
 

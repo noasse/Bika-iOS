@@ -38,6 +38,7 @@ final class ComicDetailViewModel {
                 return
             }
             detail = comic
+            commentEntryCount = comic.totalComments ?? comic.commentsCount
         } catch {
             errorMessage = error.localizedDescription
             isLoading = false
@@ -135,7 +136,7 @@ final class ComicDetailViewModel {
     @MainActor
     func toggleFavourite() async {
         do {
-            let _: APIResponse<FavouriteData> = try await client.send(.favouriteComic(id: comicId))
+            let _: APIResponse<EmptyData> = try await client.send(.favouriteComic(id: comicId))
             let response: APIResponse<ComicDetailData> = try await client.send(.comicDetail(id: comicId))
             detail = response.data?.comic
         } catch {
@@ -153,7 +154,12 @@ final class ComicDetailViewModel {
             let response: APIResponse<RecommendedData> = try await client.send(
                 .recommended(comicId: comicId)
             )
-            recommended = response.data?.comics ?? []
+            guard let data = response.data else {
+                recommended = []
+                recommendedError = "推荐数据为空"
+                return
+            }
+            recommended = data.comics
         } catch {
             recommendedError = error.localizedDescription
         }
@@ -167,7 +173,7 @@ final class ComicDetailViewModel {
             )
             commentEntryCount = response.data?.topLevelCommentDisplayCount
         } catch {
-            commentEntryCount = nil
+            commentEntryCount = commentEntryCount ?? detail?.totalComments ?? detail?.commentsCount
         }
     }
 }

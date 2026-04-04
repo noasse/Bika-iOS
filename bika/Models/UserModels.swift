@@ -42,12 +42,6 @@ nonisolated struct PunchInResult: Decodable, Sendable {
     let punchInLastDay: String?
 }
 
-// MARK: - Favourite
-
-nonisolated struct FavouriteData: Decodable, Sendable {
-    let comics: PaginatedResponse<Comic>
-}
-
 // MARK: - Update Requests
 
 nonisolated struct UpdatePasswordRequest: Encodable, Sendable {

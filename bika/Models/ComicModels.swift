@@ -42,6 +42,22 @@ nonisolated struct Comic: Decodable, Sendable, Identifiable, Hashable {
         case title, author, totalViews, viewsCount, totalLikes, pagesCount
         case epsCount, finished, categories, thumb, likesCount
     }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        author = container.decodeLossyIfPresent(String.self, forKey: .author)
+        totalViews = container.decodeFlexibleIntIfPresent(forKey: .totalViews)
+        viewsCount = container.decodeFlexibleIntIfPresent(forKey: .viewsCount)
+        totalLikes = container.decodeFlexibleIntIfPresent(forKey: .totalLikes)
+        pagesCount = container.decodeFlexibleIntIfPresent(forKey: .pagesCount)
+        epsCount = container.decodeFlexibleIntIfPresent(forKey: .epsCount)
+        finished = container.decodeLossyIfPresent(Bool.self, forKey: .finished)
+        categories = container.decodeLossyIfPresent([String].self, forKey: .categories)
+        thumb = container.decodeLossyIfPresent(Media.self, forKey: .thumb)
+        likesCount = container.decodeFlexibleIntIfPresent(forKey: .likesCount)
+    }
 }
 
 nonisolated struct ComicsData: Decodable, Sendable {
@@ -166,7 +182,9 @@ nonisolated struct RecommendedData: Decodable, Sendable {
         // Decode each comic individually, skipping any that fail
         var comicsContainer = try container.nestedUnkeyedContainer(forKey: .comics)
         var result: [Comic] = []
+        var sawSourceComic = false
         while !comicsContainer.isAtEnd {
+            sawSourceComic = true
             if let comic = try? comicsContainer.decode(Comic.self) {
                 result.append(comic)
             } else {
@@ -174,6 +192,15 @@ nonisolated struct RecommendedData: Decodable, Sendable {
                 _ = try? comicsContainer.decode(AnyCodable.self)
             }
         }
+
+        if sawSourceComic && result.isEmpty {
+            throw DecodingError.dataCorruptedError(
+                forKey: .comics,
+                in: container,
+                debugDescription: "All recommended comics failed to decode"
+            )
+        }
+
         comics = result
     }
 

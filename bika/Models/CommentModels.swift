@@ -1,11 +1,5 @@
 import Foundation
 
-private extension KeyedDecodingContainer {
-    nonisolated func decodeLossyIfPresent<T: Decodable>(_ type: T.Type, forKey key: Key) -> T? {
-        try? decodeIfPresent(type, forKey: key)
-    }
-}
-
 // MARK: - Comment
 
 nonisolated struct Comment: Decodable, Sendable, Identifiable, Hashable {
@@ -45,12 +39,12 @@ nonisolated struct Comment: Decodable, Sendable, Identifiable, Hashable {
         content = container.decodeLossyIfPresent(String.self, forKey: .content)
         user = container.decodeLossyIfPresent(Creator.self, forKey: .user)
         comic = container.decodeLossyIfPresent(String.self, forKey: .comic)
-        totalComments = container.decodeLossyIfPresent(Int.self, forKey: .totalComments)
+        totalComments = container.decodeFlexibleIntIfPresent(forKey: .totalComments)
         isTop = container.decodeLossyIfPresent(Bool.self, forKey: .isTop)
         hide = container.decodeLossyIfPresent(Bool.self, forKey: .hide)
         created_at = container.decodeLossyIfPresent(String.self, forKey: .created_at)
-        likesCount = container.decodeLossyIfPresent(Int.self, forKey: .likesCount)
-        commentsCount = container.decodeLossyIfPresent(Int.self, forKey: .commentsCount)
+        likesCount = container.decodeFlexibleIntIfPresent(forKey: .likesCount)
+        commentsCount = container.decodeFlexibleIntIfPresent(forKey: .commentsCount)
         isLiked = container.decodeLossyIfPresent(Bool.self, forKey: .isLiked)
     }
 }
@@ -74,9 +68,9 @@ nonisolated struct CommentsData: Decodable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let pg = try container.nestedContainer(keyedBy: PaginationKeys.self, forKey: .comments)
         docs = try pg.decode([Comment].self, forKey: .docs)
-        page = try pg.decode(Int.self, forKey: .page)
-        pages = try pg.decode(Int.self, forKey: .pages)
-        total = try pg.decode(Int.self, forKey: .total)
+        page = try pg.decodeFlexibleInt(forKey: .page)
+        pages = try pg.decodeFlexibleInt(forKey: .pages)
+        total = try pg.decodeFlexibleInt(forKey: .total)
         topComments = try container.decodeIfPresent([Comment].self, forKey: .topComments) ?? []
     }
 }
@@ -125,8 +119,8 @@ nonisolated struct ChildCommentsData: Decodable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let pg = try container.nestedContainer(keyedBy: PaginationKeys.self, forKey: .comments)
         docs = try pg.decode([Comment].self, forKey: .docs)
-        page = try pg.decode(Int.self, forKey: .page)
-        pages = try pg.decode(Int.self, forKey: .pages)
+        page = try pg.decodeFlexibleInt(forKey: .page)
+        pages = try pg.decodeFlexibleInt(forKey: .pages)
     }
 }
 

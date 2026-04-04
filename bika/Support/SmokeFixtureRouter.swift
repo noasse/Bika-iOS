@@ -22,6 +22,9 @@ nonisolated enum SmokeFixtureRouter {
         case ("PUT", "/users/profile"):
             return jsonResponse(data: [:])
 
+        case ("POST", let favouritePath) where favouritePath.hasSuffix("/favourite"):
+            return jsonResponse(data: [:])
+
         case ("POST", "/comics/advanced-search"):
             let requestBody = decodeSearchRequest(from: request.resolvedHTTPBodyData())
             let sort = requestBody?.sort ?? SortMode.defaultSort.rawValue

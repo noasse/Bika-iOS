@@ -165,7 +165,7 @@ extension APIEndpoint where Response == APIResponse<LikeActionData> {
     }
 }
 
-extension APIEndpoint where Response == APIResponse<FavouriteData> {
+extension APIEndpoint where Response == APIResponse<EmptyData> {
     static func favouriteComic(id: String) -> Self {
         APIEndpoint(path: "comics/\(id)/favourite", method: .POST)
     }
