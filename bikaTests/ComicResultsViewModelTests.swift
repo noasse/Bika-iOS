@@ -6,10 +6,12 @@ final class ComicResultsViewModelTests: XCTestCase {
     override func setUp() {
         super.setUp()
         NavigationStateStore.shared.clearComicListState(for: ComicResultsQuery.favourites.restorationKey)
+        NavigationStateStore.shared.clearComicListState(for: ComicResultsQuery.author("作者A").restorationKey)
     }
 
     override func tearDown() {
         NavigationStateStore.shared.clearComicListState(for: ComicResultsQuery.favourites.restorationKey)
+        NavigationStateStore.shared.clearComicListState(for: ComicResultsQuery.author("作者A").restorationKey)
         TestSupport.restoreLiveDependencies()
         super.tearDown()
     }
@@ -125,6 +127,63 @@ final class ComicResultsViewModelTests: XCTestCase {
         XCTAssertEqual(requestedSorts.value, [SortMode.defaultSort.rawValue, SortMode.views.rawValue])
         XCTAssertNil(navigationStateStore.comicListState(for: ComicResultsQuery.favourites.restorationKey)?.anchorComicID)
     }
+
+    func testAuthorQueryHydratesCanonicalMetricsFromComicDetail() async {
+        let navigationStateStore = NavigationStateStore.shared
+        let authorQuery = ComicResultsQuery.author("作者A")
+
+        let requestedPaths = LockedValue<[String]>([])
+        let (client, store) = TestSupport.makeAPIClient { request in
+            let path = request.url?.path ?? ""
+            var paths = requestedPaths.value
+            paths.append(path)
+            requestedPaths.value = paths
+
+            switch (request.httpMethod ?? "", path) {
+            case ("POST", "/comics/advanced-search"):
+                return TestSupport.jsonResponse(data: [
+                    "comics": comicsPage(page: 1, pages: 1, docs: [
+                        comic(
+                            id: "comic-author-1",
+                            title: "作者作品",
+                            author: "作者A",
+                            totalViews: nil,
+                            totalLikes: nil,
+                            likesCount: 7
+                        ),
+                    ]),
+                ])
+            case ("GET", "/comics/comic-author-1"):
+                return TestSupport.jsonResponse(data: [
+                    "comic": comicDetailPayload(
+                        id: "comic-author-1",
+                        title: "作者作品",
+                        author: "作者A",
+                        totalViews: 321,
+                        totalLikes: 654,
+                        likesCount: 7
+                    ),
+                ])
+            default:
+                return TestSupport.jsonResponse(data: [:])
+            }
+        }
+
+        let viewModel = ComicResultsViewModel(
+            query: authorQuery,
+            client: client,
+            keyValueStore: store,
+            navigationStateStore: navigationStateStore
+        )
+
+        await viewModel.loadPage(1)
+
+        XCTAssertEqual(requestedPaths.value, ["/comics/advanced-search", "/comics/comic-author-1"])
+        XCTAssertEqual(viewModel.comics.map(\.id), ["comic-author-1"])
+        XCTAssertEqual(viewModel.comics.first?.displayViews, 321)
+        XCTAssertEqual(viewModel.comics.first?.displayLikes, 654)
+        XCTAssertEqual(viewModel.comics.first?.likesCount, 7)
+    }
 }
 
 private func comicsPage(page: Int, pages: Int, docs: [[String: Any]]) -> [String: Any] {
@@ -137,13 +196,18 @@ private func comicsPage(page: Int, pages: Int, docs: [[String: Any]]) -> [String
     ]
 }
 
-private func comic(id: String, title: String) -> [String: Any] {
-    [
+private func comic(
+    id: String,
+    title: String,
+    author: String = "作者",
+    totalViews: Int? = 1,
+    totalLikes: Int? = 1,
+    likesCount: Int? = 1
+) -> [String: Any] {
+    var payload: [String: Any] = [
         "_id": id,
         "title": title,
-        "author": "作者",
-        "totalViews": 1,
-        "totalLikes": 1,
+        "author": author,
         "pagesCount": 1,
         "epsCount": 1,
         "finished": false,
@@ -153,6 +217,67 @@ private func comic(id: String, title: String) -> [String: Any] {
             "path": "static/\(id).jpg",
             "fileServer": "https://example.com",
         ],
-        "likesCount": 1,
+    ]
+
+    if let totalViews {
+        payload["totalViews"] = totalViews
+    }
+
+    if let totalLikes {
+        payload["totalLikes"] = totalLikes
+    }
+
+    if let likesCount {
+        payload["likesCount"] = likesCount
+    }
+
+    return payload
+}
+
+private func comicDetailPayload(
+    id: String,
+    title: String,
+    author: String,
+    totalViews: Int,
+    totalLikes: Int,
+    likesCount: Int
+) -> [String: Any] {
+    [
+        "_id": id,
+        "title": title,
+        "author": author,
+        "description": "详情",
+        "chineseTeam": "汉化组",
+        "categories": [],
+        "tags": [],
+        "pagesCount": 1,
+        "epsCount": 1,
+        "finished": false,
+        "updated_at": "2026-04-07T00:00:00.000Z",
+        "created_at": "2026-04-07T00:00:00.000Z",
+        "thumb": [
+            "originalName": "cover.jpg",
+            "path": "static/\(id).jpg",
+            "fileServer": "https://example.com",
+        ],
+        "creator": [
+            "_id": "creator-1",
+            "name": "作者A",
+            "avatar": [
+                "originalName": "avatar.jpg",
+                "path": "static/avatar.jpg",
+                "fileServer": "https://example.com",
+            ],
+        ],
+        "totalViews": totalViews,
+        "totalLikes": totalLikes,
+        "totalComments": 0,
+        "viewsCount": totalViews,
+        "likesCount": likesCount,
+        "commentsCount": 0,
+        "isFavourite": false,
+        "isLiked": false,
+        "allowDownload": true,
+        "allowComment": true,
     ]
 }

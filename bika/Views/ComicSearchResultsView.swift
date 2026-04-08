@@ -23,8 +23,8 @@ struct AuthorSearchResultsView: View {
         switch viewModel.sortMode {
         case .liked:
             return visibleComics.sorted { lhs, rhs in
-                let lhsLikes = lhs.totalLikes ?? lhs.likesCount ?? 0
-                let rhsLikes = rhs.totalLikes ?? rhs.likesCount ?? 0
+                let lhsLikes = lhs.displayLikes ?? 0
+                let rhsLikes = rhs.displayLikes ?? 0
                 if lhsLikes == rhsLikes {
                     return lhs.id < rhs.id
                 }
@@ -32,8 +32,8 @@ struct AuthorSearchResultsView: View {
             }
         case .views:
             return visibleComics.sorted { lhs, rhs in
-                let lhsViews = lhs.totalViews ?? lhs.viewsCount ?? 0
-                let rhsViews = rhs.totalViews ?? rhs.viewsCount ?? 0
+                let lhsViews = lhs.displayViews ?? 0
+                let rhsViews = rhs.displayViews ?? 0
                 if lhsViews == rhsViews {
                     return lhs.id < rhs.id
                 }

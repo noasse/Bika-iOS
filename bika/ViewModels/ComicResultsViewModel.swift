@@ -27,6 +27,15 @@ nonisolated enum ComicResultsQuery: Sendable {
         }
     }
 
+    var requiresCanonicalMetrics: Bool {
+        switch self {
+        case .author:
+            return true
+        case .favourites, .tag:
+            return false
+        }
+    }
+
     func loadPage(
         using client: any APIClientProtocol,
         page: Int,
@@ -104,6 +113,7 @@ final class ComicResultsViewModel {
                 totalPages = data.comics.pages
                 lastVisitedPage = data.comics.page
                 saveNavigationState(anchorComicID: pendingRestoreComicID)
+                await hydrateCanonicalMetricsIfNeeded(requestID: requestID)
             } else {
                 comics = []
                 currentPage = max(page, 1)
@@ -176,6 +186,55 @@ final class ComicResultsViewModel {
         isLoading = false
     }
 
+    private func hydrateCanonicalMetricsIfNeeded(requestID: Int) async {
+        guard query.requiresCanonicalMetrics, !comics.isEmpty else { return }
+
+        let sourceComics = comics
+        let client = self.client
+
+        let metricsByComicID = await withTaskGroup(
+            of: (String, ComicCanonicalMetrics?).self,
+            returning: [String: ComicCanonicalMetrics].self
+        ) { group in
+            for comic in sourceComics {
+                group.addTask {
+                    do {
+                        let response: APIResponse<ComicDetailData> = try await client.send(.comicDetail(id: comic.id))
+                        guard let detail = response.data?.comic else {
+                            return (comic.id, nil)
+                        }
+
+                        return (
+                            comic.id,
+                            ComicCanonicalMetrics(
+                                totalViews: detail.totalViews ?? detail.viewsCount,
+                                totalLikes: detail.totalLikes ?? detail.likesCount
+                            )
+                        )
+                    } catch {
+                        return (comic.id, nil)
+                    }
+                }
+            }
+
+            var result: [String: ComicCanonicalMetrics] = [:]
+            for await (comicID, metrics) in group {
+                guard let metrics else { continue }
+                result[comicID] = metrics
+            }
+            return result
+        }
+
+        guard requestID == activeRequestID else { return }
+        comics = sourceComics.map { comic in
+            guard let metrics = metricsByComicID[comic.id] else { return comic }
+            return comic.replacingCanonicalStats(
+                totalViews: metrics.totalViews,
+                totalLikes: metrics.totalLikes
+            )
+        }
+    }
+
     private func saveNavigationState(anchorComicID: String?) {
         let state = ComicListNavigationState(
             currentPage: max(currentPage, lastVisitedPage),
@@ -184,4 +243,9 @@ final class ComicResultsViewModel {
         )
         navigationStateStore.saveComicListState(state, for: query.restorationKey)
     }
+}
+
+private struct ComicCanonicalMetrics: Sendable {
+    let totalViews: Int?
+    let totalLikes: Int?
 }

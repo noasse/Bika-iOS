@@ -43,6 +43,34 @@ nonisolated struct Comic: Decodable, Sendable, Identifiable, Hashable {
         case epsCount, finished, categories, thumb, likesCount
     }
 
+    init(
+        id: String,
+        title: String,
+        author: String?,
+        totalViews: Int?,
+        viewsCount: Int?,
+        totalLikes: Int?,
+        pagesCount: Int?,
+        epsCount: Int?,
+        finished: Bool?,
+        categories: [String]?,
+        thumb: Media?,
+        likesCount: Int?
+    ) {
+        self.id = id
+        self.title = title
+        self.author = author
+        self.totalViews = totalViews
+        self.viewsCount = viewsCount
+        self.totalLikes = totalLikes
+        self.pagesCount = pagesCount
+        self.epsCount = epsCount
+        self.finished = finished
+        self.categories = categories
+        self.thumb = thumb
+        self.likesCount = likesCount
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
@@ -57,6 +85,31 @@ nonisolated struct Comic: Decodable, Sendable, Identifiable, Hashable {
         categories = container.decodeLossyIfPresent([String].self, forKey: .categories)
         thumb = container.decodeLossyIfPresent(Media.self, forKey: .thumb)
         likesCount = container.decodeFlexibleIntIfPresent(forKey: .likesCount)
+    }
+
+    var displayViews: Int? {
+        totalViews ?? viewsCount
+    }
+
+    var displayLikes: Int? {
+        totalLikes ?? likesCount
+    }
+
+    func replacingCanonicalStats(totalViews: Int?, totalLikes: Int?) -> Comic {
+        Comic(
+            id: id,
+            title: title,
+            author: author,
+            totalViews: totalViews ?? self.totalViews,
+            viewsCount: viewsCount,
+            totalLikes: totalLikes ?? self.totalLikes,
+            pagesCount: pagesCount,
+            epsCount: epsCount,
+            finished: finished,
+            categories: categories,
+            thumb: thumb,
+            likesCount: likesCount
+        )
     }
 }
 

@@ -32,10 +32,10 @@ struct ComicCardView: View {
                 Spacer()
 
                 HStack(spacing: 12) {
-                    if let views = comic.totalViews ?? comic.viewsCount {
+                    if let views = comic.displayViews {
                         Label("\(views)", systemImage: "eye")
                     }
-                    if let likes = comic.totalLikes ?? comic.likesCount {
+                    if let likes = comic.displayLikes {
                         Label("\(likes)", systemImage: "heart")
                     }
                     if let pages = comic.pagesCount {
