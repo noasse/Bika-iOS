@@ -8,6 +8,11 @@ struct MacSettingsView: View {
     @State private var categories: [Category] = []
     @State private var isLoadingCategories = false
     @State private var categoriesError: String?
+    @State private var cloudHistoryEnabled = false
+    @State private var cloudHistoryBaseURL = ""
+    @State private var cloudHistoryBearerToken = ""
+    @State private var cloudHistoryCertificatePins = ""
+    @State private var cloudHistoryMessage: String?
     @Environment(\.colorScheme) private var colorScheme
 
     init(themeModeRawValue: Binding<String>, blockedCategoriesStore: MacBlockedCategoriesStore) {
@@ -31,6 +36,7 @@ struct MacSettingsView: View {
         .tint(MacUI.accentPink)
         .background(MacUI.appBackground(for: colorScheme))
         .task {
+            loadCloudHistorySettings()
             await loadCategoriesIfNeeded()
         }
     }
@@ -46,6 +52,34 @@ struct MacSettingsView: View {
             Picker("图片质量", selection: imageQualityBinding) {
                 ForEach(ImageQuality.allCases, id: \.self) { quality in
                     Text(quality.macTitle).tag(quality)
+                }
+            }
+
+            Divider()
+
+            Toggle("启用云端历史同步", isOn: $cloudHistoryEnabled)
+
+            if cloudHistoryEnabled {
+                TextField("服务地址", text: $cloudHistoryBaseURL, prompt: Text("https://公网IP:8443"))
+                    .textFieldStyle(.roundedBorder)
+
+                SecureField("同步 Token", text: $cloudHistoryBearerToken)
+                    .textFieldStyle(.roundedBorder)
+
+                TextField("证书 SHA256 pin", text: $cloudHistoryCertificatePins, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...4)
+
+                HStack {
+                    Button("保存云同步设置") {
+                        saveCloudHistorySettings()
+                    }
+
+                    if let cloudHistoryMessage {
+                        Text(cloudHistoryMessage)
+                            .font(.caption)
+                            .foregroundStyle(MacUI.secondaryText(for: colorScheme))
+                    }
                 }
             }
         }
@@ -149,5 +183,62 @@ struct MacSettingsView: View {
         } catch {
             categoriesError = error.localizedDescription
         }
+    }
+
+    private func loadCloudHistorySettings() {
+        let store = AppDependencies.shared.keyValueStore
+        cloudHistoryEnabled = store.string(forKey: CloudHistoryConfig.StorageKeys.isEnabled) == "1"
+        cloudHistoryBaseURL = store.string(forKey: CloudHistoryConfig.StorageKeys.baseURL) ?? ""
+        cloudHistoryBearerToken = store.string(forKey: CloudHistoryConfig.StorageKeys.bearerToken) ?? ""
+        cloudHistoryCertificatePins = (store.stringArray(forKey: CloudHistoryConfig.StorageKeys.certificateSHA256Pins) ?? [])
+            .joined(separator: "\n")
+    }
+
+    private func saveCloudHistorySettings() {
+        let store = AppDependencies.shared.keyValueStore
+        let pins = parsedCloudHistoryPins()
+        let trimmedURL = cloudHistoryBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedToken = cloudHistoryBearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard cloudHistoryEnabled else {
+            store.setCloudHistoryEnabled(false)
+            store.set(trimmedURL, forKey: CloudHistoryConfig.StorageKeys.baseURL)
+            store.set(trimmedToken, forKey: CloudHistoryConfig.StorageKeys.bearerToken)
+            store.set(pins, forKey: CloudHistoryConfig.StorageKeys.certificateSHA256Pins)
+            cloudHistoryMessage = "云端历史同步已关闭"
+            return
+        }
+
+        guard let baseURL = URL(string: trimmedURL), baseURL.scheme?.lowercased() == "https" else {
+            cloudHistoryMessage = "服务地址必须是 https:// 开头"
+            return
+        }
+        guard !trimmedToken.isEmpty else {
+            cloudHistoryMessage = "同步 Token 不能为空"
+            return
+        }
+        guard !pins.isEmpty else {
+            cloudHistoryMessage = "证书 SHA256 pin 不能为空"
+            return
+        }
+
+        store.setCloudHistoryConfig(
+            CloudHistoryConfig(
+                baseURL: baseURL,
+                bearerToken: trimmedToken,
+                certificateSHA256Pins: pins
+            )
+        )
+        cloudHistoryBaseURL = trimmedURL
+        cloudHistoryBearerToken = trimmedToken
+        cloudHistoryCertificatePins = pins.joined(separator: "\n")
+        cloudHistoryMessage = "云端历史同步已保存"
+    }
+
+    private func parsedCloudHistoryPins() -> [String] {
+        cloudHistoryCertificatePins
+            .components(separatedBy: CharacterSet(charactersIn: ",\n "))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 }

@@ -52,6 +52,9 @@ struct ReadingHistoryView: View {
             Text("确定要清空所有阅读记录吗？")
         }
         .imagePreviewSheet(url: $previewImageURL)
+        .task {
+            await historyManager.syncFromCloud()
+        }
     }
 
     private func historyCard(item: ReadingHistoryManager.HistoryItem) -> some View {

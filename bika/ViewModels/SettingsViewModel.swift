@@ -8,6 +8,11 @@ final class SettingsViewModel {
     var lastRecordedImageQuality = "未记录"
     let isUITesting: Bool
     let appVersion: String
+    var cloudHistoryEnabled = false
+    var cloudHistoryBaseURL = ""
+    var cloudHistoryBearerToken = ""
+    var cloudHistoryCertificatePins = ""
+    var cloudHistorySettingsMessage: String?
 
     private let blockedCategoriesManager: BlockedCategoriesManager
     private let keyValueStore: any KeyValueStore
@@ -26,6 +31,7 @@ final class SettingsViewModel {
         self.appVersion = appVersion
         let savedImageQuality = keyValueStore.string(forKey: APIConfig.imageQualityKey) ?? APIConfig.imageQualityDefault
         imageQuality = ImageQuality(rawValue: savedImageQuality) ?? .original
+        loadCloudHistorySettings()
     }
 
     var blockedCategoryCount: Int {
@@ -43,6 +49,66 @@ final class SettingsViewModel {
 
     func refreshDiagnostics() {
         lastRecordedImageQuality = keyValueStore.string(forKey: MockURLProtocol.lastImageQualityHeaderKey) ?? "未记录"
+    }
+
+    func saveCloudHistorySettings() {
+        let pins = parsedCloudHistoryPins()
+        let trimmedURL = cloudHistoryBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedToken = cloudHistoryBearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard cloudHistoryEnabled else {
+            persistCloudHistoryRawSettings(isEnabled: false, pins: pins)
+            cloudHistorySettingsMessage = "云端历史同步已关闭"
+            return
+        }
+
+        guard let baseURL = URL(string: trimmedURL), baseURL.scheme?.lowercased() == "https" else {
+            cloudHistorySettingsMessage = "服务地址必须是 https:// 开头"
+            return
+        }
+
+        guard !trimmedToken.isEmpty else {
+            cloudHistorySettingsMessage = "同步 Token 不能为空"
+            return
+        }
+
+        guard !pins.isEmpty else {
+            cloudHistorySettingsMessage = "证书 SHA256 pin 不能为空"
+            return
+        }
+
+        let config = CloudHistoryConfig(
+            baseURL: baseURL,
+            bearerToken: trimmedToken,
+            certificateSHA256Pins: pins
+        )
+        keyValueStore.setCloudHistoryConfig(config)
+        cloudHistoryBaseURL = trimmedURL
+        cloudHistoryBearerToken = trimmedToken
+        cloudHistoryCertificatePins = pins.joined(separator: "\n")
+        cloudHistorySettingsMessage = "云端历史同步已保存"
+    }
+
+    private func loadCloudHistorySettings() {
+        cloudHistoryEnabled = keyValueStore.string(forKey: CloudHistoryConfig.StorageKeys.isEnabled) == "1"
+        cloudHistoryBaseURL = keyValueStore.string(forKey: CloudHistoryConfig.StorageKeys.baseURL) ?? ""
+        cloudHistoryBearerToken = keyValueStore.string(forKey: CloudHistoryConfig.StorageKeys.bearerToken) ?? ""
+        cloudHistoryCertificatePins = (keyValueStore.stringArray(forKey: CloudHistoryConfig.StorageKeys.certificateSHA256Pins) ?? [])
+            .joined(separator: "\n")
+    }
+
+    private func persistCloudHistoryRawSettings(isEnabled: Bool, pins: [String]) {
+        keyValueStore.setCloudHistoryEnabled(isEnabled)
+        keyValueStore.set(cloudHistoryBaseURL.trimmingCharacters(in: .whitespacesAndNewlines), forKey: CloudHistoryConfig.StorageKeys.baseURL)
+        keyValueStore.set(cloudHistoryBearerToken.trimmingCharacters(in: .whitespacesAndNewlines), forKey: CloudHistoryConfig.StorageKeys.bearerToken)
+        keyValueStore.set(pins, forKey: CloudHistoryConfig.StorageKeys.certificateSHA256Pins)
+    }
+
+    private func parsedCloudHistoryPins() -> [String] {
+        cloudHistoryCertificatePins
+            .components(separatedBy: CharacterSet(charactersIn: ",\n "))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 }
 
