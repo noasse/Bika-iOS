@@ -1,26 +1,33 @@
-# Bika-iOS 项目文档
+# Bika 项目文档
 
 ## 项目概览
 
-Bika-iOS 是一个使用 SwiftUI 构建的 iOS 漫画阅读应用。  
+Bika 是一个使用 SwiftUI 构建的 iOS 与 macOS 漫画阅读应用。  
 当前工程已从“功能堆叠阶段”进入“可持续维护阶段”，核心方向不是推倒重来，而是继续沿着以下原则做渐进式优化：
 
 - 显式依赖注入
 - 统一分页列表模式
 - 收紧解码与错误边界
 - 让失败路径可见、可测、可回归
+- iOS 与 macOS 共享模型、网络和核心业务边界
 
-截至 `2026-04-03`，工程已经通过：
+截至 `2026-06-24`，工程已经通过：
 
-- `build-for-testing`
-- `unit`
-- `ui-smoke`
+- macOS target：`./script/build_and_run.sh --verify`
+- iOS 既有测试入口仍保留：`./scripts/test.sh unit`、`./scripts/test.sh ui-smoke`
 
 ## 当前代码结构
 
-当前 `bika/` 下共有 `59` 个 Swift 文件，结构如下：
+当前主要包含 iOS 源码目录 `bika/` 和 macOS 源码目录 `BikaMacos/`：
 
 ```text
+BikaMacos/
+├── BikaMacosApp.swift
+├── Models/
+├── Stores/
+├── Support/
+└── Views/
+
 bika/
 ├── bikaApp.swift
 ├── ContentView.swift
@@ -32,7 +39,7 @@ bika/
 └── Views/Helpers/
 ```
 
-按目录划分：
+iOS 目录按职责划分：
 
 - `Models`：数据模型、API 响应结构、解码策略
 - `Network`：接口配置、端点定义、签名、客户端、错误类型
@@ -40,6 +47,13 @@ bika/
 - `ViewModels`：页面状态、异步加载、业务边界
 - `Views`：页面本身与页面级组合
 - `Views/Helpers`：通用视图、分页组件、图片加载、主题与持久化 manager
+
+macOS 目录按职责划分：
+
+- `Models`：macOS 侧导航、路由、阅读器启动请求与历史模型
+- `Stores`：macOS 侧登录、列表、详情、评论、阅读历史和屏蔽分类状态
+- `Support`：macOS 设计系统、图片缓存、键盘与触摸板桥接
+- `Views`：登录、侧边栏、列表、详情、阅读器、评论和设置窗口
 
 ## 架构原则
 
@@ -197,6 +211,29 @@ Task {
 - 阅读器页面加载失败
 - 分类页、个人页、排行榜页等页面的加载边界
 
+### macOS 桌面端迁移
+
+macOS target 名为 `BikaMacos`，位于 [BikaMacos](BikaMacos)。
+
+当前 macOS 端的关键设计：
+
+- 主窗口使用 `NavigationSplitView`，左侧为原生 sidebar，中间为分类、排行榜、搜索、收藏、历史等列表，右侧为漫画详情。
+- 阅读器使用独立窗口，支持瀑布模式和横向模式，不做双页模式。
+- 横向模式支持方向键、触摸板横向滑动和按钮翻页；窗口 resize 期间会暂停横向滑动桥接，避免误翻页。
+- 图片缩放按单页保存，支持触摸板双指缩放，接近 `1.0` 时自动吸附回原比例。
+- 阅读器关闭后会通知主模型刷新当前漫画的“继续阅读”入口。
+- 评论使用单例独立窗口，避免详情页被评论弹层锁死。
+- 榜单默认 `24 小时`，与当前 macOS 需求保持一致。
+- macOS AppIcon 复用 iOS 图标资产。
+
+关键文件：
+
+- [BikaMacosApp.swift](BikaMacos/BikaMacosApp.swift)
+- [MacLibraryModel.swift](BikaMacos/Stores/MacLibraryModel.swift)
+- [MacReaderWindowView.swift](BikaMacos/Views/MacReaderWindowView.swift)
+- [MacComicDetailPane.swift](BikaMacos/Views/MacComicDetailPane.swift)
+- [MacCommentsView.swift](BikaMacos/Views/MacCommentsView.swift)
+
 ## 当前重要模块
 
 ### Network
@@ -278,6 +315,7 @@ Task {
 
 - PR 至少通过 `unit`
 - 改动主链路时通过 `ui-smoke`
+- 改动 macOS target 时至少通过 `./script/build_and_run.sh --verify`
 - 新增分页列表优先复用共享抽象
 - 新增网络请求通过可注入 client 进入
 - 新增模型解码时写清楚关键字段与降级字段
@@ -290,6 +328,7 @@ Task {
 - 新代码继续走显式依赖注入
 - 失败路径继续保持“可见、可测、可定位”
 - 大页面继续拆成小 section 或独立子视图
+- macOS 新增交互时优先使用桌面原生模式：sidebar、toolbar、独立窗口、键盘和触摸板
 
 ### 不建议回退的做法
 
@@ -302,5 +341,6 @@ Task {
 ## 文档索引
 
 - GitHub 首页说明：`README.md`
+- 中文首页说明：`README.zh-CN.md`
 - 测试说明：[TESTING.md](TESTING.md)
 - 本文件：项目架构、边界与维护约定

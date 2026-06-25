@@ -1,16 +1,16 @@
 [English](README.md)
 
-# Bika-iOS
+# Bika
 
-一个基于 SwiftUI 的 iOS 漫画阅读项目，把浏览、搜索、详情、阅读、评论、收藏和进度恢复串成一条完整的使用链路。
+一个基于 SwiftUI 的 iOS 与 macOS 漫画阅读项目，把浏览、搜索、详情、阅读、评论、收藏和进度恢复串成一条完整的使用链路。
 
 > 状态：可持续维护  
-> 平台：iOS 18.0+  
+> 平台：iOS 18.0+、macOS 14.0+  
 > 技术栈：SwiftUI、`@Observable`、async/await、Xcode Test Plan
 
 ## 项目简介
 
-Bika-iOS 不是只展示几个独立页面的 Demo，而是围绕真实阅读流程搭建的完整客户端。项目覆盖了从发现内容到长时间阅读的核心体验：
+Bika 不是只展示几个独立页面的 Demo，而是围绕真实阅读流程搭建的完整客户端。项目覆盖了从发现内容到长时间阅读的核心体验：
 
 - 通过分类和排行榜浏览漫画
 - 通过搜索完成排序、翻页与结果恢复
@@ -18,6 +18,7 @@ Bika-iOS 不是只展示几个独立页面的 Demo，而是围绕真实阅读流
 - 从上次阅读到的章节与页码继续阅读
 - 浏览评论与子评论
 - 管理收藏、历史记录、主题模式和图片质量偏好
+- 在 macOS 上使用桌面化布局、独立阅读器窗口和独立评论窗口
 
 除了作为一个可运行的应用工程，这个仓库也适合作为 SwiftUI 项目实践参考：
 
@@ -36,6 +37,7 @@ Bika-iOS 不是只展示几个独立页面的 Demo，而是围绕真实阅读流
 - 阅读进度持久化与继续阅读恢复
 - 评论和子评论浏览、点赞、回复
 - 收藏、历史记录、主题模式、图片质量和内容过滤设置
+- macOS target：原生侧边栏、紧凑详情页、独立阅读器窗口、触摸板横向翻页、瀑布阅读、单页双指缩放、单例评论窗口
 
 ## 架构亮点
 
@@ -60,6 +62,15 @@ Bika-iOS 不是只展示几个独立页面的 Demo，而是围绕真实阅读流
 - [ComicReaderView.swift](bika/Views/ComicReaderView.swift)
 - [ReadingProgressManager.swift](bika/Views/Helpers/ReadingProgressManager.swift)
 
+### macOS target
+
+macOS 应用代码位于 `BikaMacos/`，复用现有模型、网络层、依赖装配和图片加载基础设施。桌面层增加了 macOS 专用的 store 与 view，用于 split navigation、详情页、设置、阅读历史、屏蔽分类、评论以及独立阅读器窗口。
+
+- [BikaMacosApp.swift](BikaMacos/BikaMacosApp.swift)
+- [MacLibraryModel.swift](BikaMacos/Stores/MacLibraryModel.swift)
+- [MacReaderWindowView.swift](BikaMacos/Views/MacReaderWindowView.swift)
+- [MacComicDetailPane.swift](BikaMacos/Views/MacComicDetailPane.swift)
+
 ### 可注入依赖与 mock 优先测试
 
 应用支持切换到基于 fixture 的依赖配置，方便本地和 CI 做稳定、可重复的验证。
@@ -72,9 +83,11 @@ Bika-iOS 不是只展示几个独立页面的 Demo，而是围绕真实阅读流
 
 ```text
 .
+├── BikaMacos/             # macOS 应用源代码
 ├── bika/                  # 应用源代码
 ├── bikaTests/             # 单元测试
 ├── bikaUITests/           # UI Smoke 测试
+├── script/build_and_run.sh # macOS 本地运行/调试入口
 ├── scripts/test.sh        # 统一的本地测试入口
 ├── TESTING.md             # 测试说明
 ├── bika项目文档.md         # 架构与维护说明
@@ -94,9 +107,10 @@ Bika-iOS 不是只展示几个独立页面的 Demo，而是围绕真实阅读流
 
 ### 环境要求
 
-- Xcode `26.4`
+- Xcode `26.5`
 - iOS Simulator
 - 默认模拟器目标：`iPhone 17`
+- macOS 运行目标：`My Mac`
 
 ### 常用命令
 
@@ -106,6 +120,7 @@ chmod +x ./scripts/test.sh
 ./scripts/test.sh unit
 ./scripts/test.sh ui-smoke
 ./scripts/test.sh all
+./script/build_and_run.sh --verify
 ```
 
 ## 测试
@@ -136,6 +151,8 @@ GitHub Actions 工作流：
 
 当前建议的维护方向：
 
+- 保持 iOS 与 macOS 在重叠用户流程上的功能对齐
+- 继续围绕触摸板、键盘和独立窗口优化 macOS 阅读器
 - 继续把更多列表型页面迁到统一的分页结果模式
 - 继续减少在 View 中直接扩散共享单例
 - 持续补强 ViewModel 与 Support 层的单元测试

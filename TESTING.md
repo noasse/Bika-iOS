@@ -1,10 +1,11 @@
-# Bika-iOS 测试说明
+# Bika 测试说明
 
 ## 目标
 
 - 默认使用 Mock 与本地 fixture，不访问真实后端、不依赖真实账号。
 - 本地与 CI 共用同一套 `xctestplan`、`scheme` 与脚本入口。
 - 回归目标不是只看“能不能编译”，而是同时覆盖核心逻辑和主交互链路。
+- macOS target 目前先以本地 build/run smoke 验证作为基线。
 
 ## 测试分层
 
@@ -36,20 +37,32 @@
   - 阅读器进度保存与重启恢复
   - 设置页图片质量持久化与 mock 请求回传
 
+### 3. macOS Build Smoke
+
+- 目标：验证 `BikaMacos` target 可以构建并启动。
+- 对应 scheme：`BikaMacos`
+- 运行入口：`script/build_and_run.sh`
+- 当前重点覆盖：
+  - macOS target 编译通过
+  - app bundle 可以启动
+
 ## 环境要求
 
-- Xcode：`26.4`
+- Xcode：`26.5`
 - Command Line Tools：与 Xcode 版本保持一致
 - 模拟器：默认 `iPhone 17`
 - iOS Runtime：可运行 `iPhone 17` 的最新 Simulator Runtime
+- macOS 运行目标：`My Mac`
 
 ## 目录约定
 
 - 工程：`./bika.xcodeproj`
 - 测试计划：`./bika.xctestplan`
 - 脚本：`./scripts/test.sh`
+- macOS 脚本：`./script/build_and_run.sh`
 - 结果目录：`./artifacts/test-results`
 - DerivedData：`/tmp/bika-derived`
+- macOS DerivedData：`/private/tmp/bika-mac-run-derived`
 
 ## 本地执行
 
@@ -67,6 +80,7 @@ chmod +x ./scripts/test.sh
 ./scripts/test.sh all
 ./scripts/test.sh build-for-testing
 ./scripts/test.sh clean
+./script/build_and_run.sh --verify
 ```
 
 ## 可选环境变量
@@ -119,9 +133,8 @@ SIMULATOR_NAME="iPhone 17 Pro" ./scripts/test.sh unit
 
 最新一轮本地验证时间：
 
-- `2026-04-03`
-- `./scripts/test.sh unit` 通过
-- `./scripts/test.sh ui-smoke` 通过
+- `2026-06-24`
+- `./script/build_and_run.sh --verify` 通过
 
 ## CI
 
@@ -138,5 +151,6 @@ CI 配置位于 [ios-tests.yml](.github/workflows/ios-tests.yml)。
 
 - 提交 PR 前至少跑 `./scripts/test.sh unit`
 - 改动分页列表、详情、评论、阅读器或设置时，建议跑 `./scripts/test.sh all`
+- 改动 macOS target 时至少跑 `./script/build_and_run.sh --verify`
 - 新增分页列表页时，优先复用统一分页模式，再补共享行为测试
 - 新增模型解码时，明确“关键字段”和“降级字段”的边界，并补单测

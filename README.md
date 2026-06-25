@@ -1,16 +1,16 @@
 [简体中文](README.zh-CN.md)
 
-# Bika-iOS
+# Bika
 
-A SwiftUI-based iOS comic reader that brings browsing, search, detail, reading, comments, favourites, and progress recovery into one cohesive app flow.
+A SwiftUI-based comic reader for iOS and macOS that brings browsing, search, detail, reading, comments, favourites, and progress recovery into one cohesive app flow.
 
 > Status: actively maintainable  
-> Platform: iOS 18.0+  
+> Platforms: iOS 18.0+, macOS 14.0+  
 > Stack: SwiftUI, `@Observable`, async/await, Xcode Test Plan
 
 ## Overview
 
-Bika-iOS is built around real reading workflows instead of isolated UI demos. The project covers the full path from discovery to long-session reading:
+Bika is built around real reading workflows instead of isolated UI demos. The project covers the full path from discovery to long-session reading:
 
 - browse comics through categories and leaderboards
 - search with sorting, pagination, and state restoration
@@ -18,6 +18,7 @@ Bika-iOS is built around real reading workflows instead of isolated UI demos. Th
 - continue reading from persisted chapter and page position
 - follow comments and child comments
 - manage favourites, history, theme, and image quality preferences
+- use a desktop-oriented macOS layout with independent reader and comments windows
 
 The repository also serves as a practical SwiftUI reference project for:
 
@@ -36,6 +37,7 @@ The repository also serves as a practical SwiftUI reference project for:
 - Reading progress persistence and continue-reading recovery
 - Comment and child-comment browsing with like and reply actions
 - Favourites, history, theme mode, image quality, and content filtering settings
+- macOS target with native sidebar navigation, compact detail panes, independent reader windows, touchpad-friendly horizontal paging, waterfall reading, per-page pinch zoom, and a singleton comments window
 
 ## Architecture Highlights
 
@@ -60,6 +62,15 @@ The reader persists chapter and page position so users can return directly to wh
 - [ComicReaderView.swift](bika/Views/ComicReaderView.swift)
 - [ReadingProgressManager.swift](bika/Views/Helpers/ReadingProgressManager.swift)
 
+### macOS target
+
+The macOS app lives in `BikaMacos/` and shares the existing models, networking, dependency setup, and image loading infrastructure with the iOS target. The desktop layer adds macOS-specific stores and views for split navigation, detail panes, settings, reading history, blocked categories, comments, and independent reader windows.
+
+- [BikaMacosApp.swift](BikaMacos/BikaMacosApp.swift)
+- [MacLibraryModel.swift](BikaMacos/Stores/MacLibraryModel.swift)
+- [MacReaderWindowView.swift](BikaMacos/Views/MacReaderWindowView.swift)
+- [MacComicDetailPane.swift](BikaMacos/Views/MacComicDetailPane.swift)
+
 ### Injectable dependencies and mock-first tests
 
 The app can switch to fixture-backed dependencies for repeatable local and CI verification.
@@ -72,9 +83,11 @@ The app can switch to fixture-backed dependencies for repeatable local and CI ve
 
 ```text
 .
+├── BikaMacos/             # macOS app source code
 ├── bika/                  # Application source code
 ├── bikaTests/             # Unit tests
 ├── bikaUITests/           # UI smoke tests
+├── script/build_and_run.sh # macOS local run/debug helper
 ├── scripts/test.sh        # Unified local test entry
 ├── TESTING.md             # Testing guide
 ├── bika项目文档.md         # Architecture and maintenance notes
@@ -94,9 +107,10 @@ Within `bika/`, the source tree is organized by responsibility:
 
 ### Requirements
 
-- Xcode `26.4`
+- Xcode `26.5`
 - iOS Simulator
 - Default simulator target: `iPhone 17`
+- macOS destination: `My Mac`
 
 ### Common Commands
 
@@ -106,6 +120,7 @@ chmod +x ./scripts/test.sh
 ./scripts/test.sh unit
 ./scripts/test.sh ui-smoke
 ./scripts/test.sh all
+./script/build_and_run.sh --verify
 ```
 
 ## Testing
@@ -136,6 +151,8 @@ Checks currently run on `push` and `pull_request`:
 
 Current maintenance direction:
 
+- keep the iOS and macOS feature surfaces aligned where user workflows overlap
+- continue refining the macOS reader interaction model around trackpad, keyboard, and independent windows
 - keep migrating more list-style pages onto the shared paginated results pattern
 - continue shrinking direct singleton usage inside views
 - expand unit coverage around ViewModels and support utilities
