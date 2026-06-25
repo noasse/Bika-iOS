@@ -13,6 +13,7 @@ struct MacSettingsView: View {
     @State private var cloudHistoryBearerToken = ""
     @State private var cloudHistoryCertificatePins = ""
     @State private var cloudHistoryMessage: String?
+    @State private var isTestingCloudHistoryConnection = false
     @Environment(\.colorScheme) private var colorScheme
 
     init(themeModeRawValue: Binding<String>, blockedCategoriesStore: MacBlockedCategoriesStore) {
@@ -74,6 +75,13 @@ struct MacSettingsView: View {
                     Button("保存云同步设置") {
                         saveCloudHistorySettings()
                     }
+
+                    Button(isTestingCloudHistoryConnection ? "正在测试..." : "测试云端连接") {
+                        Task {
+                            await testCloudHistoryConnection()
+                        }
+                    }
+                    .disabled(isTestingCloudHistoryConnection)
 
                     if let cloudHistoryMessage {
                         Text(cloudHistoryMessage)
@@ -209,30 +217,69 @@ struct MacSettingsView: View {
             return
         }
 
-        guard let baseURL = URL(string: trimmedURL), baseURL.scheme?.lowercased() == "https" else {
-            cloudHistoryMessage = "服务地址必须是 https:// 开头"
-            return
-        }
-        guard !trimmedToken.isEmpty else {
-            cloudHistoryMessage = "同步 Token 不能为空"
-            return
-        }
-        guard !pins.isEmpty else {
-            cloudHistoryMessage = "证书 SHA256 pin 不能为空"
-            return
-        }
+        guard let config = validatedCloudHistoryConfig(
+            pins: pins,
+            trimmedURL: trimmedURL,
+            trimmedToken: trimmedToken
+        ) else { return }
 
-        store.setCloudHistoryConfig(
-            CloudHistoryConfig(
-                baseURL: baseURL,
-                bearerToken: trimmedToken,
-                certificateSHA256Pins: pins
-            )
-        )
+        store.setCloudHistoryConfig(config)
         cloudHistoryBaseURL = trimmedURL
         cloudHistoryBearerToken = trimmedToken
         cloudHistoryCertificatePins = pins.joined(separator: "\n")
         cloudHistoryMessage = "云端历史同步已保存"
+    }
+
+    private func testCloudHistoryConnection() async {
+        guard cloudHistoryEnabled else {
+            cloudHistoryMessage = "请先启用云端历史同步"
+            return
+        }
+
+        let pins = parsedCloudHistoryPins()
+        let trimmedURL = cloudHistoryBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedToken = cloudHistoryBearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let config = validatedCloudHistoryConfig(
+            pins: pins,
+            trimmedURL: trimmedURL,
+            trimmedToken: trimmedToken
+        ) else { return }
+
+        isTestingCloudHistoryConnection = true
+        cloudHistoryMessage = "正在测试云端连接..."
+        defer { isTestingCloudHistoryConnection = false }
+
+        do {
+            try await CloudHistoryClient(config: config).testConnection()
+            cloudHistoryMessage = "云端连接成功"
+        } catch {
+            cloudHistoryMessage = "云端连接失败：\(cloudHistoryErrorDescription(error))"
+        }
+    }
+
+    private func validatedCloudHistoryConfig(
+        pins: [String],
+        trimmedURL: String,
+        trimmedToken: String
+    ) -> CloudHistoryConfig? {
+        guard let baseURL = URL(string: trimmedURL), baseURL.scheme?.lowercased() == "https" else {
+            cloudHistoryMessage = "服务地址必须是 https:// 开头"
+            return nil
+        }
+        guard !trimmedToken.isEmpty else {
+            cloudHistoryMessage = "同步 Token 不能为空"
+            return nil
+        }
+        guard !pins.isEmpty else {
+            cloudHistoryMessage = "证书 SHA256 pin 不能为空"
+            return nil
+        }
+
+        return CloudHistoryConfig(
+            baseURL: baseURL,
+            bearerToken: trimmedToken,
+            certificateSHA256Pins: pins
+        )
     }
 
     private func parsedCloudHistoryPins() -> [String] {
@@ -240,5 +287,13 @@ struct MacSettingsView: View {
             .components(separatedBy: CharacterSet(charactersIn: ",\n "))
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    private func cloudHistoryErrorDescription(_ error: Error) -> String {
+        if let localizedError = error as? LocalizedError,
+           let description = localizedError.errorDescription {
+            return description
+        }
+        return error.localizedDescription
     }
 }

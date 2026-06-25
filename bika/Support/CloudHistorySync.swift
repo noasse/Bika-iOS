@@ -232,6 +232,10 @@ final nonisolated class CloudHistoryClient {
         return try CloudHistoryJSON.decoder.decode(CloudHistoryListResponse.self, from: data).items
     }
 
+    func testConnection() async throws {
+        _ = try await fetchHistory(limit: 1)
+    }
+
     func uploadHistory(_ items: [CloudHistoryItem]) async throws {
         guard !items.isEmpty else { return }
         var request = URLRequest(url: try endpoint("v1/history/batch"))
@@ -369,6 +373,13 @@ final class CloudHistorySyncService {
     func fetchHistory(limit: Int = 200) async -> [CloudHistoryItem] {
         guard let client = makeClient() else { return [] }
         return (try? await client.fetchHistory(limit: limit)) ?? []
+    }
+
+    func testConnection() async throws {
+        guard let client = makeClient() else {
+            throw CloudHistoryClientError.invalidEndpoint
+        }
+        try await client.testConnection()
     }
 
     private func makeClient() -> CloudHistoryClient? {

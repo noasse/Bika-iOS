@@ -89,6 +89,31 @@ final class CloudHistorySyncTests: XCTestCase {
         XCTAssertEqual(items.first?.thumbPath, "covers/comic-1.jpg")
     }
 
+    func testConnectionUsesAuthorizedHistoryEndpoint() async throws {
+        let observedRequest = LockedValue<URLRequest?>(nil)
+        let session = makeCloudHistorySession { request in
+            observedRequest.value = request
+            return MockHTTPResponse(
+                statusCode: 200,
+                headers: ["Content-Type": "application/json"],
+                data: Data("""
+                {
+                  "items": []
+                }
+                """.utf8)
+            )
+        }
+        let client = CloudHistoryClient(config: try makeConfig(), session: session)
+
+        try await client.testConnection()
+
+        let request = try XCTUnwrap(observedRequest.value)
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(request.url?.absoluteString, "https://history-sync.invalid/v1/history?limit=1")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer unit-test-token")
+        XCTAssertNil(request.resolvedHTTPBodyData())
+    }
+
     func testUploadHistoryPostsBatchPayloadAndBearerToken() async throws {
         let observedRequest = LockedValue<URLRequest?>(nil)
         let session = makeCloudHistorySession { request in

@@ -13,6 +13,7 @@ final class SettingsViewModel {
     var cloudHistoryBearerToken = ""
     var cloudHistoryCertificatePins = ""
     var cloudHistorySettingsMessage: String?
+    var isTestingCloudHistoryConnection = false
 
     private let blockedCategoriesManager: BlockedCategoriesManager
     private let keyValueStore: any KeyValueStore
@@ -62,31 +63,43 @@ final class SettingsViewModel {
             return
         }
 
-        guard let baseURL = URL(string: trimmedURL), baseURL.scheme?.lowercased() == "https" else {
-            cloudHistorySettingsMessage = "服务地址必须是 https:// 开头"
-            return
-        }
-
-        guard !trimmedToken.isEmpty else {
-            cloudHistorySettingsMessage = "同步 Token 不能为空"
-            return
-        }
-
-        guard !pins.isEmpty else {
-            cloudHistorySettingsMessage = "证书 SHA256 pin 不能为空"
-            return
-        }
-
-        let config = CloudHistoryConfig(
-            baseURL: baseURL,
-            bearerToken: trimmedToken,
-            certificateSHA256Pins: pins
-        )
+        guard let config = validatedCloudHistoryConfig(
+            pins: pins,
+            trimmedURL: trimmedURL,
+            trimmedToken: trimmedToken
+        ) else { return }
         keyValueStore.setCloudHistoryConfig(config)
         cloudHistoryBaseURL = trimmedURL
         cloudHistoryBearerToken = trimmedToken
         cloudHistoryCertificatePins = pins.joined(separator: "\n")
         cloudHistorySettingsMessage = "云端历史同步已保存"
+    }
+
+    func testCloudHistoryConnection() async {
+        guard cloudHistoryEnabled else {
+            cloudHistorySettingsMessage = "请先启用云端历史同步"
+            return
+        }
+
+        let pins = parsedCloudHistoryPins()
+        let trimmedURL = cloudHistoryBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedToken = cloudHistoryBearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let config = validatedCloudHistoryConfig(
+            pins: pins,
+            trimmedURL: trimmedURL,
+            trimmedToken: trimmedToken
+        ) else { return }
+
+        isTestingCloudHistoryConnection = true
+        cloudHistorySettingsMessage = "正在测试云端连接..."
+        defer { isTestingCloudHistoryConnection = false }
+
+        do {
+            try await CloudHistoryClient(config: config).testConnection()
+            cloudHistorySettingsMessage = "云端连接成功"
+        } catch {
+            cloudHistorySettingsMessage = "云端连接失败：\(cloudHistoryErrorDescription(error))"
+        }
     }
 
     private func loadCloudHistorySettings() {
@@ -104,11 +117,46 @@ final class SettingsViewModel {
         keyValueStore.set(pins, forKey: CloudHistoryConfig.StorageKeys.certificateSHA256Pins)
     }
 
+    private func validatedCloudHistoryConfig(
+        pins: [String],
+        trimmedURL: String,
+        trimmedToken: String
+    ) -> CloudHistoryConfig? {
+        guard let baseURL = URL(string: trimmedURL), baseURL.scheme?.lowercased() == "https" else {
+            cloudHistorySettingsMessage = "服务地址必须是 https:// 开头"
+            return nil
+        }
+
+        guard !trimmedToken.isEmpty else {
+            cloudHistorySettingsMessage = "同步 Token 不能为空"
+            return nil
+        }
+
+        guard !pins.isEmpty else {
+            cloudHistorySettingsMessage = "证书 SHA256 pin 不能为空"
+            return nil
+        }
+
+        return CloudHistoryConfig(
+            baseURL: baseURL,
+            bearerToken: trimmedToken,
+            certificateSHA256Pins: pins
+        )
+    }
+
     private func parsedCloudHistoryPins() -> [String] {
         cloudHistoryCertificatePins
             .components(separatedBy: CharacterSet(charactersIn: ",\n "))
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    private func cloudHistoryErrorDescription(_ error: Error) -> String {
+        if let localizedError = error as? LocalizedError,
+           let description = localizedError.errorDescription {
+            return description
+        }
+        return error.localizedDescription
     }
 }
 

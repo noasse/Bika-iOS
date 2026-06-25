@@ -87,8 +87,19 @@ struct SettingsView: View {
                         .autocorrectionDisabled()
                         .lineLimit(2...4)
 
-                    Button("保存云同步设置") {
-                        viewModel.saveCloudHistorySettings()
+                    HStack {
+                        Button("保存云同步设置") {
+                            viewModel.saveCloudHistorySettings()
+                        }
+
+                        Button {
+                            Task {
+                                await viewModel.testCloudHistoryConnection()
+                            }
+                        } label: {
+                            Text(viewModel.isTestingCloudHistoryConnection ? "正在测试..." : "测试云端连接")
+                        }
+                        .disabled(viewModel.isTestingCloudHistoryConnection)
                     }
 
                     if let message = viewModel.cloudHistorySettingsMessage {
