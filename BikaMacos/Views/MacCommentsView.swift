@@ -279,6 +279,11 @@ private struct MacCommentCard: View {
     let onReplies: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
+    private var displayContent: String {
+        guard let content = comment.content, !content.isEmpty else { return "无内容" }
+        return content
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
@@ -315,7 +320,7 @@ private struct MacCommentCard: View {
                 Spacer()
             }
 
-            Text(comment.content?.isEmpty == false ? comment.content! : "无内容")
+            Text(displayContent)
                 .font(.body)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)

@@ -1,21 +1,165 @@
 import Foundation
+import Security
 
-// MARK: - Token Store (persisted to UserDefaults)
+// MARK: - Token Storage
+
+private nonisolated enum TokenStorageKeys {
+    static let authToken = "com.bika.authToken"
+}
+
+nonisolated protocol TokenPersisting: Sendable {
+    func token() -> String?
+    func setToken(_ token: String?)
+    func clearToken()
+}
+
+final nonisolated class KeyValueTokenStore: @unchecked Sendable, TokenPersisting {
+    private let store: any KeyValueStore
+
+    init(store: any KeyValueStore) {
+        self.store = store
+    }
+
+    func token() -> String? {
+        store.string(forKey: TokenStorageKeys.authToken)
+    }
+
+    func setToken(_ token: String?) {
+        store.set(token, forKey: TokenStorageKeys.authToken)
+    }
+
+    func clearToken() {
+        store.removeObject(forKey: TokenStorageKeys.authToken)
+    }
+}
+
+final nonisolated class SecureTokenStore: @unchecked Sendable, TokenPersisting {
+    private let service: String
+    private let account: String
+    private let legacyStore: any KeyValueStore
+    private let lock = NSLock()
+
+    init(
+        service: String = Bundle.main.bundleIdentifier ?? "com.bika.auth",
+        account: String = TokenStorageKeys.authToken,
+        legacyStore: any KeyValueStore = AppDependencies.shared.keyValueStore
+    ) {
+        self.service = service
+        self.account = account
+        self.legacyStore = legacyStore
+    }
+
+    func token() -> String? {
+        lock.withLock {
+            if let keychainToken = readTokenLocked() {
+                legacyStore.removeObject(forKey: TokenStorageKeys.authToken)
+                return keychainToken
+            }
+
+            guard let legacyToken = legacyStore.string(forKey: TokenStorageKeys.authToken), !legacyToken.isEmpty else {
+                return nil
+            }
+
+            _ = storeTokenLocked(legacyToken)
+            legacyStore.removeObject(forKey: TokenStorageKeys.authToken)
+            return legacyToken
+        }
+    }
+
+    func setToken(_ token: String?) {
+        lock.withLock {
+            if let token, !token.isEmpty {
+                _ = storeTokenLocked(token)
+            } else {
+                deleteTokenLocked()
+            }
+            legacyStore.removeObject(forKey: TokenStorageKeys.authToken)
+        }
+    }
+
+    func clearToken() {
+        lock.withLock {
+            deleteTokenLocked()
+            legacyStore.removeObject(forKey: TokenStorageKeys.authToken)
+        }
+    }
+
+    private var baseQuery: [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+    }
+
+    private func readTokenLocked() -> String? {
+        var query = baseQuery
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func storeTokenLocked(_ token: String) -> Bool {
+        let data = Data(token.utf8)
+        let attributes = tokenAttributes(data: data)
+        let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
+
+        if updateStatus == errSecSuccess {
+            return true
+        }
+
+        guard updateStatus == errSecItemNotFound else {
+            return false
+        }
+
+        var addQuery = baseQuery
+        addQuery.merge(attributes) { _, new in new }
+        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+    }
+
+    private func deleteTokenLocked() {
+        SecItemDelete(baseQuery as CFDictionary)
+    }
+
+    private func tokenAttributes(data: Data) -> [String: Any] {
+        var attributes: [String: Any] = [
+            kSecValueData as String: data,
+        ]
+
+        #if os(iOS) || os(tvOS) || os(watchOS)
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        #endif
+
+        return attributes
+    }
+}
+
+// MARK: - Token Store
 
 actor TokenStore {
-    static let tokenKey = "com.bika.authToken"
+    static let tokenKey = TokenStorageKeys.authToken
 
-    private let store: any KeyValueStore
+    private let secureStore: any TokenPersisting
     private var token: String?
 
-    init(store: any KeyValueStore = AppDependencies.shared.keyValueStore) {
-        self.store = store
-        token = store.string(forKey: Self.tokenKey)
+    init(secureStore: any TokenPersisting = SecureTokenStore()) {
+        self.secureStore = secureStore
+        token = secureStore.token()
+    }
+
+    init(store: any KeyValueStore) {
+        let secureStore = KeyValueTokenStore(store: store)
+        self.secureStore = secureStore
+        token = secureStore.token()
     }
 
     func setToken(_ token: String?) {
         self.token = token
-        store.set(token, forKey: Self.tokenKey)
+        secureStore.setToken(token)
     }
 
     func getToken() -> String? {
@@ -24,7 +168,7 @@ actor TokenStore {
 
     func clear() {
         token = nil
-        store.removeObject(forKey: Self.tokenKey)
+        secureStore.clearToken()
     }
 }
 

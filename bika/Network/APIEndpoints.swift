@@ -32,6 +32,36 @@ nonisolated struct APIEndpoint<Response: Decodable & Sendable>: Sendable {
     }
 }
 
+private extension APIEndpoint {
+    static func path(_ components: [String], queryItems: [URLQueryItem] = []) -> String {
+        let encodedPath = components.map(encodedPathComponent).joined(separator: "/")
+        guard !queryItems.isEmpty else { return encodedPath }
+
+        var urlComponents = URLComponents()
+        urlComponents.percentEncodedPath = "/" + encodedPath
+        urlComponents.queryItems = queryItems
+
+        guard let query = urlComponents.percentEncodedQuery, !query.isEmpty else {
+            return encodedPath
+        }
+        return "\(encodedPath)?\(query)"
+    }
+
+    static func queryItem(_ name: String, _ value: String) -> URLQueryItem {
+        URLQueryItem(name: name, value: value)
+    }
+
+    static func queryItem(_ name: String, _ value: Int) -> URLQueryItem {
+        URLQueryItem(name: name, value: String(value))
+    }
+
+    private static func encodedPathComponent(_ component: String) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/?#[]@!$&'()*+,;=")
+        return component.addingPercentEncoding(withAllowedCharacters: allowed) ?? component
+    }
+}
+
 // MARK: - Auth Endpoints
 
 extension APIEndpoint where Response == APIResponse<SignInData> {
@@ -77,7 +107,7 @@ extension APIEndpoint where Response == APIResponse<EmptyData> {
 
     static func postComment(comicId: String, content: String) -> Self {
         APIEndpoint(
-            path: "comics/\(comicId)/comments",
+            path: Self.path(["comics", comicId, "comments"]),
             method: .POST,
             body: PostCommentRequest(content: content)
         )
@@ -85,7 +115,7 @@ extension APIEndpoint where Response == APIResponse<EmptyData> {
 
     static func postChildComment(commentId: String, content: String) -> Self {
         APIEndpoint(
-            path: "comments/\(commentId)/childrens",
+            path: Self.path(["comments", commentId, "childrens"]),
             method: .POST,
             body: PostCommentRequest(content: content)
         )
@@ -96,7 +126,7 @@ extension APIEndpoint where Response == APIResponse<EmptyData> {
 
 extension APIEndpoint where Response == APIResponse<UserProfileData> {
     static func myProfile() -> Self {
-        APIEndpoint(path: "users/profile")
+        APIEndpoint(path: Self.path(["users", "profile"]))
     }
 }
 
@@ -104,7 +134,7 @@ extension APIEndpoint where Response == APIResponse<UserProfileData> {
 
 extension APIEndpoint where Response == APIResponse<CategoriesData> {
     static func categories() -> Self {
-        APIEndpoint(path: "categories")
+        APIEndpoint(path: Self.path(["categories"]))
     }
 }
 
@@ -112,20 +142,28 @@ extension APIEndpoint where Response == APIResponse<CategoriesData> {
 
 extension APIEndpoint where Response == APIResponse<ComicsData> {
     static func comics(category: String, page: Int = 1, sort: SortMode = .defaultSort) -> Self {
-        let encodedCategory = category.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? category
-        return APIEndpoint(path: "comics?page=\(page)&c=\(encodedCategory)&s=\(sort.rawValue)")
+        APIEndpoint(path: Self.path(["comics"], queryItems: [
+            Self.queryItem("page", page),
+            Self.queryItem("c", category),
+            Self.queryItem("s", sort.rawValue),
+        ]))
     }
 
     static func search(keyword: String, page: Int = 1, sort: SortMode = .defaultSort, categories: [String]? = nil) -> Self {
         APIEndpoint(
-            path: "comics/advanced-search?page=\(page)",
+            path: Self.path(["comics", "advanced-search"], queryItems: [
+                Self.queryItem("page", page),
+            ]),
             method: .POST,
             body: SearchRequest(keyword: keyword, sort: sort.rawValue, categories: categories)
         )
     }
 
     static func favourites(page: Int = 1, sort: SortMode = .defaultSort) -> Self {
-        APIEndpoint(path: "users/favourite?s=\(sort.rawValue)&page=\(page)")
+        APIEndpoint(path: Self.path(["users", "favourite"], queryItems: [
+            Self.queryItem("s", sort.rawValue),
+            Self.queryItem("page", page),
+        ]))
     }
 }
 
@@ -133,7 +171,7 @@ extension APIEndpoint where Response == APIResponse<ComicsData> {
 
 extension APIEndpoint where Response == APIResponse<ComicDetailData> {
     static func comicDetail(id: String) -> Self {
-        APIEndpoint(path: "comics/\(id)")
+        APIEndpoint(path: Self.path(["comics", id]))
     }
 }
 
@@ -141,7 +179,9 @@ extension APIEndpoint where Response == APIResponse<ComicDetailData> {
 
 extension APIEndpoint where Response == APIResponse<EpisodesData> {
     static func episodes(comicId: String, page: Int = 1) -> Self {
-        APIEndpoint(path: "comics/\(comicId)/eps?page=\(page)")
+        APIEndpoint(path: Self.path(["comics", comicId, "eps"], queryItems: [
+            Self.queryItem("page", page),
+        ]))
     }
 }
 
@@ -149,7 +189,9 @@ extension APIEndpoint where Response == APIResponse<EpisodesData> {
 
 extension APIEndpoint where Response == APIResponse<ComicPagesData> {
     static func comicPages(comicId: String, epsOrder: Int, page: Int = 1) -> Self {
-        APIEndpoint(path: "comics/\(comicId)/order/\(epsOrder)/pages?page=\(page)")
+        APIEndpoint(path: Self.path(["comics", comicId, "order", String(epsOrder), "pages"], queryItems: [
+            Self.queryItem("page", page),
+        ]))
     }
 }
 
@@ -157,17 +199,17 @@ extension APIEndpoint where Response == APIResponse<ComicPagesData> {
 
 extension APIEndpoint where Response == APIResponse<LikeActionData> {
     static func likeComic(id: String) -> Self {
-        APIEndpoint(path: "comics/\(id)/like", method: .POST)
+        APIEndpoint(path: Self.path(["comics", id, "like"]), method: .POST)
     }
 
     static func likeComment(id: String) -> Self {
-        APIEndpoint(path: "comments/\(id)/like", method: .POST)
+        APIEndpoint(path: Self.path(["comments", id, "like"]), method: .POST)
     }
 }
 
 extension APIEndpoint where Response == APIResponse<EmptyData> {
     static func favouriteComic(id: String) -> Self {
-        APIEndpoint(path: "comics/\(id)/favourite", method: .POST)
+        APIEndpoint(path: Self.path(["comics", id, "favourite"]), method: .POST)
     }
 }
 
@@ -175,13 +217,17 @@ extension APIEndpoint where Response == APIResponse<EmptyData> {
 
 extension APIEndpoint where Response == APIResponse<CommentsData> {
     static func comments(comicId: String, page: Int = 1) -> Self {
-        APIEndpoint(path: "comics/\(comicId)/comments?page=\(page)")
+        APIEndpoint(path: Self.path(["comics", comicId, "comments"], queryItems: [
+            Self.queryItem("page", page),
+        ]))
     }
 }
 
 extension APIEndpoint where Response == APIResponse<ChildCommentsData> {
     static func childComments(commentId: String, page: Int = 1) -> Self {
-        APIEndpoint(path: "comments/\(commentId)/childrens?page=\(page)")
+        APIEndpoint(path: Self.path(["comments", commentId, "childrens"], queryItems: [
+            Self.queryItem("page", page),
+        ]))
     }
 }
 
@@ -189,7 +235,10 @@ extension APIEndpoint where Response == APIResponse<ChildCommentsData> {
 
 extension APIEndpoint where Response == APIResponse<LeaderboardData> {
     static func leaderboard(type: LeaderboardType) -> Self {
-        APIEndpoint(path: "comics/leaderboard?tt=\(type.rawValue)&ct=VC")
+        APIEndpoint(path: Self.path(["comics", "leaderboard"], queryItems: [
+            Self.queryItem("tt", type.rawValue),
+            Self.queryItem("ct", "VC"),
+        ]))
     }
 }
 
@@ -197,6 +246,6 @@ extension APIEndpoint where Response == APIResponse<LeaderboardData> {
 
 extension APIEndpoint where Response == APIResponse<RecommendedData> {
     static func recommended(comicId: String) -> Self {
-        APIEndpoint(path: "comics/\(comicId)/recommendation")
+        APIEndpoint(path: Self.path(["comics", comicId, "recommendation"]))
     }
 }

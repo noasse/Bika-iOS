@@ -6,26 +6,33 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_PATH="$ROOT_DIR/bika.xcodeproj"
 SCHEME_NAME="bika"
 TEST_PLAN_NAME="bika"
+MAC_SCHEME_NAME="${MAC_SCHEME_NAME:-BikaMacos}"
 BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-Debug}"
 SIMULATOR_NAME="${SIMULATOR_NAME:-iPhone 17}"
 DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-/tmp/bika-derived}"
+MAC_DERIVED_DATA_PATH="${MAC_DERIVED_DATA_PATH:-/tmp/bika-derived-mac}"
 RESULTS_DIR="${RESULTS_DIR:-$ROOT_DIR/artifacts/test-results}"
 DESTINATION="platform=iOS Simulator,name=${SIMULATOR_NAME},OS=latest"
+MAC_DESTINATION="${MAC_DESTINATION:-platform=macOS}"
 
 usage() {
   cat <<'EOF'
 用法:
   scripts/test.sh unit            运行单元测试
   scripts/test.sh ui-smoke        运行 UI Smoke
-  scripts/test.sh all             先 build-for-testing，再运行 Unit + UI Smoke
+  scripts/test.sh mac-unit        运行 macOS 单元测试
+  scripts/test.sh all             先 build-for-testing，再运行 Unit + UI Smoke + macOS Unit
   scripts/test.sh build-for-testing
   scripts/test.sh clean           清理 DerivedData 和测试结果
 
 可选环境变量:
   SIMULATOR_NAME       默认 iPhone 17
   DERIVED_DATA_PATH    默认 /tmp/bika-derived
+  MAC_DERIVED_DATA_PATH 默认 /tmp/bika-derived-mac
   RESULTS_DIR          默认 <repo>/artifacts/test-results
   BUILD_CONFIGURATION  默认 Debug
+  MAC_SCHEME_NAME      默认 BikaMacos
+  MAC_DESTINATION      默认 platform=macOS
 EOF
 }
 
@@ -82,6 +89,17 @@ run_xcodebuild() {
     "$@"
 }
 
+run_mac_xcodebuild() {
+  xcodebuild \
+    -project "$PROJECT_PATH" \
+    -scheme "$MAC_SCHEME_NAME" \
+    -configuration "$BUILD_CONFIGURATION" \
+    -destination "$MAC_DESTINATION" \
+    -derivedDataPath "$MAC_DERIVED_DATA_PATH" \
+    CODE_SIGNING_ALLOWED=NO \
+    "$@"
+}
+
 build_for_testing() {
   ensure_simulator_exists
   prepare_directories
@@ -107,6 +125,15 @@ run_ui_smoke_without_building() {
     -resultBundlePath "$RESULTS_DIR/ui-smoke.xcresult"
 }
 
+run_mac_unit() {
+  prepare_directories
+  rm -rf "$RESULTS_DIR/macos-unit.xcresult"
+  run_mac_xcodebuild \
+    test \
+    -only-testing:BikaMacosTests \
+    -resultBundlePath "$RESULTS_DIR/macos-unit.xcresult"
+}
+
 run_unit() {
   build_for_testing
   run_unit_without_building
@@ -121,10 +148,11 @@ run_all() {
   build_for_testing
   run_unit_without_building
   run_ui_smoke_without_building
+  run_mac_unit
 }
 
 clean_outputs() {
-  rm -rf "$DERIVED_DATA_PATH" "$RESULTS_DIR"
+  rm -rf "$DERIVED_DATA_PATH" "$MAC_DERIVED_DATA_PATH" "$RESULTS_DIR"
 }
 
 COMMAND="${1:-all}"
@@ -135,6 +163,9 @@ case "$COMMAND" in
     ;;
   ui-smoke)
     run_ui_smoke
+    ;;
+  mac-unit)
+    run_mac_unit
     ;;
   all)
     run_all

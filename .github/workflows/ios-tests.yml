@@ -55,3 +55,25 @@ jobs:
           name: ui-smoke-xcresult
           path: artifacts/test-results/ui-smoke.xcresult
           if-no-files-found: warn
+
+  mac-unit:
+    name: macOS Unit
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Run macOS unit tests
+        run: ./scripts/test.sh mac-unit
+
+      - name: Upload macOS unit xcresult
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-unit-xcresult
+          path: artifacts/test-results/macos-unit.xcresult
+          if-no-files-found: warn

@@ -175,6 +175,40 @@ final class CommentsViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.totalVisibleComments, 2)
     }
 
+    func testLikeCommentUsesServerActionAndDoesNotCreateNegativeCount() async {
+        let (client, _) = TestSupport.makeAPIClient { request in
+            if request.url?.path == "/comments/comment-1/like" {
+                return TestSupport.jsonResponse(data: ["action": "unlike"])
+            }
+
+            return TestSupport.jsonResponse(data: [
+                "comments": [
+                    "docs": [
+                        comment(
+                            id: "comment-1",
+                            content: "已被服务端取消点赞",
+                            commentsCount: 0,
+                            likesCount: 0,
+                            isLiked: false
+                        ),
+                    ],
+                    "total": 1,
+                    "limit": 1,
+                    "page": 1,
+                    "pages": 1,
+                ],
+                "topComments": [],
+            ])
+        }
+
+        let viewModel = CommentsViewModel(comicId: "comic-1", client: client)
+        await viewModel.loadFirstPage()
+        await viewModel.likeComment(id: "comment-1")
+
+        XCTAssertEqual(viewModel.comments.first?.isLiked, false)
+        XCTAssertEqual(viewModel.comments.first?.likesCount, 0)
+    }
+
     func testChildCommentsStopWhenResponseContainsDuplicateDocs() async throws {
         let (client, _) = TestSupport.makeAPIClient { request in
             let page = TestSupport.page(from: request)
@@ -215,7 +249,13 @@ final class CommentsViewModelTests: XCTestCase {
     }
 }
 
-private func comment(id: String, content: String, commentsCount: Int) -> [String: Any] {
+private func comment(
+    id: String,
+    content: String,
+    commentsCount: Int,
+    likesCount: Int = 0,
+    isLiked: Bool = false
+) -> [String: Any] {
     [
         "_id": id,
         "content": content,
@@ -228,7 +268,7 @@ private func comment(id: String, content: String, commentsCount: Int) -> [String
         "isTop": false,
         "hide": false,
         "created_at": "2024-01-01T00:00:00.000Z",
-        "likesCount": 0,
-        "isLiked": false,
+        "likesCount": likesCount,
+        "isLiked": isLiked,
     ]
 }

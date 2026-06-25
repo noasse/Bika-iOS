@@ -84,7 +84,9 @@ final nonisolated class AppDependencies: @unchecked Sendable {
     }
 
     private func makeAPIClient(using keyValueStore: any KeyValueStore, launchConfig: UITestLaunchConfig) -> APIClient {
-        let tokenStore = TokenStore(store: keyValueStore)
+        let tokenStore = launchConfig.isEnabled
+            ? TokenStore(store: keyValueStore)
+            : TokenStore(secureStore: SecureTokenStore(legacyStore: keyValueStore))
 
         if launchConfig.isEnabled {
             let sessionConfiguration = URLSessionConfiguration.ephemeral
