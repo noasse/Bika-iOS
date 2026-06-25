@@ -118,7 +118,7 @@ final class MacLibraryModel {
         case .favourites:
             await loadFavourites(page: 1)
         case .history:
-            loadHistory()
+            await loadHistoryFromCloud()
         case .profile:
             invalidateListRequest()
             listTitle = "我的"
@@ -150,7 +150,7 @@ final class MacLibraryModel {
         case .favourites:
             await loadFavourites(page: max(currentPage, 1))
         case .history:
-            loadHistory()
+            await loadHistoryFromCloud()
         case .profile:
             await loadProfile()
         case .settings:
@@ -353,6 +353,11 @@ final class MacLibraryModel {
         currentPage = listItems.isEmpty ? 0 : 1
         totalPages = 1
         listError = nil
+    }
+
+    func loadHistoryFromCloud() async {
+        await readingStore.syncFromCloud()
+        loadHistory()
     }
 
     func loadProfile() async {

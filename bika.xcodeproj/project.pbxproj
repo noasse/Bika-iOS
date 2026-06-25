@@ -7,12 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		EC88BF0C2FEA5000004AFB7B /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EC88BF0B2FEA5000004AFB7B /* XCTest.framework */; };
 		EC88D0012FEA4000004AFB7B /* KeyValueStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0012FEA4000004AFB7B /* KeyValueStore.swift */; };
 		EC88D0022FEA4000004AFB7B /* ImageDataLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0022FEA4000004AFB7B /* ImageDataLoader.swift */; };
 		EC88D0032FEA4000004AFB7B /* UITestLaunchConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0032FEA4000004AFB7B /* UITestLaunchConfig.swift */; };
 		EC88D0042FEA4000004AFB7B /* MockURLProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0042FEA4000004AFB7B /* MockURLProtocol.swift */; };
 		EC88D0052FEA4000004AFB7B /* SmokeFixtureRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0052FEA4000004AFB7B /* SmokeFixtureRouter.swift */; };
 		EC88D0062FEA4000004AFB7B /* AppDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0062FEA4000004AFB7B /* AppDependencies.swift */; };
+		EC88D0132FEA4000004AFB7B /* CloudHistorySync.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0132FEA4000004AFB7B /* CloudHistorySync.swift */; };
 		EC88D0072FEA4000004AFB7B /* APIConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0072FEA4000004AFB7B /* APIConfig.swift */; };
 		EC88D0082FEA4000004AFB7B /* APISignature.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0082FEA4000004AFB7B /* APISignature.swift */; };
 		EC88D0092FEA4000004AFB7B /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0092FEA4000004AFB7B /* APIError.swift */; };
@@ -25,7 +27,6 @@
 		EC88D0102FEA4000004AFB7B /* UserModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0102FEA4000004AFB7B /* UserModels.swift */; };
 		EC88D0112FEA4000004AFB7B /* ComicModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0112FEA4000004AFB7B /* ComicModels.swift */; };
 		EC88D0122FEA4000004AFB7B /* CommentModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0122FEA4000004AFB7B /* CommentModels.swift */; };
-		EC88BF0C2FEA5000004AFB7B /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EC88BF0B2FEA5000004AFB7B /* XCTest.framework */; };
 		F10000062F694FA800F6AB0F /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000032F694FA800F6AB0F /* XCTest.framework */; };
 		F10000072F694FA800F6AB0F /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000032F694FA800F6AB0F /* XCTest.framework */; };
 /* End PBXBuildFile section */
@@ -64,6 +65,7 @@
 		EC88C0042FEA4000004AFB7B /* MockURLProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MockURLProtocol.swift; path = bika/Support/MockURLProtocol.swift; sourceTree = "<group>"; };
 		EC88C0052FEA4000004AFB7B /* SmokeFixtureRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SmokeFixtureRouter.swift; path = bika/Support/SmokeFixtureRouter.swift; sourceTree = "<group>"; };
 		EC88C0062FEA4000004AFB7B /* AppDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDependencies.swift; path = bika/Support/AppDependencies.swift; sourceTree = "<group>"; };
+		EC88C0132FEA4000004AFB7B /* CloudHistorySync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CloudHistorySync.swift; path = bika/Support/CloudHistorySync.swift; sourceTree = "<group>"; };
 		EC88C0072FEA4000004AFB7B /* APIConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = APIConfig.swift; path = bika/Network/APIConfig.swift; sourceTree = "<group>"; };
 		EC88C0082FEA4000004AFB7B /* APISignature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = APISignature.swift; path = bika/Network/APISignature.swift; sourceTree = "<group>"; };
 		EC88C0092FEA4000004AFB7B /* APIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = APIError.swift; path = bika/Network/APIError.swift; sourceTree = "<group>"; };
@@ -171,6 +173,7 @@
 				EC88C0042FEA4000004AFB7B /* MockURLProtocol.swift */,
 				EC88C0052FEA4000004AFB7B /* SmokeFixtureRouter.swift */,
 				EC88C0062FEA4000004AFB7B /* AppDependencies.swift */,
+				EC88C0132FEA4000004AFB7B /* CloudHistorySync.swift */,
 				EC88C0072FEA4000004AFB7B /* APIConfig.swift */,
 				EC88C0082FEA4000004AFB7B /* APISignature.swift */,
 				EC88C0092FEA4000004AFB7B /* APIError.swift */,
@@ -432,6 +435,7 @@
 				EC88D0042FEA4000004AFB7B /* MockURLProtocol.swift in Sources */,
 				EC88D0052FEA4000004AFB7B /* SmokeFixtureRouter.swift in Sources */,
 				EC88D0062FEA4000004AFB7B /* AppDependencies.swift in Sources */,
+				EC88D0132FEA4000004AFB7B /* CloudHistorySync.swift in Sources */,
 				EC88D0072FEA4000004AFB7B /* APIConfig.swift in Sources */,
 				EC88D0082FEA4000004AFB7B /* APISignature.swift in Sources */,
 				EC88D0092FEA4000004AFB7B /* APIError.swift in Sources */,

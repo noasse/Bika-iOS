@@ -37,6 +37,7 @@ The repository also serves as a practical SwiftUI reference project for:
 - Reading progress persistence and continue-reading recovery
 - Comment and child-comment browsing with like and reply actions
 - Favourites, history, theme mode, image quality, and content filtering settings
+- Optional private cloud history sync for iOS and macOS, configured locally with a self-hosted HTTPS endpoint
 - macOS target with native sidebar navigation, compact detail panes, independent reader windows, touchpad-friendly horizontal paging, waterfall reading, per-page pinch zoom, and a singleton comments window
 
 ## Architecture Highlights
@@ -61,6 +62,13 @@ The reader persists chapter and page position so users can return directly to wh
 
 - [ComicReaderView.swift](bika/Views/ComicReaderView.swift)
 - [ReadingProgressManager.swift](bika/Views/Helpers/ReadingProgressManager.swift)
+
+### Optional cloud history sync
+
+Cloud history sync is disabled by default and stores no server details in the repository. Users can configure a private self-hosted endpoint, bearer token, and certificate SHA-256 pin locally in iOS/macOS settings.
+
+- [CloudHistorySync.swift](bika/Support/CloudHistorySync.swift)
+- [CLOUD_HISTORY_SYNC.md](CLOUD_HISTORY_SYNC.md)
 
 ### macOS target
 
