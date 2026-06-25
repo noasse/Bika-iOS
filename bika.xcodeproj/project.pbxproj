@@ -25,11 +25,19 @@
 		EC88D0102FEA4000004AFB7B /* UserModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0102FEA4000004AFB7B /* UserModels.swift */; };
 		EC88D0112FEA4000004AFB7B /* ComicModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0112FEA4000004AFB7B /* ComicModels.swift */; };
 		EC88D0122FEA4000004AFB7B /* CommentModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0122FEA4000004AFB7B /* CommentModels.swift */; };
+		EC88BF0C2FEA5000004AFB7B /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EC88BF0B2FEA5000004AFB7B /* XCTest.framework */; };
 		F10000062F694FA800F6AB0F /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000032F694FA800F6AB0F /* XCTest.framework */; };
 		F10000072F694FA800F6AB0F /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000032F694FA800F6AB0F /* XCTest.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		EC88BF062FEA5000004AFB7B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = ECC781F52F694FA800F6AB0F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EC88BE462FEA2C25004AFB7B;
+			remoteInfo = BikaMacos;
+		};
 		F100000E2F694FA800F6AB0F /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = ECC781F52F694FA800F6AB0F /* Project object */;
@@ -48,6 +56,8 @@
 
 /* Begin PBXFileReference section */
 		EC88BE472FEA2C25004AFB7B /* BikaMacos.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BikaMacos.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		EC88BF002FEA5000004AFB7B /* BikaMacosTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BikaMacosTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		EC88BF0B2FEA5000004AFB7B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = Platforms/MacOSX.platform/Developer/Library/Frameworks/XCTest.framework; sourceTree = DEVELOPER_DIR; };
 		EC88C0012FEA4000004AFB7B /* KeyValueStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KeyValueStore.swift; path = bika/Support/KeyValueStore.swift; sourceTree = "<group>"; };
 		EC88C0022FEA4000004AFB7B /* ImageDataLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ImageDataLoader.swift; path = bika/Support/ImageDataLoader.swift; sourceTree = "<group>"; };
 		EC88C0032FEA4000004AFB7B /* UITestLaunchConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = UITestLaunchConfig.swift; path = bika/Support/UITestLaunchConfig.swift; sourceTree = "<group>"; };
@@ -79,6 +89,11 @@
 			path = BikaMacos;
 			sourceTree = "<group>";
 		};
+		EC88BF012FEA5000004AFB7B /* BikaMacosTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = BikaMacosTests;
+			sourceTree = "<group>";
+		};
 		ECC781FF2F694FA800F6AB0F /* bika */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = bika;
@@ -101,6 +116,14 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EC88BF042FEA5000004AFB7B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EC88BF0C2FEA5000004AFB7B /* XCTest.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -133,6 +156,7 @@
 		5AAE48612F7F0F73005ACF4E /* Recovered References */ = {
 			isa = PBXGroup;
 			children = (
+				EC88BF0B2FEA5000004AFB7B /* XCTest.framework */,
 				F10000032F694FA800F6AB0F /* XCTest.framework */,
 			);
 			name = "Recovered References";
@@ -171,6 +195,7 @@
 				F10000052F694FA800F6AB0F /* bikaUITests */,
 				F10000202F694FA800F6AB0F /* bika.xctestplan */,
 				EC88BE482FEA2C25004AFB7B /* BikaMacos */,
+				EC88BF012FEA5000004AFB7B /* BikaMacosTests */,
 				EC88C1002FEA4000004AFB7B /* Bika Shared */,
 				ECC781FE2F694FA800F6AB0F /* Products */,
 				5AAE48612F7F0F73005ACF4E /* Recovered References */,
@@ -184,6 +209,7 @@
 				F10000012F694FA800F6AB0F /* bikaTests.xctest */,
 				F10000022F694FA800F6AB0F /* bikaUITests.xctest */,
 				EC88BE472FEA2C25004AFB7B /* BikaMacos.app */,
+				EC88BF002FEA5000004AFB7B /* BikaMacosTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -212,6 +238,29 @@
 			productName = BikaMacos;
 			productReference = EC88BE472FEA2C25004AFB7B /* BikaMacos.app */;
 			productType = "com.apple.product-type.application";
+		};
+		EC88BF022FEA5000004AFB7B /* BikaMacosTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EC88BF082FEA5000004AFB7B /* Build configuration list for PBXNativeTarget "BikaMacosTests" */;
+			buildPhases = (
+				EC88BF032FEA5000004AFB7B /* Sources */,
+				EC88BF042FEA5000004AFB7B /* Frameworks */,
+				EC88BF052FEA5000004AFB7B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				EC88BF072FEA5000004AFB7B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				EC88BF012FEA5000004AFB7B /* BikaMacosTests */,
+			);
+			name = BikaMacosTests;
+			packageProductDependencies = (
+			);
+			productName = BikaMacosTests;
+			productReference = EC88BF002FEA5000004AFB7B /* BikaMacosTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 		ECC781FC2F694FA800F6AB0F /* bika */ = {
 			isa = PBXNativeTarget;
@@ -294,6 +343,10 @@
 					EC88BE462FEA2C25004AFB7B = {
 						CreatedOnToolsVersion = 26.5;
 					};
+					EC88BF022FEA5000004AFB7B = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = EC88BE462FEA2C25004AFB7B;
+					};
 					ECC781FC2F694FA800F6AB0F = {
 						CreatedOnToolsVersion = 26.3;
 					};
@@ -325,12 +378,20 @@
 				F10000122F694FA800F6AB0F /* bikaTests */,
 				F10000132F694FA800F6AB0F /* bikaUITests */,
 				EC88BE462FEA2C25004AFB7B /* BikaMacos */,
+				EC88BF022FEA5000004AFB7B /* BikaMacosTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		EC88BE452FEA2C25004AFB7B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EC88BF052FEA5000004AFB7B /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -386,6 +447,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		EC88BF032FEA5000004AFB7B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		ECC781F92F694FA800F6AB0F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -410,6 +478,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		EC88BF072FEA5000004AFB7B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EC88BE462FEA2C25004AFB7B /* BikaMacos */;
+			targetProxy = EC88BF062FEA5000004AFB7B /* PBXContainerItemProxy */;
+		};
 		F10000102F694FA800F6AB0F /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = ECC781FC2F694FA800F6AB0F /* bika */;
@@ -492,6 +565,64 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		EC88BF092FEA5000004AFB7B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.noasse.BikaMacosTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BikaMacos.app/Contents/MacOS/BikaMacos";
+				TEST_TARGET_NAME = BikaMacos;
+			};
+			name = Debug;
+		};
+		EC88BF0A2FEA5000004AFB7B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.noasse.BikaMacosTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BikaMacos.app/Contents/MacOS/BikaMacos";
+				TEST_TARGET_NAME = BikaMacos;
 			};
 			name = Release;
 		};
@@ -815,6 +946,15 @@
 			buildConfigurations = (
 				EC88BE4F2FEA2C25004AFB7B /* Debug */,
 				EC88BE502FEA2C25004AFB7B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		EC88BF082FEA5000004AFB7B /* Build configuration list for PBXNativeTarget "BikaMacosTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EC88BF092FEA5000004AFB7B /* Debug */,
+				EC88BF0A2FEA5000004AFB7B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

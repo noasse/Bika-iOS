@@ -151,19 +151,13 @@ final class CommentsViewModel {
 
     func likeComment(id: String) async {
         do {
-            let _: APIResponse<LikeActionData> = try await client.send(.likeComment(id: id))
-            toggleLike(id: id, in: &comments)
-            toggleLike(id: id, in: &topComments)
+            let response: APIResponse<LikeActionData> = try await client.send(.likeComment(id: id))
+            guard let action = response.data?.action else { return }
+            applyLikeAction(action, id: id, in: &comments)
+            applyLikeAction(action, id: id, in: &topComments)
         } catch {
             actionErrorMessage = error.localizedDescription
         }
-    }
-
-    private func toggleLike(id: String, in list: inout [Comment]) {
-        guard let idx = list.firstIndex(where: { $0.id == id }) else { return }
-        let wasLiked = list[idx].isLiked ?? false
-        list[idx].isLiked = !wasLiked
-        list[idx].likesCount = (list[idx].likesCount ?? 0) + (wasLiked ? -1 : 1)
     }
 
     private func uniqueComments(in comments: [Comment]) -> [Comment] {
@@ -292,13 +286,31 @@ final class ChildCommentsViewModel {
 
     func likeComment(id: String) async {
         do {
-            let _: APIResponse<LikeActionData> = try await client.send(.likeComment(id: id))
-            guard let idx = comments.firstIndex(where: { $0.id == id }) else { return }
-            let wasLiked = comments[idx].isLiked ?? false
-            comments[idx].isLiked = !wasLiked
-            comments[idx].likesCount = (comments[idx].likesCount ?? 0) + (wasLiked ? -1 : 1)
+            let response: APIResponse<LikeActionData> = try await client.send(.likeComment(id: id))
+            guard let action = response.data?.action else { return }
+            applyLikeAction(action, id: id, in: &comments)
         } catch {
             actionErrorMessage = error.localizedDescription
         }
     }
+}
+
+private func applyLikeAction(_ action: String, id: String, in list: inout [Comment]) {
+    let shouldLike: Bool
+    switch action {
+    case "like":
+        shouldLike = true
+    case "unlike":
+        shouldLike = false
+    default:
+        return
+    }
+
+    guard let index = list.firstIndex(where: { $0.id == id }) else { return }
+    let wasLiked = list[index].isLiked ?? false
+    guard wasLiked != shouldLike else { return }
+
+    let delta = shouldLike ? 1 : -1
+    list[index].isLiked = shouldLike
+    list[index].likesCount = max(0, (list[index].likesCount ?? 0) + delta)
 }

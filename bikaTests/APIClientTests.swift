@@ -117,4 +117,43 @@ final class APIClientTests: XCTestCase {
             }
         }
     }
+
+    func testSecureTokenStoreMigratesLegacyTokenAndClearsUserDefaults() async {
+        let legacyStore = InMemoryKeyValueStore()
+        legacyStore.set("legacy-token", forKey: TokenStore.tokenKey)
+        let secureStore = SecureTokenStore(
+            service: "com.bika.tests.\(UUID().uuidString)",
+            account: "auth-token",
+            legacyStore: legacyStore
+        )
+        defer { secureStore.clearToken() }
+
+        let tokenStore = TokenStore(secureStore: secureStore)
+        let migratedToken = await tokenStore.getToken()
+
+        XCTAssertEqual(migratedToken, "legacy-token")
+        XCTAssertNil(legacyStore.string(forKey: TokenStore.tokenKey))
+    }
+
+    func testEndpointEncodesQuerySeparatorsInCategory() async throws {
+        let observedRawQuery = LockedValue<String?>(nil)
+        let (client, _) = TestSupport.makeAPIClient { request in
+            observedRawQuery.value = request.url?.query
+            XCTAssertEqual(TestSupport.queryValue(named: "c", from: request), "A&B= C")
+            XCTAssertNil(TestSupport.queryValue(named: "B", from: request))
+            return TestSupport.jsonResponse(data: [
+                "comics": [
+                    "docs": [],
+                    "total": 0,
+                    "limit": 20,
+                    "page": 1,
+                    "pages": 1,
+                ],
+            ])
+        }
+
+        let _: APIResponse<ComicsData> = try await client.send(.comics(category: "A&B= C", page: 1))
+
+        XCTAssertTrue(observedRawQuery.value?.contains("c=A%26B%3D%20C") == true)
+    }
 }

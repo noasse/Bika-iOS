@@ -5,7 +5,7 @@
 - 默认使用 Mock 与本地 fixture，不访问真实后端、不依赖真实账号。
 - 本地与 CI 共用同一套 `xctestplan`、`scheme` 与脚本入口。
 - 回归目标不是只看“能不能编译”，而是同时覆盖核心逻辑和主交互链路。
-- macOS target 目前先以本地 build/run smoke 验证作为基线。
+- macOS target 通过 `BikaMacosTests` 覆盖核心逻辑，并保留本地 build/run smoke 验证作为启动基线。
 
 ## 测试分层
 
@@ -37,9 +37,20 @@
   - 阅读器进度保存与重启恢复
   - 设置页图片质量持久化与 mock 请求回传
 
-### 3. macOS Build Smoke
+### 3. macOS Unit
 
-- 目标：验证 `BikaMacos` target 可以构建并启动。
+- 目标：验证 macOS target 下的认证、网络路径构造、阅读历史等核心逻辑。
+- 对应 scheme：`BikaMacos`
+- 对应 target：`BikaMacosTests`
+- 运行入口：`./scripts/test.sh mac-unit`
+- 当前重点覆盖：
+  - 失效 token 校验失败后清理认证态与本地 token
+  - URL query/path 特殊字符编码
+  - 清空阅读历史时同步清理列表、进度和详情选择
+
+### 4. macOS Build Smoke
+
+- 目标：验证 `BikaMacos` app bundle 可以构建并启动。
 - 对应 scheme：`BikaMacos`
 - 运行入口：`script/build_and_run.sh`
 - 当前重点覆盖：
@@ -58,11 +69,13 @@
 
 - 工程：`./bika.xcodeproj`
 - 测试计划：`./bika.xctestplan`
+- macOS 测试 target：`./BikaMacosTests`
 - 脚本：`./scripts/test.sh`
 - macOS 脚本：`./script/build_and_run.sh`
 - 结果目录：`./artifacts/test-results`
 - DerivedData：`/tmp/bika-derived`
-- macOS DerivedData：`/private/tmp/bika-mac-run-derived`
+- macOS Unit DerivedData：`/tmp/bika-derived-mac`
+- macOS Build Smoke DerivedData：`/private/tmp/bika-mac-run-derived`
 
 ## 本地执行
 
@@ -77,6 +90,7 @@ chmod +x ./scripts/test.sh
 ```bash
 ./scripts/test.sh unit
 ./scripts/test.sh ui-smoke
+./scripts/test.sh mac-unit
 ./scripts/test.sh all
 ./scripts/test.sh build-for-testing
 ./scripts/test.sh clean
@@ -88,8 +102,11 @@ chmod +x ./scripts/test.sh
 ```bash
 SIMULATOR_NAME="iPhone 17"
 DERIVED_DATA_PATH="/tmp/bika-derived"
+MAC_DERIVED_DATA_PATH="/tmp/bika-derived-mac"
 RESULTS_DIR="./artifacts/test-results"
 BUILD_CONFIGURATION="Debug"
+MAC_SCHEME_NAME="BikaMacos"
+MAC_DESTINATION="platform=macOS"
 ```
 
 常见覆写示例：
@@ -105,9 +122,10 @@ SIMULATOR_NAME="iPhone 17 Pro" ./scripts/test.sh unit
 它做了这些事情：
 
 - 显式检查目标模拟器是否存在
-- 统一使用 `bika.xctestplan`
+- iOS 测试统一使用 `bika.xctestplan`
 - `unit` 与 `ui-smoke` 默认都会先执行 `build-for-testing`
 - `ui-smoke` 会在执行前主动准备模拟器状态
+- `mac-unit` 使用 `BikaMacos` scheme 和 `BikaMacosTests` target，不依赖 iOS Simulator
 - 输出 `xcresult` 到 `artifacts/test-results`
 
 ## Mock 策略
@@ -130,27 +148,30 @@ SIMULATOR_NAME="iPhone 17 Pro" ./scripts/test.sh unit
 
 - Unit：`artifacts/test-results/unit.xcresult`
 - UI Smoke：`artifacts/test-results/ui-smoke.xcresult`
+- macOS Unit：`artifacts/test-results/macos-unit.xcresult`
 
 最新一轮本地验证时间：
 
-- `2026-06-24`
-- `./script/build_and_run.sh --verify` 通过
+- `2026-06-25`
+- `./scripts/test.sh unit` 通过
+- `./scripts/test.sh mac-unit` 通过
 
 ## CI
 
 CI 配置位于 [ios-tests.yml](.github/workflows/ios-tests.yml)。
 
-当前包含两个 job：
+当前包含三个 job：
 
 - `unit`
 - `ui-smoke`
+- `mac-unit`
 
-两者都会上传 `xcresult`，便于失败后定位。
+三个 job 都会上传 `xcresult`，便于失败后定位。
 
 ## 日常维护建议
 
 - 提交 PR 前至少跑 `./scripts/test.sh unit`
 - 改动分页列表、详情、评论、阅读器或设置时，建议跑 `./scripts/test.sh all`
-- 改动 macOS target 时至少跑 `./script/build_and_run.sh --verify`
+- 改动 macOS target 时至少跑 `./scripts/test.sh mac-unit` 和 `./script/build_and_run.sh --verify`
 - 新增分页列表页时，优先复用统一分页模式，再补共享行为测试
 - 新增模型解码时，明确“关键字段”和“降级字段”的边界，并补单测
