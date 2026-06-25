@@ -291,7 +291,7 @@ final nonisolated class CloudHistoryClient {
     }
 }
 
-final nonisolated class CloudHistoryPinnedCertificateDelegate: NSObject, URLSessionDelegate {
+final nonisolated class CloudHistoryPinnedCertificateDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
     private let pins: Set<String>
 
     init(pins: [String]) {
@@ -301,6 +301,22 @@ final nonisolated class CloudHistoryPinnedCertificateDelegate: NSObject, URLSess
     func urlSession(
         _ session: URLSession,
         didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        handleServerTrustChallenge(challenge, completionHandler: completionHandler)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        handleServerTrustChallenge(challenge, completionHandler: completionHandler)
+    }
+
+    private func handleServerTrustChallenge(
+        _ challenge: URLAuthenticationChallenge,
         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
         guard
