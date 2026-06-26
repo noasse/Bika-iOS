@@ -10,7 +10,7 @@ Use a real HTTPS hostname with a public CA certificate. This avoids iOS/macOS AT
 
 ```text
 iOS/macOS app
-  -> https://<YOUR_DUCKDNS_DOMAIN>
+  -> https://<YOUR_HTTPS_HOSTNAME>[:PORT]
   -> Caddy with Let's Encrypt certificate
   -> FastAPI history service
   -> SQLite database capped at 200 items
@@ -18,8 +18,15 @@ iOS/macOS app
 
 Certificate SHA-256 pinning is optional:
 
-- Leave the pin field empty when using DuckDNS + Caddy + Let's Encrypt.
+- Leave the pin field empty when using a public CA certificate such as Caddy + Let's Encrypt.
 - Fill the pin only when deliberately using a self-signed/private certificate.
+
+Hostname choices:
+
+- DuckDNS: `<YOUR_DUCKDNS_DOMAIN>`, for example `example.duckdns.org`.
+- No account/domain registration: `<VPS_PUBLIC_IP>.sslip.io`, for example `<VPS_PUBLIC_IP>.sslip.io`.
+
+If a local network resets TLS connections for DuckDNS SNI on non-standard ports, use the `sslip.io` hostname with the same Caddy setup.
 
 The API stores one history row per comic and keeps the newest 200 non-deleted rows by `lastReadAt`.
 
@@ -28,9 +35,9 @@ The API stores one history row per comic and keeps the newest 200 non-deleted ro
 In iOS or macOS settings, enable cloud history and enter:
 
 ```text
-Server URL: https://<YOUR_DUCKDNS_DOMAIN>
+Server URL: https://<YOUR_HTTPS_HOSTNAME>[:PORT]
 Token: <YOUR_HISTORY_SYNC_TOKEN>
-Certificate SHA256 pin: leave empty for DuckDNS/Caddy
+Certificate SHA256 pin: leave empty for Caddy/Let's Encrypt
 ```
 
 These values are stored on the device. They are not committed to the repository.
@@ -41,10 +48,10 @@ Use this when the existing history service is already reachable on the VPS at `h
 
 ### 1. Preflight
 
-Run these commands on the VPS. Stop if TCP `80` or TCP `443` is already used by another service.
+Run these commands on the VPS. Stop if TCP `80` or your chosen HTTPS port is already used by another service. If TCP `443` is already used by Xray or another proxy service, do not stop it; use a non-standard HTTPS port such as `8444`.
 
 ```bash
-ss -tulpn | grep -E ':(80|443|8443)\b' || true
+ss -tulpn | grep -E ':(80|443|8443|8444)\b' || true
 docker ps --format 'table {{.Names}}\t{{.Ports}}\t{{.Status}}'
 curl -k https://127.0.0.1:8443/v1/health
 ```
@@ -70,11 +77,16 @@ apt install -y caddy
 
 ### 3. Configure Caddy
 
-Replace `<YOUR_DUCKDNS_DOMAIN>` with your DuckDNS hostname, for example `example.duckdns.org`.
+Replace `<YOUR_HTTPS_HOSTNAME>` with either your DuckDNS hostname or `<VPS_PUBLIC_IP>.sslip.io`. If TCP `443` is occupied, keep Caddy on `8444` as shown here.
 
 ```bash
 cat > /etc/caddy/Caddyfile <<'EOF_CADDY'
-<YOUR_DUCKDNS_DOMAIN> {
+{
+    http_port 80
+    https_port 8444
+}
+
+<YOUR_HTTPS_HOSTNAME> {
     encode zstd gzip
 
     reverse_proxy https://127.0.0.1:8443 {
@@ -99,7 +111,7 @@ Do not reset the firewall and do not blindly enable UFW on a server that already
 ```bash
 ufw status
 ufw allow 80/tcp
-ufw allow 443/tcp
+ufw allow 8444/tcp
 ```
 
 If UFW is inactive and you want to enable it, first allow SSH and your existing Hysteria2 port/protocol rules, then run `ufw enable` yourself.
@@ -107,8 +119,8 @@ If UFW is inactive and you want to enable it, first allow SSH and your existing 
 ### 5. Verify From Outside The VPS
 
 ```bash
-curl https://<YOUR_DUCKDNS_DOMAIN>/v1/health
-curl 'https://<YOUR_DUCKDNS_DOMAIN>/v1/history?limit=1' \
+curl https://<YOUR_HTTPS_HOSTNAME>:8444/v1/health
+curl 'https://<YOUR_HTTPS_HOSTNAME>:8444/v1/history?limit=1' \
   -H 'Authorization: Bearer <YOUR_HISTORY_SYNC_TOKEN>'
 ```
 

@@ -65,7 +65,7 @@ The reader persists chapter and page position so users can return directly to wh
 
 ### Optional cloud history sync
 
-Cloud history sync is disabled by default and stores no server details in the repository. Users can configure a private self-hosted HTTPS endpoint and bearer token locally in iOS/macOS settings; certificate SHA-256 pinning is optional and can be left empty for DuckDNS/Caddy/Let's Encrypt deployments. The companion VPS service stores the shared history in SQLite, keeps the newest 200 records, and exposes only the HTTPS API needed by the app.
+Cloud history sync is disabled by default and stores no server details in the repository. Users can configure a private self-hosted HTTPS endpoint and bearer token locally in iOS/macOS settings; certificate SHA-256 pinning is optional and can be left empty for Caddy/Let's Encrypt deployments, including DuckDNS or `<VPS_PUBLIC_IP>.sslip.io` hostnames. The companion VPS service stores the shared history in SQLite, keeps the newest 200 records, and exposes only the HTTPS API needed by the app.
 
 - [CloudHistorySync.swift](bika/Support/CloudHistorySync.swift)
 - [CLOUD_HISTORY_SYNC.md](CLOUD_HISTORY_SYNC.md)
