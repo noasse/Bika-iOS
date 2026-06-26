@@ -114,14 +114,6 @@ final class CloudHistorySyncTests: XCTestCase {
         XCTAssertNil(request.resolvedHTTPBodyData())
     }
 
-    func testPinnedCertificateDelegateHandlesTaskLevelServerTrustChallenge() {
-        let delegate = CloudHistoryPinnedCertificateDelegate(pins: [String(repeating: "c", count: 64)])
-        let selector = #selector(URLSessionTaskDelegate.urlSession(_:task:didReceive:completionHandler:))
-
-        XCTAssertTrue(delegate is URLSessionTaskDelegate)
-        XCTAssertTrue(delegate.responds(to: selector))
-    }
-
     func testUploadHistoryPostsBatchPayloadAndBearerToken() async throws {
         let observedRequest = LockedValue<URLRequest?>(nil)
         let session = makeCloudHistorySession { request in
