@@ -62,4 +62,26 @@ final class SettingsViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.themeManager.themeMode, .light)
         XCTAssertEqual(store.string(forKey: "themeMode"), ThemeMode.light.rawValue)
     }
+
+    func testSaveCloudHistorySettingsAllowsEmptyCertificatePins() {
+        let store = InMemoryKeyValueStore()
+        AppDependencies.shared.installForTesting(keyValueStore: store)
+
+        let viewModel = SettingsViewModel(
+            themeManager: ThemeManager(keyValueStore: store),
+            blockedCategoriesManager: BlockedCategoriesManager(keyValueStore: store),
+            keyValueStore: store,
+            isUITesting: false,
+            appVersion: "1.0"
+        )
+        viewModel.cloudHistoryEnabled = true
+        viewModel.cloudHistoryBaseURL = "https://history-sync.invalid"
+        viewModel.cloudHistoryBearerToken = "unit-test-token"
+        viewModel.cloudHistoryCertificatePins = ""
+
+        viewModel.saveCloudHistorySettings()
+
+        XCTAssertEqual(viewModel.cloudHistorySettingsMessage, "云端历史同步已保存")
+        XCTAssertEqual(store.cloudHistoryConfig()?.certificateSHA256Pins, [])
+    }
 }

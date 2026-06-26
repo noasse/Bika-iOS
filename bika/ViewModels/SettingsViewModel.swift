@@ -132,11 +132,6 @@ final class SettingsViewModel {
             return nil
         }
 
-        guard !pins.isEmpty else {
-            cloudHistorySettingsMessage = "证书 SHA256 pin 不能为空"
-            return nil
-        }
-
         return CloudHistoryConfig(
             baseURL: baseURL,
             bearerToken: trimmedToken,

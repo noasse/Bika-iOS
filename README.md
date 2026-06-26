@@ -37,7 +37,7 @@ The repository also serves as a practical SwiftUI reference project for:
 - Reading progress persistence and continue-reading recovery
 - Comment and child-comment browsing with like and reply actions
 - Favourites, history, theme mode, image quality, and content filtering settings
-- Optional private cloud history sync for iOS and macOS, backed by a self-hosted HTTPS endpoint and a capped SQLite history database
+- Optional private cloud history sync for iOS and macOS, backed by a trusted self-hosted HTTPS endpoint and a capped SQLite history database
 - macOS target with native sidebar navigation, compact detail panes, independent reader windows, touchpad-friendly horizontal paging, waterfall reading, per-page pinch zoom, and a singleton comments window
 
 ## Architecture Highlights
@@ -65,7 +65,7 @@ The reader persists chapter and page position so users can return directly to wh
 
 ### Optional cloud history sync
 
-Cloud history sync is disabled by default and stores no server details in the repository. Users can configure a private self-hosted endpoint, bearer token, and certificate SHA-256 pin locally in iOS/macOS settings. The companion VPS service stores the shared history in SQLite, keeps the newest 200 records, and exposes only the HTTPS API needed by the app.
+Cloud history sync is disabled by default and stores no server details in the repository. Users can configure a private self-hosted HTTPS endpoint and bearer token locally in iOS/macOS settings; certificate SHA-256 pinning is optional and can be left empty for DuckDNS/Caddy/Let's Encrypt deployments. The companion VPS service stores the shared history in SQLite, keeps the newest 200 records, and exposes only the HTTPS API needed by the app.
 
 - [CloudHistorySync.swift](bika/Support/CloudHistorySync.swift)
 - [CLOUD_HISTORY_SYNC.md](CLOUD_HISTORY_SYNC.md)

@@ -23,6 +23,30 @@ final class CloudHistorySyncTests: XCTestCase {
         XCTAssertNil(store.cloudHistoryConfig())
     }
 
+    func testCloudHistoryConfigPersistsAndLoadsWithoutCertificatePins() throws {
+        let store = InMemoryKeyValueStore()
+        let config = CloudHistoryConfig(
+            baseURL: try XCTUnwrap(URL(string: "https://history-sync.invalid")),
+            bearerToken: "unit-test-token",
+            certificateSHA256Pins: []
+        )
+
+        store.setCloudHistoryConfig(config)
+
+        XCTAssertEqual(store.cloudHistoryConfig(), config)
+    }
+
+    func testCloudHistoryConfigLoadsMissingCertificatePinsAsEmptyPins() throws {
+        let store = InMemoryKeyValueStore()
+        store.set("1", forKey: CloudHistoryConfig.StorageKeys.isEnabled)
+        store.set("https://history-sync.invalid", forKey: CloudHistoryConfig.StorageKeys.baseURL)
+        store.set("unit-test-token", forKey: CloudHistoryConfig.StorageKeys.bearerToken)
+
+        let config = try XCTUnwrap(store.cloudHistoryConfig())
+
+        XCTAssertEqual(config.certificateSHA256Pins, [])
+    }
+
     func testCloudHistoryConfigDoesNotLoadIncompleteConfiguration() throws {
         let store = InMemoryKeyValueStore()
         store.set("https://history-sync.invalid", forKey: CloudHistoryConfig.StorageKeys.baseURL)

@@ -30,8 +30,7 @@ nonisolated struct CloudHistoryConfig: Equatable, Sendable {
     var isUsable: Bool {
         isEnabled &&
         baseURL.scheme?.lowercased() == "https" &&
-        !bearerToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !certificateSHA256Pins.isEmpty
+        !bearerToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -42,12 +41,12 @@ extension KeyValueStore {
         guard
             let baseURLString = string(forKey: CloudHistoryConfig.StorageKeys.baseURL),
             let baseURL = URL(string: baseURLString),
-            let bearerToken = string(forKey: CloudHistoryConfig.StorageKeys.bearerToken),
-            let pins = stringArray(forKey: CloudHistoryConfig.StorageKeys.certificateSHA256Pins)
+            let bearerToken = string(forKey: CloudHistoryConfig.StorageKeys.bearerToken)
         else {
             return nil
         }
 
+        let pins = stringArray(forKey: CloudHistoryConfig.StorageKeys.certificateSHA256Pins) ?? []
         let config = CloudHistoryConfig(baseURL: baseURL, bearerToken: bearerToken, certificateSHA256Pins: pins)
         return config.isUsable ? config : nil
     }
@@ -212,6 +211,8 @@ final nonisolated class CloudHistoryClient {
         self.config = config
         if let session {
             self.session = session
+        } else if config.certificateSHA256Pins.isEmpty {
+            self.session = URLSession(configuration: .ephemeral)
         } else {
             let delegate = CloudHistoryPinnedCertificateDelegate(pins: config.certificateSHA256Pins)
             self.session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)

@@ -61,15 +61,18 @@ struct MacSettingsView: View {
             Toggle("启用云端历史同步", isOn: $cloudHistoryEnabled)
 
             if cloudHistoryEnabled {
-                TextField("服务地址", text: $cloudHistoryBaseURL, prompt: Text("https://公网IP:8443"))
+                TextField("服务地址", text: $cloudHistoryBaseURL, prompt: Text("https://your-name.duckdns.org"))
                     .textFieldStyle(.roundedBorder)
 
                 SecureField("同步 Token", text: $cloudHistoryBearerToken)
                     .textFieldStyle(.roundedBorder)
 
-                TextField("证书 SHA256 pin", text: $cloudHistoryCertificatePins, axis: .vertical)
+                TextField("证书 SHA256 pin（可选）", text: $cloudHistoryCertificatePins, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(2...4)
+                Text("DuckDNS/Let's Encrypt 可留空；自签名证书才需要填写。")
+                    .font(.caption)
+                    .foregroundStyle(MacUI.secondaryText(for: colorScheme))
 
                 HStack {
                     Button("保存云同步设置") {
@@ -270,11 +273,6 @@ struct MacSettingsView: View {
             cloudHistoryMessage = "同步 Token 不能为空"
             return nil
         }
-        guard !pins.isEmpty else {
-            cloudHistoryMessage = "证书 SHA256 pin 不能为空"
-            return nil
-        }
-
         return CloudHistoryConfig(
             baseURL: baseURL,
             bearerToken: trimmedToken,

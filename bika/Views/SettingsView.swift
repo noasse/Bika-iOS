@@ -74,7 +74,7 @@ struct SettingsView: View {
                 Toggle("启用云端历史同步", isOn: cloudHistoryBinding(\.cloudHistoryEnabled))
 
                 if viewModel.cloudHistoryEnabled {
-                    TextField("https://公网IP:8443", text: cloudHistoryBinding(\.cloudHistoryBaseURL))
+                    TextField("https://your-name.duckdns.org", text: cloudHistoryBinding(\.cloudHistoryBaseURL))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
 
@@ -82,7 +82,7 @@ struct SettingsView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
 
-                    TextField("证书 SHA256 pin", text: cloudHistoryBinding(\.cloudHistoryCertificatePins), axis: .vertical)
+                    TextField("证书 SHA256 pin（可选）", text: cloudHistoryBinding(\.cloudHistoryCertificatePins), axis: .vertical)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .lineLimit(2...4)
@@ -111,7 +111,7 @@ struct SettingsView: View {
             } header: {
                 Text("云端历史")
             } footer: {
-                Text("留空或关闭时只使用本地历史。服务地址、Token 和证书 pin 只保存在本机，不会写入仓库。")
+                Text("留空或关闭时只使用本地历史。DuckDNS/Let's Encrypt 可不填证书 pin；自签名证书才需要填写。服务地址、Token 和证书 pin 只保存在本机，不会写入仓库。")
             }
 
             // About
