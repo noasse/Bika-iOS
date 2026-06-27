@@ -43,6 +43,70 @@ final class MacRegressionTests: XCTestCase {
         XCTAssertEqual(detailEndpoint.path, "comics/comic%2Fwith%3Fspecial%26chars")
     }
 
+    func testMacReaderImagePrefetchWindowSkipsCurrentPageAndStaysWithinBounds() {
+        XCTAssertEqual(
+            MacReaderImagePrefetchPlan.indices(
+                currentIndex: 5,
+                pageCount: 10,
+                lookBehind: 1,
+                lookAhead: 3
+            ),
+            [6, 7, 8, 4]
+        )
+
+        XCTAssertEqual(
+            MacReaderImagePrefetchPlan.indices(
+                currentIndex: 0,
+                pageCount: 3,
+                lookBehind: 2,
+                lookAhead: 4
+            ),
+            [1, 2]
+        )
+
+        XCTAssertEqual(
+            MacReaderImagePrefetchPlan.indices(
+                currentIndex: 4,
+                pageCount: 5,
+                lookBehind: 2,
+                lookAhead: 3
+            ),
+            [3, 2]
+        )
+    }
+
+    func testMacReaderWindowSizePersistenceStoresAndClampsContentSize() {
+        let store = InMemoryKeyValueStore()
+
+        XCTAssertNil(MacReaderWindowSizePersistence.restoredContentSize(from: store))
+
+        MacReaderWindowSizePersistence.saveContentSize(
+            CGSize(width: 980, height: 720),
+            to: store
+        )
+        XCTAssertEqual(
+            MacReaderWindowSizePersistence.restoredContentSize(from: store),
+            CGSize(width: 980, height: 720)
+        )
+
+        MacReaderWindowSizePersistence.saveContentSize(
+            CGSize(width: 200, height: 120),
+            to: store
+        )
+        XCTAssertEqual(
+            MacReaderWindowSizePersistence.restoredContentSize(from: store),
+            MacReaderWindowSizePersistence.minimumContentSize
+        )
+
+        XCTAssertEqual(
+            MacReaderWindowSizePersistence.fittedContentSize(
+                CGSize(width: 1_200, height: 900),
+                visibleFrame: CGRect(x: 0, y: 0, width: 800, height: 600)
+            ),
+            CGSize(width: 800, height: 600)
+        )
+    }
+
     func testClearHistoryClearsReadingStoreListAndSelectedDetail() {
         let store = InMemoryKeyValueStore()
         let (client, _) = MacTestSupport.makeAPIClient(store: store) { _ in

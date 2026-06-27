@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-final class MacImageCache: @unchecked Sendable {
+nonisolated final class MacImageCache: @unchecked Sendable {
     static let shared = MacImageCache()
 
     private let cache = NSCache<NSURL, NSImage>()

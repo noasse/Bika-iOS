@@ -6,6 +6,7 @@ struct ComicDetailView: View {
     @State private var showReader = false
     @State private var selectedEpisodeIndex = 0
     @State private var resumePageIndex = 0
+    @State private var syncedReadingProgress: ReadingProgressManager.Progress?
     @State private var previewImageURL: URL?
     @Environment(\.colorScheme) private var colorScheme
     private let readingProgressManager: ReadingProgressManager
@@ -71,18 +72,21 @@ struct ComicDetailView: View {
             )
         }
         .onChange(of: showReader) { _, isShowing in
-            if isShowing, let detail = viewModel.detail {
-                readingHistoryManager.record(
-                    comicId: comicId,
-                    title: detail.title,
-                    thumbPath: detail.thumb?.path ?? "",
-                    thumbServer: detail.thumb?.fileServer,
-                    author: detail.author
-                )
+            guard let detail = viewModel.detail else { return }
+            if isShowing {
+                recordReadingHistory(for: detail)
+            } else {
+                syncedReadingProgress = readingProgressManager.get(comicId: comicId)
+                recordReadingHistory(for: detail)
             }
         }
         .imagePreviewSheet(url: $previewImageURL)
-        .task { await viewModel.load() }
+        .task {
+            await viewModel.load()
+            syncedReadingProgress = readingProgressManager.get(comicId: comicId)
+            await readingHistoryManager.syncProgressFromCloud(for: comicId)
+            syncedReadingProgress = readingProgressManager.get(comicId: comicId)
+        }
     }
 
     private var commentEntryLabel: String {
@@ -140,7 +144,7 @@ struct ComicDetailView: View {
                 onRetry: { Task { await viewModel.reloadEpisodes() } }
             )
 
-            if let progress = readingProgressManager.get(comicId: comicId),
+            if let progress = syncedReadingProgress ?? readingProgressManager.get(comicId: comicId),
                let episodeIndex = viewModel.episodes.firstIndex(where: { $0.order == progress.episodeOrder }) {
                 ContinueReadingSection(progress: progress) {
                     selectedEpisodeIndex = episodeIndex
@@ -170,5 +174,15 @@ struct ComicDetailView: View {
         selectedEpisodeIndex = index
         resumePageIndex = 0
         showReader = true
+    }
+
+    private func recordReadingHistory(for detail: ComicDetail) {
+        readingHistoryManager.record(
+            comicId: comicId,
+            title: detail.title,
+            thumbPath: detail.thumb?.path ?? "",
+            thumbServer: detail.thumb?.fileServer,
+            author: detail.author
+        )
     }
 }

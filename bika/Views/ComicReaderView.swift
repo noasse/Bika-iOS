@@ -12,6 +12,8 @@ struct ComicReaderView: View {
     @State private var sampledIndices: [Int] = []
     @State private var sampledAspectRatios: [Int: CGFloat] = [:]
     @State private var estimatedAspectRatio: CGFloat?
+    @State private var imagePrefetchTask: Task<Void, Never>?
+    @State private var imagePrefetchKey: String?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     private let startPageIndex: Int
@@ -92,6 +94,7 @@ struct ComicReaderView: View {
             }
         }
         .onDisappear {
+            cancelImagePrefetch()
             saveProgress()
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -102,21 +105,35 @@ struct ComicReaderView: View {
         .onChange(of: scrollPosition) { _, newPos in
             if let newPos {
                 currentPage = newPos
+                scheduleImagePrefetch(around: newPos)
             }
         }
         .onChange(of: viewModel.pages.count) { _, count in
-            guard !hasJumpedToStart, count > 0 else { return }
-            let restoredPage = min(startPageIndex, count - 1)
-            hasJumpedToStart = true
-            if restoredPage > 0 {
-                scrollPosition = restoredPage
-                currentPage = restoredPage
-            } else {
-                currentPage = 0
+            guard count > 0 else {
+                cancelImagePrefetch()
+                return
             }
+
+            if !hasJumpedToStart {
+                let restoredPage = min(startPageIndex, count - 1)
+                hasJumpedToStart = true
+                if restoredPage > 0 {
+                    scrollPosition = restoredPage
+                    currentPage = restoredPage
+                } else {
+                    currentPage = 0
+                }
+            }
+
+            scheduleImagePrefetch(around: currentPage)
         }
         .onChange(of: viewModel.currentEpisodeIndex) { _, _ in
             resetImageLayoutState()
+            cancelImagePrefetch()
+        }
+        .onChange(of: viewModel.readerMode) { _, _ in
+            imagePrefetchKey = nil
+            scheduleImagePrefetch(around: currentPage)
         }
     }
 
@@ -238,6 +255,70 @@ struct ComicReaderView: View {
         abs(lhs.width - rhs.width) < 1 && abs(lhs.height - rhs.height) < 1
     }
 
+    // MARK: - Image Prefetch
+
+    private func scheduleImagePrefetch(around index: Int) {
+        let pageCount = viewModel.pages.count
+        guard pageCount > 0 else {
+            cancelImagePrefetch()
+            return
+        }
+
+        let clampedIndex = min(max(index, 0), pageCount - 1)
+        let requests = ReaderImagePrefetchPlan.indices(
+            currentIndex: clampedIndex,
+            pageCount: pageCount,
+            lookBehind: 1,
+            lookAhead: 4
+        )
+        .compactMap(imagePrefetchRequest)
+
+        let nextKey = requests.map(\.cacheIdentity).joined(separator: "|")
+        guard nextKey != imagePrefetchKey else { return }
+        imagePrefetchKey = nextKey
+
+        imagePrefetchTask?.cancel()
+        guard !requests.isEmpty else { return }
+
+        let imageLoader = imageDataLoader
+        let imageCache = imageCache
+        imagePrefetchTask = Task(priority: .utility) {
+            await ReaderImagePrefetcher.prefetch(
+                requests: requests,
+                imageLoader: imageLoader,
+                imageCache: imageCache
+            )
+        }
+    }
+
+    private func cancelImagePrefetch() {
+        imagePrefetchTask?.cancel()
+        imagePrefetchTask = nil
+        imagePrefetchKey = nil
+    }
+
+    private func imagePrefetchRequest(for index: Int) -> ReaderImagePrefetchRequest? {
+        guard viewModel.pages.indices.contains(index),
+              let url = viewModel.pages[index].media.imageURL else {
+            return nil
+        }
+
+        let targetSize = imagePrefetchTargetSize(for: index)
+        guard targetSize.width > 0, targetSize.height > 0 else { return nil }
+        return ReaderImagePrefetchRequest(url: url, targetSize: targetSize)
+    }
+
+    private func imagePrefetchTargetSize(for index: Int) -> CGSize {
+        let screenBounds = UIScreen.main.bounds
+        switch viewModel.readerMode {
+        case .horizontal:
+            return screenBounds.size
+
+        case .vertical:
+            return CGSize(width: screenBounds.width, height: minHeight(for: index))
+        }
+    }
+
     // MARK: - Save Progress
 
     private func saveProgress() {
@@ -333,5 +414,104 @@ struct ComicReaderView: View {
             )
         }
         .foregroundStyle(.white)
+    }
+}
+
+nonisolated enum ReaderImagePrefetchPlan {
+    static func indices(
+        currentIndex: Int,
+        pageCount: Int,
+        lookBehind: Int,
+        lookAhead: Int
+    ) -> [Int] {
+        guard pageCount > 0 else { return [] }
+
+        let current = min(max(currentIndex, 0), pageCount - 1)
+        let forwardEnd = min(pageCount - 1, current + max(lookAhead, 0))
+        var indices: [Int] = []
+        if current < forwardEnd {
+            indices.append(contentsOf: (current + 1)...forwardEnd)
+        }
+
+        let backwardEnd = max(0, current - max(lookBehind, 0))
+        if backwardEnd < current {
+            indices.append(contentsOf: stride(from: current - 1, through: backwardEnd, by: -1))
+        }
+
+        return indices
+    }
+}
+
+nonisolated struct ReaderImagePrefetchRequest: Sendable {
+    let url: URL
+    let targetSize: CGSize
+
+    var cacheIdentity: String {
+        "\(url.absoluteString)#\(ImageDecoding.cacheKeySuffix(for: targetSize))"
+    }
+}
+
+nonisolated enum ReaderImagePrefetcher {
+    private static let maximumConcurrentRequests = 2
+
+    static func prefetch(
+        requests: [ReaderImagePrefetchRequest],
+        imageLoader: any ImageDataLoading,
+        imageCache: ImageCache
+    ) async {
+        guard !requests.isEmpty else { return }
+
+        var nextIndex = 0
+        await withTaskGroup(of: Void.self) { group in
+            let initialRequestCount = min(maximumConcurrentRequests, requests.count)
+            for _ in 0..<initialRequestCount {
+                let request = requests[nextIndex]
+                nextIndex += 1
+                group.addTask {
+                    await prefetch(request: request, imageLoader: imageLoader, imageCache: imageCache)
+                }
+            }
+
+            while await group.next() != nil {
+                if Task.isCancelled {
+                    group.cancelAll()
+                    return
+                }
+
+                guard nextIndex < requests.count else { continue }
+                let request = requests[nextIndex]
+                nextIndex += 1
+                group.addTask {
+                    await prefetch(request: request, imageLoader: imageLoader, imageCache: imageCache)
+                }
+            }
+        }
+    }
+
+    private static func prefetch(
+        request: ReaderImagePrefetchRequest,
+        imageLoader: any ImageDataLoading,
+        imageCache: ImageCache
+    ) async {
+        guard !Task.isCancelled else { return }
+        guard imageCache.image(for: request.url, targetSize: request.targetSize) == nil else { return }
+
+        do {
+            let data = try await imageLoader.data(from: request.url)
+            guard !Task.isCancelled else { return }
+
+            let image = await Task.detached(priority: .utility) {
+                ImageDecoding.decodeImage(
+                    from: data,
+                    targetSize: request.targetSize,
+                    overscan: 2
+                )
+            }.value
+
+            guard !Task.isCancelled, let image else { return }
+            imageCache.setImage(image, for: request.url, targetSize: request.targetSize)
+        } catch {
+            // Prefetch failures should never block reading; the visible page loader still handles retries.
+        }
     }
 }

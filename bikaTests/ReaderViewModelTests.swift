@@ -128,6 +128,38 @@ final class ReaderViewModelTests: XCTestCase {
 
         XCTAssertEqual(store.string(forKey: "readerMode"), ReaderViewModel.ReaderMode.vertical.rawValue)
     }
+
+    func testImagePrefetchWindowSkipsCurrentPageAndStaysWithinBounds() {
+        XCTAssertEqual(
+            ReaderImagePrefetchPlan.indices(
+                currentIndex: 5,
+                pageCount: 10,
+                lookBehind: 1,
+                lookAhead: 3
+            ),
+            [6, 7, 8, 4]
+        )
+
+        XCTAssertEqual(
+            ReaderImagePrefetchPlan.indices(
+                currentIndex: 0,
+                pageCount: 3,
+                lookBehind: 2,
+                lookAhead: 4
+            ),
+            [1, 2]
+        )
+
+        XCTAssertEqual(
+            ReaderImagePrefetchPlan.indices(
+                currentIndex: 4,
+                pageCount: 5,
+                lookBehind: 2,
+                lookAhead: 3
+            ),
+            [3, 2]
+        )
+    }
 }
 
 private func page(id: String) -> [String: Any] {

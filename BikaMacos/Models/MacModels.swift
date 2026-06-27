@@ -168,6 +168,48 @@ func macClampedPage(_ page: Int, totalPages: Int) -> Int {
     min(max(page, 1), max(totalPages, 1))
 }
 
+nonisolated enum MacReaderWindowSizePersistence {
+    static let minimumContentSize = CGSize(width: 420, height: 360)
+    static let fallbackContentSize = CGSize(width: 720, height: 680)
+    private static let widthKey = "macReaderWindowContentWidth"
+    private static let heightKey = "macReaderWindowContentHeight"
+
+    static func restoredContentSize(from keyValueStore: any KeyValueStore) -> CGSize? {
+        guard
+            let width = keyValueStore.string(forKey: widthKey).flatMap(Double.init),
+            let height = keyValueStore.string(forKey: heightKey).flatMap(Double.init),
+            width.isFinite,
+            height.isFinite
+        else {
+            return nil
+        }
+
+        return clampedToMinimum(CGSize(width: width, height: height))
+    }
+
+    static func saveContentSize(_ size: CGSize, to keyValueStore: any KeyValueStore) {
+        let clampedSize = clampedToMinimum(size)
+        keyValueStore.set(String(Double(clampedSize.width)), forKey: widthKey)
+        keyValueStore.set(String(Double(clampedSize.height)), forKey: heightKey)
+    }
+
+    static func fittedContentSize(_ size: CGSize, visibleFrame: CGRect?) -> CGSize {
+        let clampedSize = clampedToMinimum(size)
+        guard let visibleFrame else { return clampedSize }
+        return CGSize(
+            width: min(clampedSize.width, max(minimumContentSize.width, visibleFrame.width)),
+            height: min(clampedSize.height, max(minimumContentSize.height, visibleFrame.height))
+        )
+    }
+
+    private static func clampedToMinimum(_ size: CGSize) -> CGSize {
+        CGSize(
+            width: max(size.width.isFinite ? size.width : 0, minimumContentSize.width),
+            height: max(size.height.isFinite ? size.height : 0, minimumContentSize.height)
+        )
+    }
+}
+
 struct MacReaderEpisode: Codable, Hashable, Identifiable {
     let id: String
     let title: String

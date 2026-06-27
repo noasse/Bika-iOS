@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-private final class ImageCacheKey: NSObject {
+nonisolated private final class ImageCacheKey: NSObject {
     let value: String
 
     init(url: URL, targetSize: CGSize?) {
@@ -18,7 +18,7 @@ private final class ImageCacheKey: NSObject {
     }
 }
 
-final class ImageCache: @unchecked Sendable {
+nonisolated final class ImageCache: @unchecked Sendable {
     static let shared = ImageCache()
     private let cache = NSCache<ImageCacheKey, UIImage>()
 

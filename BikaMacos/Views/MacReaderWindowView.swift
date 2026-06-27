@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct MacReaderWindowView: View {
@@ -17,7 +18,10 @@ struct MacReaderWindowView: View {
     @State private var isHorizontalResizing = false
     @State private var horizontalResizeGeneration = 0
     @State private var lastHorizontalReaderSize: CGSize = .zero
+    @State private var imagePrefetchTask: Task<Void, Never>?
+    @State private var imagePrefetchKey: String?
     @Environment(\.colorScheme) private var colorScheme
+    private let keyValueStore: any KeyValueStore
 
     private let horizontalPageAnimation = Animation.interactiveSpring(response: 0.28, dampingFraction: 0.9, blendDuration: 0.06)
     private let defaultPageScale = 1.0
@@ -28,9 +32,11 @@ struct MacReaderWindowView: View {
     init(
         request: MacReaderLaunchRequest,
         readingStore: MacReadingStore,
+        keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore,
         onClose: @escaping (String) -> Void = { _ in }
     ) {
         _viewModel = State(initialValue: MacReaderViewModel(request: request, readingStore: readingStore))
+        self.keyValueStore = keyValueStore
         self.onClose = onClose
     }
 
@@ -44,6 +50,8 @@ struct MacReaderWindowView: View {
                 navigateNextPage()
             }
             .frame(width: 0, height: 0)
+            MacReaderWindowSizeBridge(keyValueStore: keyValueStore)
+                .frame(width: 0, height: 0)
 
             if !viewModel.pages.isEmpty {
                 readerHUD
@@ -55,12 +63,29 @@ struct MacReaderWindowView: View {
         .environment(\.colorScheme, .dark)
         .task {
             await viewModel.startIfNeeded()
+            scheduleImagePrefetch(around: viewModel.currentPageIndex)
+        }
+        .onChange(of: viewModel.pages.count) { _, count in
+            guard count > 0 else {
+                cancelImagePrefetch()
+                return
+            }
+            scheduleImagePrefetch(around: viewModel.currentPageIndex)
+        }
+        .onChange(of: viewModel.currentPageIndex) { _, pageIndex in
+            scheduleImagePrefetch(around: pageIndex)
+        }
+        .onChange(of: viewModel.readerMode) { _, _ in
+            imagePrefetchKey = nil
+            scheduleImagePrefetch(around: viewModel.currentPageIndex)
         }
         .onChange(of: viewModel.currentEpisodeIndex) { _, _ in
             resetImageLayoutState()
             waterfallScrollRequest = nil
+            cancelImagePrefetch()
         }
         .onDisappear {
+            cancelImagePrefetch()
             onClose(viewModel.request.comicId)
         }
         .alert("跳转到页面", isPresented: $showPageInput) {
@@ -466,6 +491,54 @@ struct MacReaderWindowView: View {
         abs(lhs.width - rhs.width) < 1 && abs(lhs.height - rhs.height) < 1
     }
 
+    private func scheduleImagePrefetch(around index: Int) {
+        let pageCount = viewModel.pages.count
+        guard pageCount > 0 else {
+            cancelImagePrefetch()
+            return
+        }
+
+        let clampedIndex = min(max(index, 0), pageCount - 1)
+        let excludedIndices = imagePrefetchExcludedIndices(around: clampedIndex)
+        let urls = MacReaderImagePrefetchPlan.indices(
+            currentIndex: clampedIndex,
+            pageCount: pageCount,
+            lookBehind: 1,
+            lookAhead: 4
+        )
+        .compactMap { pageIndex -> URL? in
+            guard !excludedIndices.contains(pageIndex) else { return nil }
+            guard viewModel.pages.indices.contains(pageIndex) else { return nil }
+            return viewModel.pages[pageIndex].media.imageURL
+        }
+
+        let nextKey = urls.map(\.absoluteString).joined(separator: "|")
+        guard nextKey != imagePrefetchKey else { return }
+        imagePrefetchKey = nextKey
+
+        imagePrefetchTask?.cancel()
+        guard !urls.isEmpty else { return }
+
+        imagePrefetchTask = Task(priority: .utility) {
+            await MacReaderImagePrefetcher.prefetch(urls: urls, imageCache: .shared)
+        }
+    }
+
+    private func imagePrefetchExcludedIndices(around index: Int) -> Set<Int> {
+        switch viewModel.readerMode {
+        case .horizontal:
+            return Set(horizontalVisiblePageIndices)
+        case .waterfall:
+            return [index]
+        }
+    }
+
+    private func cancelImagePrefetch() {
+        imagePrefetchTask?.cancel()
+        imagePrefetchTask = nil
+        imagePrefetchKey = nil
+    }
+
     private func goToDisplayPage(_ page: Int) {
         let oldPage = viewModel.currentPageIndex
         updatePageSelection {
@@ -517,6 +590,165 @@ struct MacReaderWindowView: View {
             withAnimation(horizontalPageAnimation, update)
         } else {
             update()
+        }
+    }
+}
+
+private struct MacReaderWindowSizeBridge: NSViewRepresentable {
+    let keyValueStore: any KeyValueStore
+
+    func makeNSView(context: Context) -> MacReaderWindowSizeView {
+        MacReaderWindowSizeView(keyValueStore: keyValueStore)
+    }
+
+    func updateNSView(_ nsView: MacReaderWindowSizeView, context: Context) {
+        nsView.keyValueStore = keyValueStore
+        nsView.attachToCurrentWindowIfNeeded()
+    }
+}
+
+private final class MacReaderWindowSizeView: NSView {
+    var keyValueStore: any KeyValueStore
+    private weak var observedWindow: NSWindow?
+    private var notificationObservers: [NSObjectProtocol] = []
+
+    init(keyValueStore: any KeyValueStore) {
+        self.keyValueStore = keyValueStore
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        removeNotificationObservers()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        attachToCurrentWindowIfNeeded()
+    }
+
+    func attachToCurrentWindowIfNeeded() {
+        guard observedWindow !== window else { return }
+        removeNotificationObservers()
+        observedWindow = window
+
+        guard let window else { return }
+        applyStoredContentSize(to: window)
+        observe(window)
+    }
+
+    private func applyStoredContentSize(to window: NSWindow) {
+        guard let storedSize = MacReaderWindowSizePersistence.restoredContentSize(from: keyValueStore) else { return }
+        let fittedSize = MacReaderWindowSizePersistence.fittedContentSize(
+            storedSize,
+            visibleFrame: window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
+        )
+        window.setContentSize(fittedSize)
+    }
+
+    private func observe(_ window: NSWindow) {
+        let notificationCenter = NotificationCenter.default
+        notificationObservers = [
+            notificationCenter.addObserver(
+                forName: NSWindow.didResizeNotification,
+                object: window,
+                queue: .main
+            ) { [weak self, weak window] _ in
+                guard let self, let window else { return }
+                self.saveContentSize(of: window)
+            },
+            notificationCenter.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: window,
+                queue: .main
+            ) { [weak self, weak window] _ in
+                guard let self, let window else { return }
+                self.saveContentSize(of: window)
+            },
+        ]
+    }
+
+    private func saveContentSize(of window: NSWindow) {
+        let contentSize = window.contentView?.bounds.size ?? window.contentLayoutRect.size
+        MacReaderWindowSizePersistence.saveContentSize(contentSize, to: keyValueStore)
+    }
+
+    private func removeNotificationObservers() {
+        for observer in notificationObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        notificationObservers = []
+    }
+}
+
+nonisolated enum MacReaderImagePrefetchPlan {
+    static func indices(
+        currentIndex: Int,
+        pageCount: Int,
+        lookBehind: Int,
+        lookAhead: Int
+    ) -> [Int] {
+        guard pageCount > 0 else { return [] }
+
+        let current = min(max(currentIndex, 0), pageCount - 1)
+        let forwardEnd = min(pageCount - 1, current + max(lookAhead, 0))
+        var indices: [Int] = []
+        if current < forwardEnd {
+            indices.append(contentsOf: (current + 1)...forwardEnd)
+        }
+
+        let backwardEnd = max(0, current - max(lookBehind, 0))
+        if backwardEnd < current {
+            indices.append(contentsOf: stride(from: current - 1, through: backwardEnd, by: -1))
+        }
+
+        return indices
+    }
+}
+
+nonisolated enum MacReaderImagePrefetcher {
+    private static let maximumConcurrentRequests = 2
+
+    static func prefetch(urls: [URL], imageCache: MacImageCache) async {
+        guard !urls.isEmpty else { return }
+
+        var nextIndex = 0
+        await withTaskGroup(of: Void.self) { group in
+            let initialRequestCount = min(maximumConcurrentRequests, urls.count)
+            for _ in 0..<initialRequestCount {
+                let url = urls[nextIndex]
+                nextIndex += 1
+                group.addTask {
+                    await prefetch(url: url, imageCache: imageCache)
+                }
+            }
+
+            while await group.next() != nil {
+                if Task.isCancelled {
+                    group.cancelAll()
+                    return
+                }
+
+                guard nextIndex < urls.count else { continue }
+                let url = urls[nextIndex]
+                nextIndex += 1
+                group.addTask {
+                    await prefetch(url: url, imageCache: imageCache)
+                }
+            }
+        }
+    }
+
+    private static func prefetch(url: URL, imageCache: MacImageCache) async {
+        guard !Task.isCancelled else { return }
+        do {
+            _ = try await imageCache.image(for: url)
+        } catch {
+            // Prefetch failures should never block the visible page loader.
         }
     }
 }

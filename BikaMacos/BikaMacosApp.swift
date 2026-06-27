@@ -49,6 +49,7 @@ struct BikaMacosApp: App {
                 ContentUnavailableView("没有打开的章节", systemImage: "book.closed")
             }
         }
+        .defaultSize(width: readerWindowDefaultContentSize.width, height: readerWindowDefaultContentSize.height)
 
         Window("评论", id: "comments") {
             MacCommentsWindowView(store: commentsWindowStore)
@@ -60,5 +61,10 @@ struct BikaMacosApp: App {
         Settings {
             MacSettingsView(themeModeRawValue: $themeModeRawValue, blockedCategoriesStore: blockedCategoriesStore)
         }
+    }
+
+    private var readerWindowDefaultContentSize: CGSize {
+        MacReaderWindowSizePersistence.restoredContentSize(from: AppDependencies.shared.keyValueStore)
+            ?? MacReaderWindowSizePersistence.fallbackContentSize
     }
 }
