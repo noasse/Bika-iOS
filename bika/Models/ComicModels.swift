@@ -213,6 +213,150 @@ nonisolated struct SearchRequest: Encodable, Sendable {
     let categories: [String]?
 }
 
+nonisolated enum SearchKeywordExpander {
+    private static let defaultMaximumKeywordCount = 5
+    private static let bracketPairs: [(String, String)] = [
+        ("（", "）"),
+        ("(", ")"),
+        ("【", "】"),
+        ("[", "]"),
+        ("［", "］"),
+        ("「", "」"),
+        ("『", "』"),
+        ("《", "》"),
+        ("〈", "〉"),
+        ("{", "}"),
+        ("｛", "｝"),
+    ]
+    private static let separatorCharacters = CharacterSet(charactersIn: "，,、/／|｜;；:：·・+＋&＆")
+
+    static func keywords(for rawKeyword: String, maximumCount: Int = defaultMaximumKeywordCount) -> [String] {
+        let trimmed = cleanedKeyword(rawKeyword)
+        guard !trimmed.isEmpty, maximumCount > 0 else { return [] }
+
+        var result: [String] = []
+        var seenKeys = Set<String>()
+        var expansionQueue: [String] = []
+        var expandedKeys = Set<String>()
+
+        @discardableResult
+        func append(_ keyword: String) -> Bool {
+            let cleaned = cleanedKeyword(keyword)
+            guard !cleaned.isEmpty else { return false }
+            let key = normalizedKey(cleaned)
+            guard seenKeys.insert(key).inserted else { return false }
+            result.append(cleaned)
+            expansionQueue.append(cleaned)
+            return true
+        }
+
+        append(trimmed)
+
+        var queueIndex = 0
+        while queueIndex < expansionQueue.count, result.count < maximumCount {
+            let keyword = expansionQueue[queueIndex]
+            queueIndex += 1
+
+            let expansionKey = normalizedKey(keyword)
+            guard expandedKeys.insert(expansionKey).inserted else { continue }
+
+            for variant in bracketVariants(for: keyword) + separatorVariants(for: keyword) {
+                append(variant)
+                if result.count >= maximumCount {
+                    break
+                }
+            }
+        }
+
+        return result
+    }
+
+    static func matchesExpandedName(_ candidate: String?, query: String) -> Bool {
+        let candidateAliases = aliases(for: candidate)
+        guard !candidateAliases.isEmpty else { return false }
+        let queryAliases = aliases(for: query)
+        guard !queryAliases.isEmpty else { return false }
+        return !candidateAliases.isDisjoint(with: queryAliases)
+    }
+
+    private static func aliases(for rawName: String?) -> Set<String> {
+        guard let rawName else { return [] }
+        return Set(
+            keywords(for: rawName, maximumCount: 12)
+                .map(normalizedKey)
+                .filter { !$0.isEmpty }
+        )
+    }
+
+    private static func bracketVariants(for keyword: String) -> [String] {
+        var variants: [String] = []
+
+        for (opening, closing) in bracketPairs {
+            var searchStart = keyword.startIndex
+            while
+                searchStart < keyword.endIndex,
+                let openingRange = keyword.range(of: opening, range: searchStart..<keyword.endIndex),
+                let closingRange = keyword.range(of: closing, range: openingRange.upperBound..<keyword.endIndex)
+            {
+                let prefix = String(keyword[..<openingRange.lowerBound])
+                let inner = String(keyword[openingRange.upperBound..<closingRange.lowerBound])
+                let suffix = closingRange.upperBound < keyword.endIndex
+                    ? String(keyword[closingRange.upperBound..<keyword.endIndex])
+                    : ""
+                variants.append(prefix + suffix)
+                variants.append(inner)
+                searchStart = closingRange.upperBound
+            }
+        }
+
+        return variants
+    }
+
+    private static func separatorVariants(for keyword: String) -> [String] {
+        let separators = separatorCharacters.union(.whitespacesAndNewlines)
+        return keyword.components(separatedBy: separators)
+    }
+
+    private static func cleanedKeyword(_ keyword: String) -> String {
+        keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func normalizedKey(_ keyword: String) -> String {
+        cleanedKeyword(keyword)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: .current)
+    }
+}
+
+nonisolated enum SearchResultMerger {
+    static func mergedPage(from pages: [PaginatedResponse<Comic>]) -> PaginatedResponse<Comic>? {
+        guard let firstPage = pages.first else { return nil }
+
+        var mergedDocs: [Comic] = []
+        var seenComicIDs = Set<String>()
+        var total = 0
+        var limit = 0
+        var pageCount = max(firstPage.pages, firstPage.page, 1)
+
+        for page in pages {
+            total += page.total
+            limit = max(limit, page.limit)
+            pageCount = max(pageCount, page.pages, page.page)
+
+            for comic in page.docs where seenComicIDs.insert(comic.id).inserted {
+                mergedDocs.append(comic)
+            }
+        }
+
+        return PaginatedResponse(
+            docs: mergedDocs,
+            total: max(total, mergedDocs.count),
+            limit: max(limit, mergedDocs.count, 1),
+            page: max(firstPage.page, 1),
+            pages: pageCount
+        )
+    }
+}
+
 // MARK: - Like Action
 
 nonisolated struct LikeActionData: Decodable, Sendable {

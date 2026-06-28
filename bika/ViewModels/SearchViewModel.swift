@@ -16,6 +16,7 @@ final class SearchViewModel {
     private let client: any APIClientProtocol
     private let keyValueStore: any KeyValueStore
     private var activeRequestID = 0
+    private var activeSearchKeywords: [String] = []
 
     init(
         client: any APIClientProtocol = APIClient.shared,
@@ -30,6 +31,7 @@ final class SearchViewModel {
         guard !trimmed.isEmpty else { return }
         keyword = trimmed
         activeKeyword = trimmed
+        activeSearchKeywords = SearchKeywordExpander.keywords(for: trimmed)
 
         lastVisitedPage = keyValueStore.integer(forKey: "lastPage_search_\(activeKeyword)")
         hasSearched = true
@@ -43,18 +45,24 @@ final class SearchViewModel {
     func loadPage(_ page: Int) async {
         guard page >= 1, !activeKeyword.isEmpty else { return }
         let requestID = beginRequest()
-        let requestedKeyword = activeKeyword
+        let requestedKeywords = activeSearchKeywords.isEmpty ? [activeKeyword] : activeSearchKeywords
         let requestedSort = sortMode
 
         do {
-            let response: APIResponse<ComicsData> = try await client.send(
-                .search(keyword: requestedKeyword, page: page, sort: requestedSort)
+            let pageData = try await loadExpandedSearchPage(
+                keywords: requestedKeywords,
+                page: page,
+                sort: requestedSort
             )
             guard requestID == activeRequestID else { return }
-            if let data = response.data {
-                comics = data.comics.docs
-                currentPage = data.comics.page
-                totalPages = data.comics.pages
+            if let pageData {
+                comics = pageData.docs
+                currentPage = pageData.page
+                totalPages = pageData.pages
+            } else {
+                comics = []
+                currentPage = page
+                totalPages = 1
             }
         } catch {
             guard requestID == activeRequestID else { return }
@@ -95,6 +103,7 @@ final class SearchViewModel {
     func reset() {
         keyword = ""
         activeKeyword = ""
+        activeSearchKeywords = []
         comics = []
         hasSearched = false
         currentPage = 0
@@ -118,5 +127,35 @@ final class SearchViewModel {
     private func finishRequest(_ requestID: Int) {
         guard requestID == activeRequestID else { return }
         isLoading = false
+    }
+
+    private func loadExpandedSearchPage(
+        keywords: [String],
+        page: Int,
+        sort: SortMode
+    ) async throws -> PaginatedResponse<Comic>? {
+        var loadedPages: [PaginatedResponse<Comic>] = []
+        var firstError: Error?
+
+        for keyword in keywords {
+            do {
+                let response: APIResponse<ComicsData> = try await client.send(
+                    .search(keyword: keyword, page: page, sort: sort)
+                )
+                if let page = response.data?.comics {
+                    loadedPages.append(page)
+                }
+            } catch {
+                if firstError == nil {
+                    firstError = error
+                }
+            }
+        }
+
+        if loadedPages.isEmpty, let firstError {
+            throw firstError
+        }
+
+        return SearchResultMerger.mergedPage(from: loadedPages)
     }
 }

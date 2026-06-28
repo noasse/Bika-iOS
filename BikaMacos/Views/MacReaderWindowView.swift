@@ -11,9 +11,7 @@ struct MacReaderWindowView: View {
     @State private var sampledIndices: [Int] = []
     @State private var sampledAspectRatios: [Int: CGFloat] = [:]
     @State private var estimatedAspectRatio: CGFloat?
-    @State private var pageScales: [Int: Double] = [:]
-    @State private var activeZoomPage: Int?
-    @State private var zoomGestureBaseScale = 1.0
+    @State private var zoomedPageIndices: Set<Int> = []
     @State private var isWaterfallPageTrackingPaused = false
     @State private var isHorizontalResizing = false
     @State private var horizontalResizeGeneration = 0
@@ -24,10 +22,6 @@ struct MacReaderWindowView: View {
     private let keyValueStore: any KeyValueStore
 
     private let horizontalPageAnimation = Animation.interactiveSpring(response: 0.28, dampingFraction: 0.9, blendDuration: 0.06)
-    private let defaultPageScale = 1.0
-    private let minimumPageScale = 0.55
-    private let maximumPageScale = 2.4
-    private let pageScaleSnapDistance = 0.045
 
     init(
         request: MacReaderLaunchRequest,
@@ -35,9 +29,16 @@ struct MacReaderWindowView: View {
         keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore,
         onClose: @escaping (String) -> Void = { _ in }
     ) {
-        _viewModel = State(initialValue: MacReaderViewModel(request: request, readingStore: readingStore))
+        let initialViewModel = MacReaderViewModel(request: request, readingStore: readingStore)
+        _viewModel = State(initialValue: initialViewModel)
+        _waterfallScrollRequest = State(initialValue: Self.initialWaterfallScrollRequest(for: initialViewModel))
         self.keyValueStore = keyValueStore
         self.onClose = onClose
+    }
+
+    static func initialWaterfallScrollRequest(for viewModel: MacReaderViewModel) -> Int? {
+        guard viewModel.readerMode == .waterfall, viewModel.currentPageIndex > 0 else { return nil }
+        return viewModel.currentPageIndex
     }
 
     var body: some View {
@@ -70,12 +71,14 @@ struct MacReaderWindowView: View {
                 cancelImagePrefetch()
                 return
             }
+            reconcileWaterfallScrollRequestWithLoadedPages()
             scheduleImagePrefetch(around: viewModel.currentPageIndex)
         }
         .onChange(of: viewModel.currentPageIndex) { _, pageIndex in
             scheduleImagePrefetch(around: pageIndex)
         }
         .onChange(of: viewModel.readerMode) { _, _ in
+            zoomedPageIndices = []
             imagePrefetchKey = nil
             scheduleImagePrefetch(around: viewModel.currentPageIndex)
         }
@@ -85,6 +88,7 @@ struct MacReaderWindowView: View {
             cancelImagePrefetch()
         }
         .onDisappear {
+            viewModel.saveCurrentProgress()
             cancelImagePrefetch()
             onClose(viewModel.request.comicId)
         }
@@ -129,9 +133,11 @@ struct MacReaderWindowView: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(Array(viewModel.pages.enumerated()), id: \.offset) { index, page in
-                            let imageWidth = readerImageWidth(in: geometry.size, pageIndex: index)
-                            MacCachedAsyncImage(url: page.media.imageURL, onImageLoaded: { size in
+                            let imageWidth = pageViewportWidth(in: geometry.size)
+                            MacZoomableImageView(url: page.media.imageURL, onImageLoaded: { size in
                                 updateImageSize(size, for: index)
+                            }, onZoomStateChanged: { isZoomed in
+                                setZoomState(isZoomed, for: index)
                             }) {
                                 Color.black
                                     .frame(minHeight: minHeight(for: index, width: imageWidth))
@@ -140,7 +146,6 @@ struct MacReaderWindowView: View {
                                 .frame(minHeight: minHeight(for: index, width: imageWidth))
                                 .id(index)
                                 .contentShape(Rectangle())
-                                .simultaneousGesture(pageMagnificationGesture(for: index))
                                 .onAppear {
                                     registerSampleIndexIfNeeded(index)
                                     guard !isWaterfallPageTrackingPaused, waterfallScrollRequest == nil else { return }
@@ -179,12 +184,14 @@ struct MacReaderWindowView: View {
                 .clipped()
                 .animation(isHorizontalResizing ? nil : horizontalPageAnimation, value: viewModel.currentPageIndex)
 
-                MacHorizontalScrollBridge(isEnabled: !isHorizontalResizing) {
-                    navigatePreviousPage()
-                } onNext: {
-                    navigateNextPage()
+                if !isHorizontalResizing && !zoomedPageIndices.contains(viewModel.currentPageIndex) {
+                    MacHorizontalScrollBridge(isEnabled: true) {
+                        navigatePreviousPage()
+                    } onNext: {
+                        navigateNextPage()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 HStack {
                     readerPageButton(
@@ -224,12 +231,15 @@ struct MacReaderWindowView: View {
     }
 
     private func horizontalPage(_ pageIndex: Int, in size: CGSize) -> some View {
-        MacCachedAsyncImage(url: viewModel.pages[pageIndex].media.imageURL) {
+        MacZoomableImageView(url: viewModel.pages[pageIndex].media.imageURL, onImageLoaded: { imageSize in
+            updateImageSize(imageSize, for: pageIndex)
+        }, onZoomStateChanged: { isZoomed in
+            setZoomState(isZoomed, for: pageIndex)
+        }) {
             Color.black
         }
-        .frame(width: readerImageWidth(in: size, pageIndex: pageIndex), height: size.height)
+        .frame(width: size.width, height: size.height)
         .contentShape(Rectangle())
-        .simultaneousGesture(pageMagnificationGesture(for: pageIndex))
     }
 
     private func horizontalOffset(for pageIndex: Int, in size: CGSize) -> CGFloat {
@@ -305,41 +315,6 @@ struct MacReaderWindowView: View {
             .foregroundStyle(MacUI.accentPink)
             .help("跳转到页面")
 
-            Divider()
-                .frame(height: 18)
-                .overlay(.white.opacity(0.2))
-
-            HStack(spacing: 5) {
-                Button {
-                    stepCurrentPageScale(-0.08)
-                } label: {
-                    Label("缩小", systemImage: "minus.magnifyingglass")
-                }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.plain)
-                .help("缩小")
-
-                Slider(
-                    value: Binding(
-                        get: { pageScale(for: viewModel.currentPageIndex) },
-                        set: { setPageScale(for: viewModel.currentPageIndex, to: $0) }
-                    ),
-                    in: minimumPageScale...maximumPageScale
-                )
-                .frame(width: 94)
-                .tint(MacUI.accentPink)
-                .help("图片大小")
-
-                Button {
-                    stepCurrentPageScale(0.08)
-                } label: {
-                    Label("放大", systemImage: "plus.magnifyingglass")
-                }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.plain)
-                .help("放大")
-            }
-
             Button {
                 Task { await viewModel.previousEpisode() }
             } label: {
@@ -360,42 +335,17 @@ struct MacReaderWindowView: View {
         }
     }
 
-    private func readerImageWidth(in size: CGSize, pageIndex: Int) -> CGFloat {
-        max(220, size.width * pageScale(for: pageIndex))
+    private func pageViewportWidth(in size: CGSize) -> CGFloat {
+        max(220, size.width)
     }
 
-    private func pageScale(for pageIndex: Int) -> Double {
-        pageScales[pageIndex] ?? defaultPageScale
-    }
-
-    private func setPageScale(for pageIndex: Int, to scale: Double) {
+    private func setZoomState(_ isZoomed: Bool, for pageIndex: Int) {
         guard viewModel.pages.indices.contains(pageIndex) else { return }
-        let clampedScale = min(max(scale, minimumPageScale), maximumPageScale)
-        guard abs(clampedScale - defaultPageScale) > pageScaleSnapDistance else {
-            pageScales.removeValue(forKey: pageIndex)
-            return
+        if isZoomed {
+            zoomedPageIndices.insert(pageIndex)
+        } else {
+            zoomedPageIndices.remove(pageIndex)
         }
-        pageScales[pageIndex] = clampedScale
-    }
-
-    private func stepCurrentPageScale(_ delta: Double) {
-        let pageIndex = viewModel.currentPageIndex
-        setPageScale(for: pageIndex, to: pageScale(for: pageIndex) + delta)
-    }
-
-    private func pageMagnificationGesture(for pageIndex: Int) -> some Gesture {
-        MagnificationGesture(minimumScaleDelta: 0.01)
-            .onChanged { value in
-                if activeZoomPage != pageIndex {
-                    activeZoomPage = pageIndex
-                    zoomGestureBaseScale = pageScale(for: pageIndex)
-                }
-                setPageScale(for: pageIndex, to: zoomGestureBaseScale * Double(value))
-            }
-            .onEnded { _ in
-                activeZoomPage = nil
-                zoomGestureBaseScale = 1.0
-            }
     }
 
     private func scrollToRequestedWaterfallPage(with proxy: ScrollViewProxy) {
@@ -409,6 +359,17 @@ struct MacReaderWindowView: View {
             }
             waterfallScrollRequest = nil
             resumeWaterfallPageTrackingSoon()
+        }
+    }
+
+    private func reconcileWaterfallScrollRequestWithLoadedPages() {
+        guard let pageIndex = waterfallScrollRequest else { return }
+        guard !viewModel.pages.indices.contains(pageIndex) else { return }
+
+        if viewModel.pages.indices.contains(viewModel.currentPageIndex) {
+            waterfallScrollRequest = viewModel.currentPageIndex
+        } else {
+            waterfallScrollRequest = nil
         }
     }
 
@@ -482,9 +443,7 @@ struct MacReaderWindowView: View {
         sampledIndices = []
         sampledAspectRatios = [:]
         estimatedAspectRatio = nil
-        pageScales = [:]
-        activeZoomPage = nil
-        zoomGestureBaseScale = 1.0
+        zoomedPageIndices = []
     }
 
     private func isNearlyEqual(_ lhs: CGSize, _ rhs: CGSize) -> Bool {
@@ -591,6 +550,329 @@ struct MacReaderWindowView: View {
         } else {
             update()
         }
+    }
+}
+
+nonisolated enum MacZoomableImageLayout {
+    static let minimumMagnification: CGFloat = 1
+    static let maximumMagnification: CGFloat = 4
+    static let doubleClickMagnification: CGFloat = 2
+    private static let zoomStateEpsilon: CGFloat = 0.01
+
+    static func fittedImageFrame(imageSize: CGSize, viewportSize: CGSize) -> CGRect {
+        let viewportWidth = max(viewportSize.width, 1)
+        let viewportHeight = max(viewportSize.height, 1)
+        guard imageSize.width > 0, imageSize.height > 0 else {
+            return CGRect(origin: .zero, size: CGSize(width: viewportWidth, height: viewportHeight))
+        }
+
+        let imageHeight = viewportWidth * (imageSize.height / imageSize.width)
+        return CGRect(
+            x: 0,
+            y: max((viewportHeight - imageHeight) / 2, 0),
+            width: viewportWidth,
+            height: imageHeight
+        )
+    }
+
+    static func documentSize(imageFrame: CGRect, viewportSize: CGSize) -> CGSize {
+        CGSize(
+            width: max(max(viewportSize.width, 1), imageFrame.maxX),
+            height: max(max(viewportSize.height, 1), imageFrame.maxY)
+        )
+    }
+
+    static func zoomCenter(tapLocation: CGPoint, imageFrame: CGRect) -> CGPoint {
+        guard !imageFrame.isEmpty else { return tapLocation }
+        return CGPoint(
+            x: min(max(tapLocation.x, imageFrame.minX), imageFrame.maxX),
+            y: min(max(tapLocation.y, imageFrame.minY), imageFrame.maxY)
+        )
+    }
+
+    static func isZoomed(_ magnification: CGFloat, minimumMagnification: CGFloat = minimumMagnification) -> Bool {
+        magnification > minimumMagnification + zoomStateEpsilon
+    }
+}
+
+private struct MacZoomableImageView<Placeholder: View>: View {
+    let url: URL?
+    var onImageLoaded: ((CGSize) -> Void)?
+    var onZoomStateChanged: ((Bool) -> Void)?
+    @ViewBuilder let placeholder: () -> Placeholder
+
+    @State private var isLoaded = false
+
+    init(
+        url: URL?,
+        onImageLoaded: ((CGSize) -> Void)? = nil,
+        onZoomStateChanged: ((Bool) -> Void)? = nil,
+        @ViewBuilder placeholder: @escaping () -> Placeholder
+    ) {
+        self.url = url
+        self.onImageLoaded = onImageLoaded
+        self.onZoomStateChanged = onZoomStateChanged
+        self.placeholder = placeholder
+    }
+
+    var body: some View {
+        ZStack {
+            if !isLoaded {
+                placeholder()
+            }
+
+            MacZoomableImageRepresentable(
+                url: url,
+                onImageLoaded: { size in
+                    isLoaded = true
+                    onImageLoaded?(size)
+                },
+                onZoomStateChanged: onZoomStateChanged,
+                onLoadStateChanged: { loaded in
+                    isLoaded = loaded
+                }
+            )
+        }
+        .onChange(of: url) { _, _ in
+            isLoaded = false
+        }
+    }
+}
+
+private struct MacZoomableImageRepresentable: NSViewRepresentable {
+    let url: URL?
+    var onImageLoaded: ((CGSize) -> Void)?
+    var onZoomStateChanged: ((Bool) -> Void)?
+    var onLoadStateChanged: ((Bool) -> Void)?
+
+    func makeNSView(context: Context) -> MacZoomableImageContainerView {
+        MacZoomableImageContainerView()
+    }
+
+    func updateNSView(_ nsView: MacZoomableImageContainerView, context: Context) {
+        nsView.configure(
+            url: url,
+            onImageLoaded: onImageLoaded,
+            onZoomStateChanged: onZoomStateChanged,
+            onLoadStateChanged: onLoadStateChanged
+        )
+    }
+}
+
+private final class MacZoomableImageContainerView: NSView {
+    private let scrollView = MacZoomableScrollView()
+    private let canvasView = MacZoomableImageCanvasView()
+    private let imageView = NSImageView()
+    private let failureLabel = NSTextField(labelWithString: "图片载入失败")
+    private var currentURL: URL?
+    private var imageSize: CGSize?
+    private var loadTask: Task<Void, Never>?
+    private var onImageLoaded: ((CGSize) -> Void)?
+    private var onZoomStateChanged: ((Bool) -> Void)?
+    private var onLoadStateChanged: ((Bool) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureViews()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        loadTask?.cancel()
+    }
+
+    override func layout() {
+        super.layout()
+        scrollView.frame = bounds
+        failureLabel.frame = bounds
+        layoutImageIfPossible()
+    }
+
+    func configure(
+        url: URL?,
+        onImageLoaded: ((CGSize) -> Void)?,
+        onZoomStateChanged: ((Bool) -> Void)?,
+        onLoadStateChanged: ((Bool) -> Void)?
+    ) {
+        self.onImageLoaded = onImageLoaded
+        self.onZoomStateChanged = onZoomStateChanged
+        self.onLoadStateChanged = onLoadStateChanged
+
+        guard currentURL != url else { return }
+        currentURL = url
+        loadTask?.cancel()
+        imageSize = nil
+        imageView.image = nil
+        failureLabel.isHidden = true
+        scrollView.isHidden = true
+        scrollView.magnification = scrollView.minMagnification
+        DispatchQueue.main.async { [weak self] in
+            self?.notifyZoomState()
+        }
+
+        guard let url else {
+            failureLabel.isHidden = false
+            return
+        }
+
+        loadTask = Task { [weak self] in
+            do {
+                let image = try await MacImageCache.shared.image(for: url)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard self?.currentURL == url else { return }
+                    self?.show(image)
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard self?.currentURL == url else { return }
+                    self?.showFailure()
+                }
+            }
+        }
+    }
+
+    private func configureViews() {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasHorizontalScroller = false
+        scrollView.hasVerticalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.allowsMagnification = true
+        scrollView.minMagnification = MacZoomableImageLayout.minimumMagnification
+        scrollView.maxMagnification = MacZoomableImageLayout.maximumMagnification
+        scrollView.documentView = canvasView
+        scrollView.isHidden = true
+        scrollView.onMagnificationChanged = { [weak self] _ in
+            self?.notifyZoomState()
+        }
+
+        canvasView.addSubview(imageView)
+        canvasView.onDoubleClick = { [weak self] location in
+            self?.toggleZoom(at: location)
+        }
+
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.imageAlignment = .alignCenter
+        imageView.wantsLayer = true
+        imageView.layer?.backgroundColor = NSColor.clear.cgColor
+
+        failureLabel.alignment = .center
+        failureLabel.textColor = .secondaryLabelColor
+        failureLabel.isHidden = true
+
+        addSubview(scrollView)
+        addSubview(failureLabel)
+    }
+
+    private func show(_ image: NSImage) {
+        let loadedSize = image.size
+        imageSize = loadedSize
+        imageView.image = image
+        failureLabel.isHidden = true
+        scrollView.isHidden = false
+        scrollView.magnification = scrollView.minMagnification
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        onLoadStateChanged?(true)
+        onImageLoaded?(loadedSize)
+        notifyZoomState()
+    }
+
+    private func showFailure() {
+        imageSize = nil
+        imageView.image = nil
+        scrollView.isHidden = true
+        failureLabel.isHidden = false
+        onLoadStateChanged?(false)
+        notifyZoomState()
+    }
+
+    private func layoutImageIfPossible() {
+        guard let imageSize else { return }
+        let viewportSize = scrollView.contentView.bounds.size == .zero ? bounds.size : scrollView.contentView.bounds.size
+        let imageFrame = MacZoomableImageLayout.fittedImageFrame(imageSize: imageSize, viewportSize: viewportSize)
+        let documentSize = MacZoomableImageLayout.documentSize(imageFrame: imageFrame, viewportSize: viewportSize)
+        canvasView.setFrameSize(documentSize)
+        canvasView.imageFrame = imageFrame
+        imageView.frame = imageFrame
+    }
+
+    private func toggleZoom(at tapLocation: CGPoint) {
+        guard imageView.image != nil else { return }
+        let zoomCenter = MacZoomableImageLayout.zoomCenter(tapLocation: tapLocation, imageFrame: canvasView.imageFrame)
+        let targetMagnification: CGFloat
+        if MacZoomableImageLayout.isZoomed(scrollView.magnification, minimumMagnification: scrollView.minMagnification) {
+            targetMagnification = scrollView.minMagnification
+        } else {
+            targetMagnification = min(MacZoomableImageLayout.doubleClickMagnification, scrollView.maxMagnification)
+        }
+
+        scrollView.setMagnification(targetMagnification, centeredAt: zoomCenter)
+        scrollView.notifyMagnificationChanged()
+    }
+
+    private func notifyZoomState() {
+        onZoomStateChanged?(
+            MacZoomableImageLayout.isZoomed(
+                scrollView.magnification,
+                minimumMagnification: scrollView.minMagnification
+            )
+        )
+    }
+}
+
+private final class MacZoomableScrollView: NSScrollView {
+    var onMagnificationChanged: ((CGFloat) -> Void)?
+
+    override func scrollWheel(with event: NSEvent) {
+        guard MacZoomableImageLayout.isZoomed(magnification, minimumMagnification: minMagnification) else {
+            if let nextResponder {
+                nextResponder.scrollWheel(with: event)
+            } else {
+                super.scrollWheel(with: event)
+            }
+            return
+        }
+
+        super.scrollWheel(with: event)
+    }
+
+    override func magnify(with event: NSEvent) {
+        super.magnify(with: event)
+        notifyMagnificationChanged()
+    }
+
+    func notifyMagnificationChanged() {
+        onMagnificationChanged?(magnification)
+    }
+}
+
+private final class MacZoomableImageCanvasView: NSView {
+    var imageFrame: CGRect = .zero
+    var onDoubleClick: ((CGPoint) -> Void)?
+
+    override var isFlipped: Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        bounds.contains(point) ? self : nil
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard event.clickCount == 2 else {
+            super.mouseDown(with: event)
+            return
+        }
+
+        onDoubleClick?(convert(event.locationInWindow, from: nil))
     }
 }
 

@@ -114,6 +114,10 @@ final class MacReaderViewModel {
         saveProgress()
     }
 
+    func saveCurrentProgress() {
+        saveProgress()
+    }
+
     func nextEpisode() async {
         guard hasNextEpisode, !isLoading else { return }
         currentEpisodeIndex += 1

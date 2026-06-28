@@ -59,3 +59,17 @@ enum MacTestSupport {
         AppDependencies.shared.configureForLaunch()
     }
 }
+
+final class LockedValue<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: T
+
+    init(_ initialValue: T) {
+        storage = initialValue
+    }
+
+    var value: T {
+        get { lock.withLock { storage } }
+        set { lock.withLock { storage = newValue } }
+    }
+}

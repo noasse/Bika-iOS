@@ -45,10 +45,58 @@ nonisolated enum ComicResultsQuery: Sendable {
         case .favourites:
             return try await client.send(.favourites(page: page, sort: sort))
         case .author(let author):
-            return try await client.send(.search(keyword: author, page: page, sort: sort))
+            return try await loadExpandedSearch(using: client, keyword: author, page: page, sort: sort)
         case .tag(let keyword):
+            return try await loadExpandedSearch(using: client, keyword: keyword, page: page, sort: sort)
+        }
+    }
+
+    private func loadExpandedSearch(
+        using client: any APIClientProtocol,
+        keyword: String,
+        page: Int,
+        sort: SortMode
+    ) async throws -> APIResponse<ComicsData> {
+        let keywords = SearchKeywordExpander.keywords(for: keyword)
+        guard let firstKeyword = keywords.first else {
             return try await client.send(.search(keyword: keyword, page: page, sort: sort))
         }
+        guard keywords.count > 1 else {
+            return try await client.send(.search(keyword: firstKeyword, page: page, sort: sort))
+        }
+
+        var loadedPages: [PaginatedResponse<Comic>] = []
+        var firstError: Error?
+        var responseCode = 200
+        var responseMessage = "success"
+
+        for keyword in keywords {
+            do {
+                let response: APIResponse<ComicsData> = try await client.send(
+                    .search(keyword: keyword, page: page, sort: sort)
+                )
+                responseCode = response.code
+                responseMessage = response.message
+                if let page = response.data?.comics {
+                    loadedPages.append(page)
+                }
+            } catch {
+                if firstError == nil {
+                    firstError = error
+                }
+            }
+        }
+
+        if loadedPages.isEmpty, let firstError {
+            throw firstError
+        }
+
+        let mergedPage = SearchResultMerger.mergedPage(from: loadedPages)
+        return APIResponse(
+            code: responseCode,
+            message: responseMessage,
+            data: mergedPage.map { ComicsData(comics: $0) }
+        )
     }
 }
 

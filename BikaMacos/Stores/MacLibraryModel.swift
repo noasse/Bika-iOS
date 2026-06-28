@@ -229,12 +229,16 @@ final class MacLibraryModel {
         }
 
         let requestID = beginListRequest(title: "搜索：\(keyword)")
+        let keywords = SearchKeywordExpander.keywords(for: keyword)
+        let targetPage = macClampedPage(page, totalPages: max(totalPages, page))
         do {
-            let response: APIResponse<ComicsData> = try await client.send(
-                .search(keyword: keyword, page: macClampedPage(page, totalPages: max(totalPages, page)), sort: sortMode)
+            let pageData = try await loadExpandedSearchPage(
+                keywords: keywords.isEmpty ? [keyword] : keywords,
+                page: targetPage,
+                sort: sortMode
             )
             guard isActiveListRequest(requestID) else { return }
-            applyComicsData(response.data?.comics, fallbackPage: page)
+            applyComicsData(pageData, fallbackPage: targetPage)
             listError = nil
         } catch {
             guard isActiveListRequest(requestID) else { return }
@@ -493,6 +497,36 @@ final class MacLibraryModel {
         listItems = page.docs.map(MacComicSummary.init(comic:))
         currentPage = page.page
         totalPages = max(page.pages, page.page)
+    }
+
+    private func loadExpandedSearchPage(
+        keywords: [String],
+        page: Int,
+        sort: SortMode
+    ) async throws -> PaginatedResponse<Comic>? {
+        var loadedPages: [PaginatedResponse<Comic>] = []
+        var firstError: Error?
+
+        for keyword in keywords {
+            do {
+                let response: APIResponse<ComicsData> = try await client.send(
+                    .search(keyword: keyword, page: page, sort: sort)
+                )
+                if let page = response.data?.comics {
+                    loadedPages.append(page)
+                }
+            } catch {
+                if firstError == nil {
+                    firstError = error
+                }
+            }
+        }
+
+        if loadedPages.isEmpty, let firstError {
+            throw firstError
+        }
+
+        return SearchResultMerger.mergedPage(from: loadedPages)
     }
 
     private func beginListRequest(title: String) -> Int {

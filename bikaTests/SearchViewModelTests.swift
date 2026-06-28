@@ -38,6 +38,72 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.currentPage, 1)
     }
 
+    func testSearchKeywordExpanderCreatesBracketAliasKeywords() {
+        XCTAssertEqual(
+            SearchKeywordExpander.keywords(for: " 生蚝（花生） "),
+            ["生蚝（花生）", "生蚝", "花生"]
+        )
+        XCTAssertEqual(
+            SearchKeywordExpander.keywords(for: "生蚝(花生)"),
+            ["生蚝(花生)", "生蚝", "花生"]
+        )
+        XCTAssertEqual(
+            SearchKeywordExpander.keywords(for: "生蚝【花生】"),
+            ["生蚝【花生】", "生蚝", "花生"]
+        )
+        XCTAssertTrue(SearchKeywordExpander.matchesExpandedName("生蚝（花生）", query: "花生"))
+        XCTAssertTrue(SearchKeywordExpander.matchesExpandedName("生蚝 ( 花生 )", query: "生蚝（花生）"))
+    }
+
+    func testSearchExpandsBracketedAuthorAliasesAndDeduplicatesResults() async throws {
+        let requestKeywords = LockedValue<[String]>([])
+
+        let (client, store) = TestSupport.makeAPIClient { request in
+            let body = try XCTUnwrap(request.resolvedHTTPBodyData())
+            let requestBody = try JSONDecoder().decode(SearchRequestBody.self, from: body)
+            var keywords = requestKeywords.value
+            keywords.append(requestBody.keyword)
+            requestKeywords.value = keywords
+
+            let docs: [[String: Any]]
+            switch requestBody.keyword {
+            case "生蚝（花生）":
+                docs = [
+                    searchComic(id: "comic-full", title: "完整作者名"),
+                    searchComic(id: "comic-shared", title: "重复结果"),
+                ]
+            case "生蚝":
+                docs = [
+                    searchComic(id: "comic-main", title: "主名结果"),
+                    searchComic(id: "comic-shared", title: "重复结果"),
+                ]
+            case "花生":
+                docs = [
+                    searchComic(id: "comic-alias", title: "括号名结果"),
+                ]
+            default:
+                docs = []
+            }
+
+            return TestSupport.jsonResponse(data: [
+                "comics": searchComicsPage(page: 1, pages: 1, docs: docs),
+            ])
+        }
+
+        let viewModel = SearchViewModel(client: client, keyValueStore: store)
+        viewModel.keyword = "生蚝（花生）"
+
+        await viewModel.search()
+
+        XCTAssertEqual(requestKeywords.value, ["生蚝（花生）", "生蚝", "花生"])
+        XCTAssertEqual(
+            viewModel.comics.map(\.id),
+            ["comic-full", "comic-shared", "comic-main", "comic-alias"]
+        )
+        XCTAssertEqual(viewModel.currentPage, 1)
+        XCTAssertEqual(viewModel.totalPages, 1)
+    }
+
     func testNextPageUsesActiveKeywordInsteadOfEditedKeyword() async throws {
         let requestKeywords = LockedValue<[String]>([])
 
@@ -125,4 +191,31 @@ private struct SearchRequestBody: Decodable {
     let keyword: String
     let sort: String?
     let categories: [String]?
+}
+
+private func searchComicsPage(page: Int, pages: Int, docs: [[String: Any]]) -> [String: Any] {
+    [
+        "docs": docs,
+        "total": docs.count,
+        "limit": max(docs.count, 1),
+        "page": page,
+        "pages": pages,
+    ]
+}
+
+private func searchComic(id: String, title: String) -> [String: Any] {
+    [
+        "_id": id,
+        "title": title,
+        "author": "生蚝（花生）",
+        "pagesCount": 1,
+        "epsCount": 1,
+        "finished": false,
+        "categories": [],
+        "thumb": [
+            "originalName": "cover.jpg",
+            "path": "static/\(id).jpg",
+            "fileServer": "https://example.com",
+        ],
+    ]
 }

@@ -15,10 +15,10 @@ struct AuthorSearchResultsView: View {
     }
 
     private var filteredComics: [Comic] {
-        let exactAuthorMatches = viewModel.comics.filter {
-            normalizedAuthorName($0.author) == normalizedAuthorName(author)
+        let authorMatches = viewModel.comics.filter {
+            SearchKeywordExpander.matchesExpandedName($0.author, query: author)
         }
-        let visibleComics = blockedManager.filterComics(exactAuthorMatches)
+        let visibleComics = blockedManager.filterComics(authorMatches)
 
         switch viewModel.sortMode {
         case .liked:
@@ -95,12 +95,6 @@ struct AuthorSearchResultsView: View {
             .padding(.horizontal)
         }
         .padding(.vertical, 6)
-    }
-
-    private func normalizedAuthorName(_ name: String?) -> String {
-        (name ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     }
 }
 
