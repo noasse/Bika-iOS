@@ -1,27 +1,24 @@
 <div align="center">
-  <a href="README.md">English</a>
-  <br />
-  <br />
-  <img src="bika/Assets.xcassets/AppIcon.appiconset/HEP2h4pbcAETSfB-2.jpeg" width="128" alt="Bika app icon" />
+  <img src="bika/Assets.xcassets/AppIcon.appiconset/HEP2h4pbcAETSfB-2.jpeg" width="104" alt="Bika app icon" />
   <h1>Bika</h1>
   <p>
-    <strong>一个基于 SwiftUI 的 iOS 与 macOS 漫画阅读项目。</strong>
+    <strong>一个基于 SwiftUI 的 iOS 与 macOS 漫画阅读项目</strong>
   </p>
   <p>
-    把浏览、搜索、详情、阅读、评论、收藏和进度恢复串成一条完整的使用链路。
+    把浏览、搜索、阅读、评论、收藏和进度恢复串成一条顺滑的跨端使用链路。
+  </p>
+  <br />
+  <p>
+    <a href="README.md"><kbd>English</kbd></a>
+    <a href="TESTING.md"><kbd>测试说明</kbd></a>
+    <a href="CLOUD_HISTORY_SYNC.md"><kbd>云端历史同步</kbd></a>
+    <a href="bika项目文档.md"><kbd>项目文档</kbd></a>
   </p>
   <p>
-    <a href="TESTING.md">测试说明</a>
-    ·
-    <a href="CLOUD_HISTORY_SYNC.md">云端历史同步</a>
-    ·
-    <a href="bika项目文档.md">项目文档</a>
-  </p>
-  <p>
-    <img src="https://img.shields.io/badge/iOS-18.0%2B-111111?style=for-the-badge&logo=apple&logoColor=white" alt="iOS 18.0+" />
-    <img src="https://img.shields.io/badge/macOS-14.0%2B-111111?style=for-the-badge&logo=apple&logoColor=white" alt="macOS 14.0+" />
-    <img src="https://img.shields.io/badge/SwiftUI-@Observable-f05138?style=for-the-badge&logo=swift&logoColor=white" alt="SwiftUI @Observable" />
-    <img src="https://img.shields.io/badge/Tests-Mock--first-2f7d5c?style=for-the-badge" alt="Mock-first tests" />
+    <img src="https://img.shields.io/badge/iOS-18.0%2B-0A84FF?style=flat-square&logo=apple&logoColor=white" alt="iOS 18.0+" />
+    <img src="https://img.shields.io/badge/macOS-14.0%2B-5E5CE6?style=flat-square&logo=apple&logoColor=white" alt="macOS 14.0+" />
+    <img src="https://img.shields.io/badge/SwiftUI-%40Observable-FF6B8A?style=flat-square&logo=swift&logoColor=white" alt="SwiftUI @Observable" />
+    <img src="https://img.shields.io/badge/Tests-Mock--first-2F7D5C?style=flat-square" alt="Mock-first tests" />
   </p>
 </div>
 

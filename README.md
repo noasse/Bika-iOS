@@ -1,27 +1,24 @@
 <div align="center">
-  <a href="README.zh-CN.md">简体中文</a>
-  <br />
-  <br />
-  <img src="bika/Assets.xcassets/AppIcon.appiconset/HEP2h4pbcAETSfB-2.jpeg" width="128" alt="Bika app icon" />
+  <img src="bika/Assets.xcassets/AppIcon.appiconset/HEP2h4pbcAETSfB-2.jpeg" width="104" alt="Bika app icon" />
   <h1>Bika</h1>
   <p>
-    <strong>A SwiftUI comic reader for iOS and macOS.</strong>
+    <strong>SwiftUI comic reader for iOS and macOS</strong>
   </p>
   <p>
-    Browse, search, read, comment, favourite, and resume progress in one cohesive app flow.
+    Browse, search, read, comment, favourite, and resume progress across phone and desktop.
+  </p>
+  <br />
+  <p>
+    <a href="README.zh-CN.md"><kbd>简体中文</kbd></a>
+    <a href="TESTING.md"><kbd>Testing Guide</kbd></a>
+    <a href="CLOUD_HISTORY_SYNC.md"><kbd>Cloud History Sync</kbd></a>
+    <a href="bika项目文档.md"><kbd>Project Notes</kbd></a>
   </p>
   <p>
-    <a href="TESTING.md">Testing Guide</a>
-    ·
-    <a href="CLOUD_HISTORY_SYNC.md">Cloud History Sync</a>
-    ·
-    <a href="bika项目文档.md">Project Notes</a>
-  </p>
-  <p>
-    <img src="https://img.shields.io/badge/iOS-18.0%2B-111111?style=for-the-badge&logo=apple&logoColor=white" alt="iOS 18.0+" />
-    <img src="https://img.shields.io/badge/macOS-14.0%2B-111111?style=for-the-badge&logo=apple&logoColor=white" alt="macOS 14.0+" />
-    <img src="https://img.shields.io/badge/SwiftUI-@Observable-f05138?style=for-the-badge&logo=swift&logoColor=white" alt="SwiftUI @Observable" />
-    <img src="https://img.shields.io/badge/Tests-Mock--first-2f7d5c?style=for-the-badge" alt="Mock-first tests" />
+    <img src="https://img.shields.io/badge/iOS-18.0%2B-0A84FF?style=flat-square&logo=apple&logoColor=white" alt="iOS 18.0+" />
+    <img src="https://img.shields.io/badge/macOS-14.0%2B-5E5CE6?style=flat-square&logo=apple&logoColor=white" alt="macOS 14.0+" />
+    <img src="https://img.shields.io/badge/SwiftUI-%40Observable-FF6B8A?style=flat-square&logo=swift&logoColor=white" alt="SwiftUI @Observable" />
+    <img src="https://img.shields.io/badge/Tests-Mock--first-2F7D5C?style=flat-square" alt="Mock-first tests" />
   </p>
 </div>
 
