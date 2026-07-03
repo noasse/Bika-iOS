@@ -192,7 +192,7 @@ struct ComicReaderView: View {
                     .onAppear {
                         registerSampleIndexIfNeeded(index)
                     }
-                    .frame(minHeight: minHeight(for: index))
+                    .frame(height: pageHeight(for: index))
                     .id(index)
                 }
             }
@@ -203,15 +203,12 @@ struct ComicReaderView: View {
         .ignoresSafeArea()
     }
 
-    private func minHeight(for index: Int) -> CGFloat {
-        let screenWidth = UIScreen.main.bounds.width
-        if let size = imageSizes[index], size.width > 0 {
-            return screenWidth * (size.height / size.width)
-        }
-        if let ratio = estimatedAspectRatio {
-            return screenWidth * ratio
-        }
-        return 500
+    private func pageHeight(for index: Int) -> CGFloat {
+        ReaderVerticalImageLayout.pageHeight(
+            viewportWidth: UIScreen.main.bounds.width,
+            imageSize: imageSizes[index],
+            estimatedAspectRatio: estimatedAspectRatio
+        )
     }
 
     private func registerSampleIndexIfNeeded(_ index: Int) {
@@ -315,7 +312,7 @@ struct ComicReaderView: View {
             return screenBounds.size
 
         case .vertical:
-            return CGSize(width: screenBounds.width, height: minHeight(for: index))
+            return CGSize(width: screenBounds.width, height: pageHeight(for: index))
         }
     }
 
@@ -414,6 +411,35 @@ struct ComicReaderView: View {
             )
         }
         .foregroundStyle(.white)
+    }
+}
+
+nonisolated enum ReaderVerticalImageLayout {
+    static let fallbackPageHeight: CGFloat = 500
+
+    static func pageHeight(
+        viewportWidth: CGFloat,
+        imageSize: CGSize?,
+        estimatedAspectRatio: CGFloat?,
+        fallbackHeight: CGFloat = fallbackPageHeight
+    ) -> CGFloat {
+        guard viewportWidth.isFinite, viewportWidth > 0 else { return fallbackHeight }
+
+        if let imageSize,
+           imageSize.width.isFinite,
+           imageSize.height.isFinite,
+           imageSize.width > 0,
+           imageSize.height > 0 {
+            return viewportWidth * (imageSize.height / imageSize.width)
+        }
+
+        if let estimatedAspectRatio,
+           estimatedAspectRatio.isFinite,
+           estimatedAspectRatio > 0 {
+            return viewportWidth * estimatedAspectRatio
+        }
+
+        return fallbackHeight
     }
 }
 

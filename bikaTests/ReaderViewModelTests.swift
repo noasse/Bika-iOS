@@ -160,6 +160,46 @@ final class ReaderViewModelTests: XCTestCase {
             [3, 2]
         )
     }
+
+    func testVerticalReaderPageHeightUsesLoadedImageSizeBeforeEstimate() {
+        let height = ReaderVerticalImageLayout.pageHeight(
+            viewportWidth: 320,
+            imageSize: CGSize(width: 200, height: 600),
+            estimatedAspectRatio: 1.25
+        )
+
+        XCTAssertEqual(height, 960, accuracy: 0.01)
+    }
+
+    func testVerticalReaderPageHeightUsesEstimatedRatioBeforeFallback() {
+        let height = ReaderVerticalImageLayout.pageHeight(
+            viewportWidth: 320,
+            imageSize: nil,
+            estimatedAspectRatio: 1.5
+        )
+
+        XCTAssertEqual(height, 480, accuracy: 0.01)
+    }
+
+    func testVerticalReaderPageHeightUsesFallbackWithoutSizeOrEstimate() {
+        let height = ReaderVerticalImageLayout.pageHeight(
+            viewportWidth: 320,
+            imageSize: nil,
+            estimatedAspectRatio: nil
+        )
+
+        XCTAssertEqual(height, 500, accuracy: 0.01)
+    }
+
+    func testVerticalReaderPageHeightIgnoresInvalidImageSize() {
+        let height = ReaderVerticalImageLayout.pageHeight(
+            viewportWidth: 320,
+            imageSize: CGSize(width: 0, height: 600),
+            estimatedAspectRatio: 1.5
+        )
+
+        XCTAssertEqual(height, 480, accuracy: 0.01)
+    }
 }
 
 private func page(id: String) -> [String: Any] {
