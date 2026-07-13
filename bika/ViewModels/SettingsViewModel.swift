@@ -14,20 +14,27 @@ final class SettingsViewModel {
     var cloudHistoryCertificatePins = ""
     var cloudHistorySettingsMessage: String?
     var isTestingCloudHistoryConnection = false
+    var imageCacheSizeDescription = "计算中..."
+    var imageCacheMessage: String?
+    var isRefreshingImageCache = false
+    var isClearingImageCache = false
 
     private let blockedCategoriesManager: BlockedCategoriesManager
     private let keyValueStore: any KeyValueStore
+    private let imageCacheManager: any ImageCacheManaging
 
     init(
         themeManager: ThemeManager = .shared,
         blockedCategoriesManager: BlockedCategoriesManager = .shared,
         keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore,
+        imageCacheManager: any ImageCacheManaging = ImageCacheController.shared,
         isUITesting: Bool = AppDependencies.shared.isUITesting,
         appVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知版本"
     ) {
         self.themeManager = themeManager
         self.blockedCategoriesManager = blockedCategoriesManager
         self.keyValueStore = keyValueStore
+        self.imageCacheManager = imageCacheManager
         self.isUITesting = isUITesting
         self.appVersion = appVersion
         let savedImageQuality = keyValueStore.string(forKey: APIConfig.imageQualityKey) ?? APIConfig.imageQualityDefault
@@ -50,6 +57,27 @@ final class SettingsViewModel {
 
     func refreshDiagnostics() {
         lastRecordedImageQuality = keyValueStore.string(forKey: MockURLProtocol.lastImageQualityHeaderKey) ?? "未记录"
+    }
+
+    func refreshImageCacheUsage() async {
+        guard !isRefreshingImageCache else { return }
+        isRefreshingImageCache = true
+        defer { isRefreshingImageCache = false }
+
+        let usage = await imageCacheManager.usage()
+        imageCacheSizeDescription = Self.formatByteCount(usage.totalBytes)
+    }
+
+    func clearImageCache() async {
+        guard !isClearingImageCache else { return }
+        isClearingImageCache = true
+        imageCacheMessage = nil
+        defer { isClearingImageCache = false }
+
+        await imageCacheManager.clear()
+        let usage = await imageCacheManager.usage()
+        imageCacheSizeDescription = Self.formatByteCount(usage.totalBytes)
+        imageCacheMessage = "图片缓存已清理"
     }
 
     func saveCloudHistorySettings() {
@@ -152,6 +180,14 @@ final class SettingsViewModel {
             return description
         }
         return error.localizedDescription
+    }
+
+    private static func formatByteCount(_ bytes: Int) -> String {
+        guard bytes > 0 else { return "0 KB" }
+        return ByteCountFormatter.string(
+            fromByteCount: Int64(bytes),
+            countStyle: .file
+        )
     }
 }
 

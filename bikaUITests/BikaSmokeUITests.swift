@@ -42,9 +42,39 @@ final class BikaSmokeUITests: XCTestCase {
 
         let firstComment = app.staticTexts["第一页第一条评论"]
         XCTAssertTrue(firstComment.waitForExistence(timeout: 5))
-        firstComment.tap()
+        let lowerComment = app.staticTexts["第一页第八条评论"]
+        for _ in 0..<6 where !lowerComment.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(lowerComment.waitForExistence(timeout: 5))
+        XCTAssertTrue(lowerComment.isHittable)
+        lowerComment.tap()
 
         XCTAssertTrue(app.staticTexts["子评论内容"].waitForExistence(timeout: 5))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        XCTAssertTrue(app.navigationBars["评论"].waitForExistence(timeout: 5))
+        XCTAssertTrue(lowerComment.waitForExistence(timeout: 5))
+        XCTAssertTrue(lowerComment.isHittable)
+        XCTAssertFalse(firstComment.isHittable)
+    }
+
+    func testImageCacheCanBeInspectedAndCleared() throws {
+        let app = launchApp(resetState: true)
+
+        openSettings(in: app)
+
+        XCTAssertTrue(app.staticTexts["settings.imageCacheSize"].waitForExistence(timeout: 5))
+        let clearButton = app.buttons["settings.clearImageCache"]
+        XCTAssertTrue(clearButton.waitForExistence(timeout: 5))
+        clearButton.tap()
+
+        let confirmButton = app.buttons["清理"]
+        XCTAssertTrue(confirmButton.waitForExistence(timeout: 5))
+        confirmButton.tap()
+
+        XCTAssertTrue(app.staticTexts["settings.imageCacheMessage"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["settings.imageCacheMessage"].label, "图片缓存已清理")
     }
 
     func testReaderProgressRestoresAfterRelaunch() throws {
@@ -97,6 +127,9 @@ final class BikaSmokeUITests: XCTestCase {
         openSettings(in: app)
 
         let recordedQualityValue = app.staticTexts["settings.lastMockImageQualityValue"]
+        for _ in 0..<6 where !recordedQualityValue.exists {
+            app.swipeUp()
+        }
         XCTAssertTrue(recordedQualityValue.waitForExistence(timeout: 5))
         XCTAssertEqual(recordedQualityValue.label, "high")
     }

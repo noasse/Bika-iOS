@@ -4,6 +4,7 @@ struct CommentsView: View {
     @State private var viewModel: CommentsViewModel
     @State private var selectedComment: Comment?
     @State private var selectedUser: Creator?
+    @State private var scrollPosition = ScrollPosition(idType: String.self)
     @Environment(\.colorScheme) private var colorScheme
 
     init(comicId: String) {
@@ -74,10 +75,12 @@ struct CommentsView: View {
                                 .padding()
                         }
                     }
+                    .scrollTargetLayout()
                     .padding(.horizontal)
                     .padding(.bottom, 80)
                 }
             }
+            .scrollPosition($scrollPosition)
             .accessibilityIdentifier("comments.list")
 
             // Input bar
@@ -97,7 +100,7 @@ struct CommentsView: View {
         } message: {
             Text(viewModel.actionErrorMessage ?? "")
         }
-        .task { await viewModel.loadFirstPage() }
+        .task { await viewModel.loadInitialPageIfNeeded() }
     }
 
     private func commentCard(_ comment: Comment) -> some View {

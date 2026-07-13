@@ -5,7 +5,7 @@ final nonisolated class AppDependencies: @unchecked Sendable {
 
     private let lock = NSLock()
     private var _keyValueStore: any KeyValueStore = UserDefaultsKeyValueStore.standard
-    private var _imageDataLoader: any ImageDataLoading = URLSessionImageDataLoader()
+    private var _imageDataLoader: any ImageDataLoading = AppDependencies.makeLiveImageDataLoader()
     private var _launchConfig = UITestLaunchConfig.disabled
 
     private init() {}
@@ -42,7 +42,7 @@ final nonisolated class AppDependencies: @unchecked Sendable {
 
         let imageDataLoader: any ImageDataLoading = launchConfig.isEnabled
             ? FixtureImageDataLoader()
-            : URLSessionImageDataLoader()
+            : Self.makeLiveImageDataLoader()
 
         let apiClient = makeAPIClient(using: keyValueStore, launchConfig: launchConfig)
         APIClient.shared = apiClient
@@ -104,5 +104,13 @@ final nonisolated class AppDependencies: @unchecked Sendable {
         MockURLProtocol.keyValueStore = keyValueStore
 
         return APIClient(session: .shared, tokenStore: tokenStore)
+    }
+
+    private static func makeLiveImageDataLoader() -> any ImageDataLoading {
+#if os(iOS)
+        return URLSessionImageDataLoader(cacheController: .shared)
+#else
+        return URLSessionImageDataLoader()
+#endif
     }
 }

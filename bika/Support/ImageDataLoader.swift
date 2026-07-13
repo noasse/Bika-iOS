@@ -9,20 +9,94 @@ nonisolated protocol ImageDataLoading: Sendable {
     func data(from url: URL) async throws -> Data
 }
 
-final class URLSessionImageDataLoader: @unchecked Sendable, ImageDataLoading {
+final nonisolated class URLSessionImageDataLoader: @unchecked Sendable, ImageDataLoading {
     private let session: URLSession
+    private let responseCache: URLCache
+    private let requestCoordinator = ImageDataRequestCoordinator()
 
-    init(session: URLSession) {
+    init(session: URLSession, responseCache: URLCache) {
         self.session = session
+        self.responseCache = responseCache
+    }
+
+    convenience init(session: URLSession) {
+        self.init(
+            session: session,
+            responseCache: session.configuration.urlCache ?? .shared
+        )
     }
 
     convenience init() {
-        self.init(session: .shared)
+        let configuration = URLSessionConfiguration.default
+        let responseCache = configuration.urlCache ?? .shared
+        configuration.urlCache = responseCache
+        configuration.requestCachePolicy = .returnCacheDataElseLoad
+        self.init(
+            session: URLSession(configuration: configuration),
+            responseCache: responseCache
+        )
     }
 
+#if os(iOS)
+    convenience init(cacheController: ImageCacheController) {
+        let configuration = URLSessionConfiguration.default
+        configuration.urlCache = cacheController.responseCache
+        configuration.requestCachePolicy = .returnCacheDataElseLoad
+        self.init(
+            session: URLSession(configuration: configuration),
+            responseCache: cacheController.responseCache
+        )
+    }
+#endif
+
     func data(from url: URL) async throws -> Data {
-        let (data, _) = try await session.data(from: url)
-        return data
+        let session = session
+        let responseCache = responseCache
+        return try await requestCoordinator.data(for: url) {
+            var request = URLRequest(
+                url: url,
+                cachePolicy: .returnCacheDataElseLoad,
+                timeoutInterval: 60
+            )
+            request.httpMethod = "GET"
+
+            if let cached = responseCache.cachedResponse(for: request), !cached.data.isEmpty {
+                return cached.data
+            }
+
+            let (data, response) = try await session.data(for: request)
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200...299).contains(httpResponse.statusCode) {
+                throw URLError(.badServerResponse)
+            }
+            guard !data.isEmpty else {
+                throw URLError(.zeroByteResource)
+            }
+
+            responseCache.storeCachedResponse(
+                CachedURLResponse(response: response, data: data, storagePolicy: .allowed),
+                for: request
+            )
+            return data
+        }
+    }
+}
+
+private actor ImageDataRequestCoordinator {
+    private var inFlightTasks: [URL: Task<Data, Error>] = [:]
+
+    func data(
+        for url: URL,
+        operation: @escaping @Sendable () async throws -> Data
+    ) async throws -> Data {
+        if let task = inFlightTasks[url] {
+            return try await task.value
+        }
+
+        let task = Task { try await operation() }
+        inFlightTasks[url] = task
+        defer { inFlightTasks[url] = nil }
+        return try await task.value
     }
 }
 

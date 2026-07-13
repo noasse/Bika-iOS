@@ -24,6 +24,11 @@ final class CommentsViewModel {
         self.client = client
     }
 
+    func loadInitialPageIfNeeded() async {
+        guard currentPage == 0, comments.isEmpty, topComments.isEmpty else { return }
+        await loadFirstPage()
+    }
+
     func loadFirstPage() async {
         guard !isLoading else { return }
         isLoading = true

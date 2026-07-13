@@ -286,18 +286,24 @@ nonisolated enum SmokeFixtureRouter {
             docs = [
                 comment(id: "comment-1", content: "第一页第一条评论", commentsCount: 1),
                 comment(id: "comment-2", content: "第一页第二条评论", commentsCount: 0),
+                comment(id: "comment-3", content: "第一页第三条评论", commentsCount: 0),
+                comment(id: "comment-4", content: "第一页第四条评论", commentsCount: 0),
+                comment(id: "comment-5", content: "第一页第五条评论", commentsCount: 0),
+                comment(id: "comment-6", content: "第一页第六条评论", commentsCount: 0),
+                comment(id: "comment-7", content: "第一页第七条评论", commentsCount: 0),
+                comment(id: "comment-8", content: "第一页第八条评论", commentsCount: 0),
             ]
         } else {
             docs = [
-                comment(id: "comment-3", content: "第二页评论", commentsCount: 0),
+                comment(id: "comment-9", content: "第二页评论", commentsCount: 0),
             ]
         }
 
         return [
             "comments": [
                 "docs": docs,
-                "total": 3,
-                "limit": 2,
+                "total": 9,
+                "limit": 8,
                 "page": page,
                 "pages": 2,
             ],

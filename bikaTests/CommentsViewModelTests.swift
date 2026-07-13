@@ -8,6 +8,39 @@ final class CommentsViewModelTests: XCTestCase {
         super.tearDown()
     }
 
+    func testInitialLoadDoesNotReplaceAlreadyLoadedPaginationWhenViewReappears() async throws {
+        let callCount = LockedValue(0)
+        let (client, _) = TestSupport.makeAPIClient { request in
+            callCount.value += 1
+            let page = TestSupport.page(from: request)
+            return TestSupport.jsonResponse(data: [
+                "comments": [
+                    "docs": [
+                        comment(
+                            id: page == 1 ? "comment-1" : "comment-2",
+                            content: "第\(page)页评论",
+                            commentsCount: 1
+                        ),
+                    ],
+                    "total": 2,
+                    "limit": 1,
+                    "page": page,
+                    "pages": 2,
+                ],
+                "topComments": [],
+            ])
+        }
+        let viewModel = CommentsViewModel(comicId: "comic-1", client: client)
+
+        await viewModel.loadInitialPageIfNeeded()
+        await viewModel.loadMore()
+        await viewModel.loadInitialPageIfNeeded()
+
+        XCTAssertEqual(callCount.value, 2)
+        XCTAssertEqual(viewModel.comments.map(\.id), ["comment-1", "comment-2"])
+        XCTAssertEqual(viewModel.currentPage, 2)
+    }
+
     func testLoadMoreIfNeededOnlyTriggersOnceForSameLastItem() async throws {
         let callCount = LockedValue(0)
 

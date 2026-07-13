@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var viewModel: SettingsViewModel
+    @State private var showClearImageCacheConfirmation = false
 
     init(viewModel: SettingsViewModel = SettingsViewModel()) {
         _viewModel = State(initialValue: viewModel)
@@ -68,6 +69,40 @@ struct SettingsView: View {
                 Text("内容过滤")
             } footer: {
                 Text("已屏蔽分类的漫画不会出现在任何列表中")
+            }
+
+            Section {
+                HStack {
+                    Label("图片缓存", systemImage: "photo.stack")
+                    Spacer()
+                    if viewModel.isRefreshingImageCache {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text(viewModel.imageCacheSizeDescription)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("settings.imageCacheSize")
+                    }
+                }
+
+                Button(role: .destructive) {
+                    showClearImageCacheConfirmation = true
+                } label: {
+                    Label("清理图片缓存", systemImage: "trash")
+                }
+                .disabled(viewModel.isClearingImageCache)
+                .accessibilityIdentifier("settings.clearImageCache")
+
+                if let message = viewModel.imageCacheMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(Color.secondaryText(for: colorScheme))
+                        .accessibilityIdentifier("settings.imageCacheMessage")
+                }
+            } header: {
+                Text("存储")
+            } footer: {
+                Text("缓存用于减少重复下载。清理后不会删除账号、设置和阅读记录。")
             }
 
             Section {
@@ -140,6 +175,21 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             viewModel.refreshDiagnostics()
+        }
+        .task {
+            await viewModel.refreshImageCacheUsage()
+        }
+        .confirmationDialog(
+            "清理图片缓存？",
+            isPresented: $showClearImageCacheConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("清理", role: .destructive) {
+                Task { await viewModel.clearImageCache() }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("已缓存的图片会被删除，之后浏览时需要重新下载。")
         }
     }
 

@@ -14,6 +14,7 @@ struct ComicReaderView: View {
     @State private var estimatedAspectRatio: CGFloat?
     @State private var imagePrefetchTask: Task<Void, Never>?
     @State private var imagePrefetchKey: String?
+    @State private var viewportSize = CGSize.zero
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     private let startPageIndex: Int
@@ -87,6 +88,15 @@ struct ComicReaderView: View {
             }
         }
         .statusBar(hidden: !viewModel.showToolbar)
+        .onGeometryChange(for: CGSize.self) { geometry in
+            geometry.size
+        } action: { oldSize, newSize in
+            guard newSize.width > 0, newSize.height > 0 else { return }
+            guard !isNearlyEqual(oldSize, newSize) else { return }
+            viewportSize = newSize
+            imagePrefetchKey = nil
+            scheduleImagePrefetch(around: currentPage)
+        }
         .task {
             viewModel.startLoadingPages()
             if isUITesting {
@@ -140,7 +150,7 @@ struct ComicReaderView: View {
     // MARK: - Tap to Toggle Toolbar
 
     private func handleTap(_ location: CGPoint) {
-        let screenWidth = UIScreen.main.bounds.width
+        let screenWidth = max(viewportSize.width, 1)
         let center = screenWidth / 2
         let margin = screenWidth * 0.3
         if location.x > center - margin && location.x < center + margin {
@@ -177,35 +187,42 @@ struct ComicReaderView: View {
     // MARK: - Vertical Reader
 
     private var verticalReader: some View {
-        ScrollView(.vertical) {
-            LazyVStack(spacing: 0) {
-                ForEach(Array(viewModel.pages.enumerated()), id: \.offset) { index, page in
-                    ZoomableImageView(
-                        url: page.media.imageURL,
-                        imageLoader: imageDataLoader,
-                        imageCache: imageCache,
-                        onImageSize: { size in
-                            updateImageSize(size, for: index)
-                        },
-                        onSingleTap: handleTap
-                    )
-                    .onAppear {
-                        registerSampleIndexIfNeeded(index)
+        GeometryReader { geometry in
+            let viewportWidth = max(geometry.size.width, 1)
+            ScrollView(.vertical) {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(viewModel.pages.enumerated()), id: \.offset) { index, page in
+                        ZoomableImageView(
+                            url: page.media.imageURL,
+                            imageLoader: imageDataLoader,
+                            imageCache: imageCache,
+                            sizing: .fitWidth(viewportWidth),
+                            onImageSize: { size in
+                                updateImageSize(size, for: index)
+                            },
+                            onSingleTap: handleTap
+                        )
+                        .onAppear {
+                            registerSampleIndexIfNeeded(index)
+                        }
+                        .frame(
+                            width: viewportWidth,
+                            height: pageHeight(for: index, viewportWidth: viewportWidth)
+                        )
+                        .id(index)
                     }
-                    .frame(height: pageHeight(for: index))
-                    .id(index)
                 }
+                .scrollTargetLayout()
             }
-            .scrollTargetLayout()
+            .scrollPosition(id: $scrollPosition)
+            .scrollIndicators(.automatic)
         }
-        .scrollPosition(id: $scrollPosition)
-        .scrollIndicators(.automatic)
         .ignoresSafeArea()
     }
 
-    private func pageHeight(for index: Int) -> CGFloat {
+    private func pageHeight(for index: Int, viewportWidth: CGFloat) -> CGFloat {
         ReaderVerticalImageLayout.pageHeight(
-            viewportWidth: UIScreen.main.bounds.width,
+            viewportWidth: viewportWidth,
             imageSize: imageSizes[index],
             estimatedAspectRatio: estimatedAspectRatio
         )
@@ -279,12 +296,17 @@ struct ComicReaderView: View {
 
         let imageLoader = imageDataLoader
         let imageCache = imageCache
+        let prefetchKey = nextKey
         imagePrefetchTask = Task(priority: .utility) {
-            await ReaderImagePrefetcher.prefetch(
+            let prefetchedSizes = await ReaderImagePrefetcher.prefetch(
                 requests: requests,
                 imageLoader: imageLoader,
                 imageCache: imageCache
             )
+            guard !Task.isCancelled, imagePrefetchKey == prefetchKey else { return }
+            for (index, size) in prefetchedSizes {
+                updateImageSize(size, for: index)
+            }
         }
     }
 
@@ -300,19 +322,20 @@ struct ComicReaderView: View {
             return nil
         }
 
-        let targetSize = imagePrefetchTargetSize(for: index)
-        guard targetSize.width > 0, targetSize.height > 0 else { return nil }
-        return ReaderImagePrefetchRequest(url: url, targetSize: targetSize)
+        guard let target = imagePrefetchTarget() else { return nil }
+        return ReaderImagePrefetchRequest(index: index, url: url, target: target)
     }
 
-    private func imagePrefetchTargetSize(for index: Int) -> CGSize {
-        let screenBounds = UIScreen.main.bounds
+    private func imagePrefetchTarget() -> ImageDecodeTarget? {
+        guard viewportSize.width.isFinite, viewportSize.width > 0 else { return nil }
+
         switch viewModel.readerMode {
         case .horizontal:
-            return screenBounds.size
+            guard viewportSize.height.isFinite, viewportSize.height > 0 else { return nil }
+            return .fit(viewportSize)
 
         case .vertical:
-            return CGSize(width: screenBounds.width, height: pageHeight(for: index))
+            return .fitWidth(viewportSize.width)
         }
     }
 
@@ -469,12 +492,18 @@ nonisolated enum ReaderImagePrefetchPlan {
 }
 
 nonisolated struct ReaderImagePrefetchRequest: Sendable {
+    let index: Int
     let url: URL
-    let targetSize: CGSize
+    let target: ImageDecodeTarget
 
     var cacheIdentity: String {
-        "\(url.absoluteString)#\(ImageDecoding.cacheKeySuffix(for: targetSize))"
+        ImageCache.cacheIdentity(for: url, target: target, overscan: 2)
     }
+}
+
+nonisolated private struct ReaderImagePrefetchResult: Sendable {
+    let index: Int
+    let displaySize: CGSize
 }
 
 nonisolated enum ReaderImagePrefetcher {
@@ -484,11 +513,12 @@ nonisolated enum ReaderImagePrefetcher {
         requests: [ReaderImagePrefetchRequest],
         imageLoader: any ImageDataLoading,
         imageCache: ImageCache
-    ) async {
-        guard !requests.isEmpty else { return }
+    ) async -> [Int: CGSize] {
+        guard !requests.isEmpty else { return [:] }
 
         var nextIndex = 0
-        await withTaskGroup(of: Void.self) { group in
+        var displaySizes: [Int: CGSize] = [:]
+        await withTaskGroup(of: ReaderImagePrefetchResult?.self) { group in
             let initialRequestCount = min(maximumConcurrentRequests, requests.count)
             for _ in 0..<initialRequestCount {
                 let request = requests[nextIndex]
@@ -498,7 +528,11 @@ nonisolated enum ReaderImagePrefetcher {
                 }
             }
 
-            while await group.next() != nil {
+            while let result = await group.next() {
+                if let result {
+                    displaySizes[result.index] = result.displaySize
+                }
+
                 if Task.isCancelled {
                     group.cancelAll()
                     return
@@ -512,32 +546,42 @@ nonisolated enum ReaderImagePrefetcher {
                 }
             }
         }
+        return displaySizes
     }
 
     private static func prefetch(
         request: ReaderImagePrefetchRequest,
         imageLoader: any ImageDataLoading,
         imageCache: ImageCache
-    ) async {
-        guard !Task.isCancelled else { return }
-        guard imageCache.image(for: request.url, targetSize: request.targetSize) == nil else { return }
+    ) async -> ReaderImagePrefetchResult? {
+        guard !Task.isCancelled else { return nil }
+        if let cached = imageCache.asset(
+            for: request.url,
+            target: request.target,
+            overscan: 2
+        ) {
+            return ReaderImagePrefetchResult(
+                index: request.index,
+                displaySize: cached.displaySize
+            )
+        }
 
         do {
-            let data = try await imageLoader.data(from: request.url)
-            guard !Task.isCancelled else { return }
-
-            let image = await Task.detached(priority: .utility) {
-                ImageDecoding.decodeImage(
-                    from: data,
-                    targetSize: request.targetSize,
-                    overscan: 2
-                )
-            }.value
-
-            guard !Task.isCancelled, let image else { return }
-            imageCache.setImage(image, for: request.url, targetSize: request.targetSize)
+            let asset = try await imageCache.loadAsset(
+                for: request.url,
+                target: request.target,
+                overscan: 2,
+                priority: .utility,
+                imageLoader: imageLoader
+            )
+            guard !Task.isCancelled else { return nil }
+            return ReaderImagePrefetchResult(
+                index: request.index,
+                displaySize: asset.displaySize
+            )
         } catch {
             // Prefetch failures should never block reading; the visible page loader still handles retries.
+            return nil
         }
     }
 }

@@ -7,6 +7,30 @@ final class SettingsViewModelTests: XCTestCase {
         super.tearDown()
     }
 
+    @MainActor
+    func testRefreshAndClearImageCacheUpdatesDisplayedSize() async {
+        let store = InMemoryKeyValueStore()
+        let cacheManager = StubImageCacheManager(initialBytes: 1_500_000)
+        let viewModel = SettingsViewModel(
+            themeManager: ThemeManager(keyValueStore: store),
+            blockedCategoriesManager: BlockedCategoriesManager(keyValueStore: store),
+            keyValueStore: store,
+            imageCacheManager: cacheManager,
+            isUITesting: false,
+            appVersion: "1.0"
+        )
+
+        await viewModel.refreshImageCacheUsage()
+        XCTAssertNotEqual(viewModel.imageCacheSizeDescription, "0 KB")
+
+        await viewModel.clearImageCache()
+
+        XCTAssertEqual(viewModel.imageCacheSizeDescription, "0 KB")
+        XCTAssertEqual(viewModel.imageCacheMessage, "图片缓存已清理")
+        let clearCallCount = await cacheManager.clearCallCount
+        XCTAssertEqual(clearCallCount, 1)
+    }
+
     func testSetImageQualityPersistsToInjectedStore() {
         let store = InMemoryKeyValueStore()
         AppDependencies.shared.installForTesting(keyValueStore: store)
@@ -83,5 +107,23 @@ final class SettingsViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.cloudHistorySettingsMessage, "云端历史同步已保存")
         XCTAssertEqual(store.cloudHistoryConfig()?.certificateSHA256Pins, [])
+    }
+}
+
+private actor StubImageCacheManager: ImageCacheManaging {
+    private var bytes: Int
+    private(set) var clearCallCount = 0
+
+    init(initialBytes: Int) {
+        bytes = initialBytes
+    }
+
+    func usage() -> ImageCacheUsage {
+        ImageCacheUsage(memoryBytes: bytes, diskBytes: 0)
+    }
+
+    func clear() {
+        clearCallCount += 1
+        bytes = 0
     }
 }

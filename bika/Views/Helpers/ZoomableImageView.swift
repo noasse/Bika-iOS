@@ -1,12 +1,122 @@
 import SwiftUI
 import UIKit
 
-// MARK: - Zoomable Image View (UIScrollView-backed)
+nonisolated enum ZoomableImageSizing: Equatable, Sendable {
+    case viewport
+    case fitWidth(CGFloat)
+}
+
+@MainActor
+final class ZoomingImageScrollView: UIScrollView {
+    let readerImageView = UIImageView()
+    var onBoundsSizeChange: ((CGSize) -> Void)?
+
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private var needsBaseImageLayout = true
+    private var lastBaseLayoutBoundsSize = CGSize.zero
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        configureSubviews()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureSubviews()
+    }
+
+    func setImage(_ image: UIImage?) {
+        if readerImageView.image == nil, image == nil {
+            return
+        }
+        if zoomScale != minimumZoomScale {
+            setZoomScale(minimumZoomScale, animated: false)
+        }
+        readerImageView.image = image
+        readerImageView.frame = .zero
+        contentSize = .zero
+        needsBaseImageLayout = true
+        setNeedsLayout()
+    }
+
+    func setLoading(_ isLoading: Bool) {
+        if isLoading {
+            spinner.startAnimating()
+        } else {
+            spinner.stopAnimating()
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layoutImageForCurrentBounds()
+        onBoundsSizeChange?(bounds.size)
+    }
+
+    func centerImage() {
+        let boundsSize = bounds.size
+        var frameToCenter = readerImageView.frame
+
+        frameToCenter.origin.x = frameToCenter.width < boundsSize.width
+            ? (boundsSize.width - frameToCenter.width) / 2
+            : 0
+        frameToCenter.origin.y = frameToCenter.height < boundsSize.height
+            ? (boundsSize.height - frameToCenter.height) / 2
+            : 0
+        readerImageView.frame = frameToCenter
+    }
+
+    private func configureSubviews() {
+        readerImageView.contentMode = .scaleAspectFit
+        readerImageView.clipsToBounds = true
+        addSubview(readerImageView)
+
+        spinner.color = .gray
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(spinner)
+        NSLayoutConstraint.activate([
+            spinner.centerXAnchor.constraint(equalTo: frameLayoutGuide.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: frameLayoutGuide.centerYAnchor),
+        ])
+        spinner.startAnimating()
+    }
+
+    private func layoutImageForCurrentBounds() {
+        guard let image = readerImageView.image else { return }
+        let boundsSize = bounds.size
+        guard boundsSize.width > 0, boundsSize.height > 0 else { return }
+
+        let boundsChanged = boundsSize != lastBaseLayoutBoundsSize
+        guard needsBaseImageLayout || boundsChanged || zoomScale != minimumZoomScale else {
+            centerImage()
+            return
+        }
+
+        if boundsChanged, zoomScale != minimumZoomScale {
+            setZoomScale(minimumZoomScale, animated: false)
+        }
+
+        guard zoomScale == minimumZoomScale else {
+            centerImage()
+            return
+        }
+
+        let imageSize = image.size
+        guard imageSize.width > 0, imageSize.height > 0 else { return }
+        let fitHeight = imageSize.height * (boundsSize.width / imageSize.width)
+        readerImageView.frame = CGRect(x: 0, y: 0, width: boundsSize.width, height: fitHeight)
+        contentSize = readerImageView.frame.size
+        lastBaseLayoutBoundsSize = boundsSize
+        needsBaseImageLayout = false
+        centerImage()
+    }
+}
 
 struct ZoomableImageView: UIViewRepresentable {
     let url: URL?
     let imageLoader: any ImageDataLoading
     let imageCache: ImageCache
+    var sizing: ZoomableImageSizing = .viewport
     var onImageSize: ((CGSize) -> Void)?
     var onSingleTap: ((CGPoint) -> Void)?
 
@@ -14,58 +124,54 @@ struct ZoomableImageView: UIViewRepresentable {
         Coordinator(parent: self)
     }
 
-    func makeUIView(context: Context) -> UIScrollView {
-        let scrollView = UIScrollView()
+    func makeUIView(context: Context) -> ZoomingImageScrollView {
+        let scrollView = ZoomingImageScrollView()
         scrollView.delegate = context.coordinator
-        scrollView.minimumZoomScale = 1.0
-        scrollView.maximumZoomScale = 4.0
+        scrollView.minimumZoomScale = 1
+        scrollView.maximumZoomScale = 4
         scrollView.bouncesZoom = true
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
         scrollView.backgroundColor = UIColor(white: 0.1, alpha: 1)
 
-        let imageView = UIImageView()
-        imageView.contentMode = .scaleAspectFit
-        imageView.clipsToBounds = true
-        scrollView.addSubview(imageView)
-        context.coordinator.imageView = imageView
-
-        let spinner = UIActivityIndicatorView(style: .medium)
-        spinner.color = .gray
-        spinner.startAnimating()
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.addSubview(spinner)
-        NSLayoutConstraint.activate([
-            spinner.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerYAnchor),
-        ])
-        context.coordinator.spinner = spinner
-
-        let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap(_:)))
+        let doubleTap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleDoubleTap(_:))
+        )
         doubleTap.numberOfTapsRequired = 2
         scrollView.addGestureRecognizer(doubleTap)
 
-        let singleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleSingleTap(_:)))
+        let singleTap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleSingleTap(_:))
+        )
         singleTap.numberOfTapsRequired = 1
         singleTap.require(toFail: doubleTap)
         scrollView.addGestureRecognizer(singleTap)
 
+        scrollView.onBoundsSizeChange = { [weak coordinator = context.coordinator, weak scrollView] _ in
+            guard let scrollView else { return }
+            coordinator?.loadImageIfNeeded(in: scrollView)
+        }
         return scrollView
     }
 
-    func updateUIView(_ scrollView: UIScrollView, context: Context) {
+    func updateUIView(_ scrollView: ZoomingImageScrollView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.loadImageIfNeeded(in: scrollView)
-        context.coordinator.relayoutIfNeeded(in: scrollView)
     }
 
+    static func dismantleUIView(_ scrollView: ZoomingImageScrollView, coordinator: Coordinator) {
+        coordinator.cancelLoading()
+        scrollView.onBoundsSizeChange = nil
+    }
+
+    @MainActor
     final class Coordinator: NSObject, UIScrollViewDelegate {
         var parent: ZoomableImageView
-        var imageView: UIImageView!
-        var spinner: UIActivityIndicatorView?
-        private var loadedURL: URL?
+        private var loadedIdentity: String?
+        private var loadingIdentity: String?
         private var loadTask: Task<Void, Never>?
-        private var lastBoundsSize: CGSize = .zero
 
         init(parent: ZoomableImageView) {
             self.parent = parent
@@ -76,119 +182,98 @@ struct ZoomableImageView: UIViewRepresentable {
         }
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? {
-            imageView
+            (scrollView as? ZoomingImageScrollView)?.readerImageView
         }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
-            centerImageInScrollView(scrollView)
+            (scrollView as? ZoomingImageScrollView)?.centerImage()
         }
 
-        func loadImageIfNeeded(in scrollView: UIScrollView) {
-            guard let url = parent.url, url != loadedURL else { return }
-            let targetSize = imageTargetSize(in: scrollView)
-            guard targetSize.width > 0, targetSize.height > 0 else { return }
-            loadTask?.cancel()
-
-            if let cached = parent.imageCache.image(for: url, targetSize: targetSize) {
-                loadedURL = url
-                displayImage(cached, in: scrollView)
+        func loadImageIfNeeded(in scrollView: ZoomingImageScrollView) {
+            guard let url = parent.url else {
+                cancelLoading()
+                loadedIdentity = nil
+                scrollView.setImage(nil)
+                scrollView.setLoading(false)
                 return
             }
 
-            loadTask = Task { [weak self] in
-                do {
-                    let data = try await self?.parent.imageLoader.data(from: url)
-                    guard let data else {
-                        await MainActor.run { self?.loadedURL = nil }
-                        return
-                    }
-                    let decodedImage = await Task.detached(priority: .userInitiated) {
-                        ImageDecoding.decodeImage(
-                            from: data,
-                            targetSize: targetSize,
-                            overscan: 2
-                        )
-                    }.value
+            let target = decodeTarget(in: scrollView)
+            guard target.isUsable else { return }
+            let identity = ImageCache.cacheIdentity(
+                for: url,
+                target: target,
+                overscan: 2
+            )
+            guard identity != loadedIdentity, identity != loadingIdentity else { return }
 
-                    guard !Task.isCancelled, let image = decodedImage else {
-                        await MainActor.run { self?.loadedURL = nil }
-                        return
-                    }
-                    self?.parent.imageCache.setImage(image, for: url, targetSize: targetSize)
-                    await MainActor.run {
-                        self?.loadedURL = url
-                        self?.displayImage(image, in: scrollView)
-                    }
+            loadTask?.cancel()
+            loadedIdentity = nil
+            loadingIdentity = identity
+            scrollView.setImage(nil)
+            scrollView.setLoading(true)
+
+            let imageLoader = parent.imageLoader
+            let imageCache = parent.imageCache
+            loadTask = Task { [weak self, weak scrollView] in
+                do {
+                    let asset = try await imageCache.loadAsset(
+                        for: url,
+                        target: target,
+                        overscan: 2,
+                        priority: .userInitiated,
+                        imageLoader: imageLoader
+                    )
+                    guard !Task.isCancelled else { return }
+                    guard let self,
+                          let scrollView,
+                          self.loadingIdentity == identity else { return }
+                    self.display(asset, identity: identity, in: scrollView)
+                } catch is CancellationError {
+                    return
                 } catch {
-                    await MainActor.run { self?.loadedURL = nil }
+                    guard self?.loadingIdentity == identity else { return }
+                    self?.loadingIdentity = nil
+                    scrollView?.setLoading(false)
                 }
             }
         }
 
-        func relayoutIfNeeded(in scrollView: UIScrollView) {
-            let boundsSize = scrollView.bounds.size
-            guard boundsSize.width > 0, boundsSize.height > 0 else { return }
-            guard imageView.image != nil else { return }
-            guard boundsSize != lastBoundsSize else { return }
-            layoutImage(in: scrollView)
+        func cancelLoading() {
+            loadTask?.cancel()
+            loadTask = nil
+            loadingIdentity = nil
         }
 
-        private func displayImage(_ image: UIImage, in scrollView: UIScrollView) {
-            spinner?.stopAnimating()
-            spinner?.removeFromSuperview()
-            spinner = nil
-
-            imageView.image = image
-            parent.onImageSize?(image.size)
-            scrollView.zoomScale = 1.0
-            layoutImage(in: scrollView)
+        private func display(
+            _ asset: DecodedImageAsset,
+            identity: String,
+            in scrollView: ZoomingImageScrollView
+        ) {
+            loadTask = nil
+            loadingIdentity = nil
+            loadedIdentity = identity
+            scrollView.setLoading(false)
+            scrollView.setImage(asset.image)
+            parent.onImageSize?(asset.displaySize)
         }
 
-        private func layoutImage(in scrollView: UIScrollView) {
-            guard let image = imageView.image else { return }
-            let boundsSize = scrollView.bounds.size
-            guard boundsSize.width > 0, boundsSize.height > 0 else { return }
-            lastBoundsSize = boundsSize
-
-            let imageSize = image.size
-            let widthScale = boundsSize.width / imageSize.width
-            let fitHeight = imageSize.height * widthScale
-            imageView.frame = CGRect(x: 0, y: 0, width: boundsSize.width, height: fitHeight)
-            scrollView.contentSize = imageView.frame.size
-
-            centerImageInScrollView(scrollView)
-        }
-
-        private func centerImageInScrollView(_ scrollView: UIScrollView) {
-            let boundsSize = scrollView.bounds.size
-            var frameToCenter = imageView.frame
-
-            if frameToCenter.size.width < boundsSize.width {
-                frameToCenter.origin.x = (boundsSize.width - frameToCenter.size.width) / 2
-            } else {
-                frameToCenter.origin.x = 0
+        private func decodeTarget(in scrollView: ZoomingImageScrollView) -> ImageDecodeTarget {
+            switch parent.sizing {
+            case .viewport:
+                return .fit(scrollView.bounds.size)
+            case .fitWidth(let width):
+                return .fitWidth(width)
             }
-
-            if frameToCenter.size.height < boundsSize.height {
-                frameToCenter.origin.y = (boundsSize.height - frameToCenter.size.height) / 2
-            } else {
-                frameToCenter.origin.y = 0
-            }
-
-            imageView.frame = frameToCenter
-        }
-
-        private func imageTargetSize(in scrollView: UIScrollView) -> CGSize {
-            scrollView.bounds.size
         }
 
         @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
-            guard let scrollView = gesture.view as? UIScrollView else { return }
+            guard let scrollView = gesture.view as? ZoomingImageScrollView else { return }
             if scrollView.zoomScale > scrollView.minimumZoomScale {
-                scrollView.setZoomScale(1.0, animated: true)
+                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
             } else {
-                let location = gesture.location(in: imageView)
-                let zoomScale: CGFloat = 2.0
+                let location = gesture.location(in: scrollView.readerImageView)
+                let zoomScale: CGFloat = 2
                 let size = CGSize(
                     width: scrollView.bounds.width / zoomScale,
                     height: scrollView.bounds.height / zoomScale
@@ -205,6 +290,19 @@ struct ZoomableImageView: UIViewRepresentable {
             guard let scrollView = gesture.view as? UIScrollView else { return }
             let location = gesture.location(in: scrollView.superview)
             parent.onSingleTap?(CGPoint(x: location.x, y: location.y))
+        }
+    }
+}
+
+private extension ImageDecodeTarget {
+    var isUsable: Bool {
+        switch self {
+        case .full:
+            return true
+        case .fit(let size):
+            return size.width.isFinite && size.height.isFinite && size.width > 0 && size.height > 0
+        case .fitWidth(let width):
+            return width.isFinite && width > 0
         }
     }
 }
