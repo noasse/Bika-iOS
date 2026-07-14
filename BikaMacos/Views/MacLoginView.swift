@@ -47,6 +47,14 @@ struct MacLoginView: View {
                         .multilineTextAlignment(.center)
                 }
 
+                if model.requiresProfileValidation {
+                    Button("重试验证") {
+                        Task { await model.retryProfileValidation() }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isAuthenticating)
+                }
+
                 Button {
                     submit()
                 } label: {

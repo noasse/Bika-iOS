@@ -118,6 +118,8 @@ final class ComicResultsViewModel {
     private let navigationStateStore: NavigationStateStore
     private var activeRequestID = 0
     private var initialPageToLoad: Int?
+    private var canonicalMetricsHydrationTask: Task<[String: ComicCanonicalMetrics], Never>?
+    private var canonicalMetricsHydrationRequestID: Int?
 
     init(
         query: ComicResultsQuery,
@@ -224,6 +226,9 @@ final class ComicResultsViewModel {
     }
 
     private func beginRequest() -> Int {
+        canonicalMetricsHydrationTask?.cancel()
+        canonicalMetricsHydrationTask = nil
+        canonicalMetricsHydrationRequestID = nil
         activeRequestID += 1
         isLoading = true
         return activeRequestID
@@ -239,47 +244,105 @@ final class ComicResultsViewModel {
 
         let sourceComics = comics
         let client = self.client
+        let hydrationTask = Task {
+            await Self.loadCanonicalMetrics(
+                for: sourceComics,
+                using: client,
+                maximumConcurrentRequests: 4
+            )
+        }
+        canonicalMetricsHydrationTask = hydrationTask
+        canonicalMetricsHydrationRequestID = requestID
 
-        let metricsByComicID = await withTaskGroup(
-            of: (String, ComicCanonicalMetrics?).self,
-            returning: [String: ComicCanonicalMetrics].self
-        ) { group in
-            for comic in sourceComics {
-                group.addTask {
-                    do {
-                        let response: APIResponse<ComicDetailData> = try await client.send(.comicDetail(id: comic.id))
-                        guard let detail = response.data?.comic else {
-                            return (comic.id, nil)
-                        }
-
-                        return (
-                            comic.id,
-                            ComicCanonicalMetrics(
-                                totalViews: detail.totalViews ?? detail.viewsCount,
-                                totalLikes: detail.totalLikes ?? detail.likesCount
-                            )
-                        )
-                    } catch {
-                        return (comic.id, nil)
-                    }
-                }
-            }
-
-            var result: [String: ComicCanonicalMetrics] = [:]
-            for await (comicID, metrics) in group {
-                guard let metrics else { continue }
-                result[comicID] = metrics
-            }
-            return result
+        let metricsByComicID = await withTaskCancellationHandler {
+            await hydrationTask.value
+        } onCancel: {
+            hydrationTask.cancel()
         }
 
-        guard requestID == activeRequestID else { return }
+        if canonicalMetricsHydrationRequestID == requestID {
+            canonicalMetricsHydrationTask = nil
+            canonicalMetricsHydrationRequestID = nil
+        }
+
+        guard !Task.isCancelled, requestID == activeRequestID else { return }
         comics = sourceComics.map { comic in
             guard let metrics = metricsByComicID[comic.id] else { return comic }
             return comic.replacingCanonicalStats(
                 totalViews: metrics.totalViews,
                 totalLikes: metrics.totalLikes
             )
+        }
+    }
+
+    private nonisolated static func loadCanonicalMetrics(
+        for comics: [Comic],
+        using client: any APIClientProtocol,
+        maximumConcurrentRequests: Int
+    ) async -> [String: ComicCanonicalMetrics] {
+        guard !comics.isEmpty, maximumConcurrentRequests > 0 else { return [:] }
+
+        return await withTaskGroup(
+            of: (String, ComicCanonicalMetrics?).self,
+            returning: [String: ComicCanonicalMetrics].self
+        ) { group in
+            var nextComicIndex = 0
+            let initialRequestCount = min(maximumConcurrentRequests, comics.count)
+
+            for _ in 0..<initialRequestCount {
+                let comic = comics[nextComicIndex]
+                nextComicIndex += 1
+                group.addTask {
+                    await Self.canonicalMetrics(for: comic, using: client)
+                }
+            }
+
+            var result: [String: ComicCanonicalMetrics] = [:]
+            while let (comicID, metrics) = await group.next() {
+                guard !Task.isCancelled else {
+                    group.cancelAll()
+                    break
+                }
+
+                if let metrics {
+                    result[comicID] = metrics
+                }
+
+                if nextComicIndex < comics.count {
+                    let comic = comics[nextComicIndex]
+                    nextComicIndex += 1
+                    group.addTask {
+                        await Self.canonicalMetrics(for: comic, using: client)
+                    }
+                }
+            }
+
+            return result
+        }
+    }
+
+    private nonisolated static func canonicalMetrics(
+        for comic: Comic,
+        using client: any APIClientProtocol
+    ) async -> (String, ComicCanonicalMetrics?) {
+        guard !Task.isCancelled else { return (comic.id, nil) }
+
+        do {
+            let response: APIResponse<ComicDetailData> = try await client.send(.comicDetail(id: comic.id))
+            try Task.checkCancellation()
+            guard let detail = response.data?.comic else {
+                return (comic.id, nil)
+            }
+
+            return (
+                comic.id,
+                ComicCanonicalMetrics(
+                    totalViews: detail.totalViews ?? detail.viewsCount,
+                    totalLikes: detail.totalLikes ?? detail.likesCount
+                )
+            )
+        } catch {
+            return (comic.id, nil)
         }
     }
 
@@ -293,7 +356,7 @@ final class ComicResultsViewModel {
     }
 }
 
-private struct ComicCanonicalMetrics: Sendable {
+private nonisolated struct ComicCanonicalMetrics: Sendable {
     let totalViews: Int?
     let totalLikes: Int?
 }

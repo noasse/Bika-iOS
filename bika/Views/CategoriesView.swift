@@ -41,8 +41,14 @@ struct CategoriesView: View {
                     ForEach(viewModel.categories) { category in
                         NavigationLink(value: category) {
                             VStack(spacing: 6) {
-                                MediaImageView(media: category.thumb, cornerRadius: 12)
-                                    .aspectRatio(1, contentMode: .fit)
+                                GeometryReader { geometry in
+                                    MediaImageView(
+                                        media: category.thumb,
+                                        cornerRadius: 12,
+                                        targetSize: geometry.size
+                                    )
+                                }
+                                .aspectRatio(1, contentMode: .fit)
                                 Text(category.title)
                                     .font(.caption)
                                     .lineLimit(1)

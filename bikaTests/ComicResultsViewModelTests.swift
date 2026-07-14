@@ -3,22 +3,29 @@ import XCTest
 
 @MainActor
 final class ComicResultsViewModelTests: XCTestCase {
-    override func setUp() {
-        super.setUp()
-        NavigationStateStore.shared.clearComicListState(for: ComicResultsQuery.favourites.restorationKey)
-        NavigationStateStore.shared.clearComicListState(for: ComicResultsQuery.author("作者A").restorationKey)
-    }
-
     override func tearDown() {
-        NavigationStateStore.shared.clearComicListState(for: ComicResultsQuery.favourites.restorationKey)
-        NavigationStateStore.shared.clearComicListState(for: ComicResultsQuery.author("作者A").restorationKey)
         TestSupport.restoreLiveDependencies()
         super.tearDown()
     }
 
+    func testNewNavigationStateStoreDoesNotInheritAnotherInstancesState() {
+        let firstStore = NavigationStateStore()
+        firstStore.saveComicListState(
+            ComicListNavigationState(
+                currentPage: 3,
+                sortModeRawValue: SortMode.views.rawValue,
+                anchorComicID: "comic-3"
+            ),
+            for: ComicResultsQuery.favourites.restorationKey
+        )
+
+        let secondStore = NavigationStateStore()
+
+        XCTAssertNil(secondStore.comicListState(for: ComicResultsQuery.favourites.restorationKey))
+    }
+
     func testLoadFirstPageRestoresSavedPageSortAndAnchor() async throws {
-        let navigationStateStore = NavigationStateStore.shared
-        navigationStateStore.clearComicListState(for: ComicResultsQuery.favourites.restorationKey)
+        let navigationStateStore = NavigationStateStore()
         navigationStateStore.saveComicListState(
             ComicListNavigationState(
                 currentPage: 2,
@@ -55,8 +62,7 @@ final class ComicResultsViewModelTests: XCTestCase {
     }
 
     func testPersistPageRestoresLastVisitedPageForNewViewModel() async {
-        let navigationStateStore = NavigationStateStore.shared
-        navigationStateStore.clearComicListState(for: ComicResultsQuery.favourites.restorationKey)
+        let navigationStateStore = NavigationStateStore()
 
         let (client, store) = TestSupport.makeAPIClient { request in
             let page = Int(TestSupport.queryValue(named: "page", from: request) ?? "1") ?? 1
@@ -94,8 +100,7 @@ final class ComicResultsViewModelTests: XCTestCase {
 
     func testChangeSortClearsAnchorAndLoadsFirstPage() async {
         let requestedSorts = LockedValue<[String]>([])
-        let navigationStateStore = NavigationStateStore.shared
-        navigationStateStore.clearComicListState(for: ComicResultsQuery.favourites.restorationKey)
+        let navigationStateStore = NavigationStateStore()
 
         let (client, store) = TestSupport.makeAPIClient { request in
             var values = requestedSorts.value
@@ -129,7 +134,7 @@ final class ComicResultsViewModelTests: XCTestCase {
     }
 
     func testAuthorQueryHydratesCanonicalMetricsFromComicDetail() async {
-        let navigationStateStore = NavigationStateStore.shared
+        let navigationStateStore = NavigationStateStore()
         let authorQuery = ComicResultsQuery.author("作者A")
 
         let requestedPaths = LockedValue<[String]>([])
@@ -184,9 +189,125 @@ final class ComicResultsViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.comics.first?.displayLikes, 654)
         XCTAssertEqual(viewModel.comics.first?.likesCount, 7)
     }
+
+    func testAuthorCanonicalMetricsHydrationNeverExceedsFourConcurrentRequests() async {
+        let probe = CanonicalMetricsConcurrencyProbe()
+        let docs = LockedValue((1...10).map {
+            comic(
+                id: "comic-author-\($0)",
+                title: "作者作品 \($0)",
+                author: "作者A"
+            )
+        })
+        let (client, store) = TestSupport.makeAPIClient { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "POST" {
+                return TestSupport.jsonResponse(data: [
+                    "comics": comicsPage(page: 1, pages: 1, docs: docs.value),
+                ])
+            }
+
+            let comicID = path.components(separatedBy: "/").last ?? "missing"
+            probe.begin()
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+                probe.finish(cancelled: false)
+                return TestSupport.jsonResponse(data: [
+                    "comic": comicDetailPayload(
+                        id: comicID,
+                        title: comicID,
+                        author: "作者A",
+                        totalViews: 100,
+                        totalLikes: 200,
+                        likesCount: 7
+                    ),
+                ])
+            } catch {
+                probe.finish(cancelled: error is CancellationError)
+                throw error
+            }
+        }
+        let viewModel = ComicResultsViewModel(
+            query: .author("作者A"),
+            client: client,
+            keyValueStore: store,
+            navigationStateStore: .shared
+        )
+
+        await viewModel.loadPage(1)
+
+        XCTAssertEqual(probe.startedCount, 10)
+        XCTAssertLessThanOrEqual(probe.maximumConcurrentCount, 4)
+        XCTAssertEqual(probe.activeCount, 0)
+    }
+
+    func testLoadingNewAuthorPageCancelsOldCanonicalMetricsHydration() async {
+        let probe = CanonicalMetricsConcurrencyProbe()
+        let oldDocs = LockedValue((1...8).map {
+            comic(
+                id: "old-comic-\($0)",
+                title: "旧作品 \($0)",
+                author: "作者A"
+            )
+        })
+        let (client, store) = TestSupport.makeAPIClient { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "POST" {
+                let page = TestSupport.page(from: request)
+                let docs = page == 1
+                    ? oldDocs.value
+                    : [comic(id: "new-comic", title: "新作品", author: "作者A")]
+                return TestSupport.jsonResponse(data: [
+                    "comics": comicsPage(page: page, pages: 2, docs: docs),
+                ])
+            }
+
+            let comicID = path.components(separatedBy: "/").last ?? "missing"
+            if comicID.hasPrefix("old-comic-") {
+                probe.begin()
+                do {
+                    try await Task.sleep(for: .seconds(30))
+                    probe.finish(cancelled: false)
+                } catch {
+                    probe.finish(cancelled: error is CancellationError)
+                    throw error
+                }
+            }
+
+            return TestSupport.jsonResponse(data: [
+                "comic": comicDetailPayload(
+                    id: comicID,
+                    title: comicID,
+                    author: "作者A",
+                    totalViews: 999,
+                    totalLikes: 888,
+                    likesCount: 7
+                ),
+            ])
+        }
+        let viewModel = ComicResultsViewModel(
+            query: .author("作者A"),
+            client: client,
+            keyValueStore: store,
+            navigationStateStore: .shared
+        )
+
+        let firstPageLoad = Task { await viewModel.loadPage(1) }
+        await waitUntil { probe.startedCount >= 4 }
+
+        await viewModel.loadPage(2)
+        await waitUntil { probe.cancelledCount >= 4 }
+        await firstPageLoad.value
+
+        XCTAssertEqual(probe.startedCount, 4)
+        XCTAssertEqual(viewModel.currentPage, 2)
+        XCTAssertEqual(viewModel.comics.map(\.id), ["new-comic"])
+        XCTAssertEqual(viewModel.comics.first?.displayViews, 999)
+        XCTAssertEqual(viewModel.comics.first?.displayLikes, 888)
+    }
 }
 
-private func comicsPage(page: Int, pages: Int, docs: [[String: Any]]) -> [String: Any] {
+nonisolated private func comicsPage(page: Int, pages: Int, docs: [[String: Any]]) -> [String: Any] {
     [
         "docs": docs,
         "total": docs.count,
@@ -196,7 +317,7 @@ private func comicsPage(page: Int, pages: Int, docs: [[String: Any]]) -> [String
     ]
 }
 
-private func comic(
+nonisolated private func comic(
     id: String,
     title: String,
     author: String = "作者",
@@ -234,7 +355,7 @@ private func comic(
     return payload
 }
 
-private func comicDetailPayload(
+nonisolated private func comicDetailPayload(
     id: String,
     title: String,
     author: String,
@@ -280,4 +401,41 @@ private func comicDetailPayload(
         "allowDownload": true,
         "allowComment": true,
     ]
+}
+
+private final class CanonicalMetricsConcurrencyProbe: @unchecked Sendable {
+    private struct State {
+        var activeCount = 0
+        var maximumConcurrentCount = 0
+        var startedCount = 0
+        var cancelledCount = 0
+    }
+
+    private let lock = NSLock()
+    private var state = State()
+
+    var activeCount: Int { lock.withLock { state.activeCount } }
+    var maximumConcurrentCount: Int { lock.withLock { state.maximumConcurrentCount } }
+    var startedCount: Int { lock.withLock { state.startedCount } }
+    var cancelledCount: Int { lock.withLock { state.cancelledCount } }
+
+    func begin() {
+        lock.withLock {
+            state.activeCount += 1
+            state.startedCount += 1
+            state.maximumConcurrentCount = max(
+                state.maximumConcurrentCount,
+                state.activeCount
+            )
+        }
+    }
+
+    func finish(cancelled: Bool) {
+        lock.withLock {
+            state.activeCount = max(0, state.activeCount - 1)
+            if cancelled {
+                state.cancelledCount += 1
+            }
+        }
+    }
 }

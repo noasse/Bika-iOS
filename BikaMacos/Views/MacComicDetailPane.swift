@@ -76,7 +76,11 @@ struct MacComicDetailPane: View {
     }
 
     private func cover(_ detail: ComicDetail, width: CGFloat, height: CGFloat) -> some View {
-        MacCachedAsyncImage(url: detail.thumb?.imageURL, contentMode: .fill) {
+        MacCachedAsyncImage(
+            url: detail.thumb?.imageURL,
+            contentMode: .fill,
+            targetSize: CGSize(width: width, height: height)
+        ) {
             ZStack {
                 MacUI.subtleSurface(for: colorScheme)
                 Image(systemName: "photo")
@@ -219,7 +223,7 @@ struct MacComicDetailPane: View {
                 title: detail.isLiked == true ? "已喜欢" : "喜欢",
                 systemImage: detail.isLiked == true ? "heart.fill" : "heart",
                 isActive: detail.isLiked == true,
-                isDisabled: model.isTogglingLike
+                isDisabled: model.isPerformingDetailAction
             ) {
                 Task { await model.toggleLike() }
             }
@@ -228,7 +232,7 @@ struct MacComicDetailPane: View {
                 title: detail.isFavourite == true ? "已收藏" : "收藏",
                 systemImage: detail.isFavourite == true ? "star.fill" : "star",
                 isActive: detail.isFavourite == true,
-                isDisabled: model.isTogglingFavourite
+                isDisabled: model.isPerformingDetailAction
             ) {
                 Task { await model.toggleFavourite() }
             }
@@ -313,20 +317,53 @@ struct MacComicDetailPane: View {
 
     private var episodesSection: some View {
         section("章节") {
-            if model.episodes.isEmpty {
+            if model.isLoadingEpisodes, model.episodes.isEmpty {
+                ProgressView("正在载入章节")
+                    .frame(maxWidth: .infinity, minHeight: 120)
+            } else if let error = model.episodesError, model.episodes.isEmpty {
+                VStack(spacing: 10) {
+                    ContentUnavailableView(
+                        "章节载入失败",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(error)
+                    )
+                    Button("重试") {
+                        Task { await model.reloadEpisodes() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .frame(maxWidth: .infinity, minHeight: 120)
+            } else if model.episodes.isEmpty {
                 ContentUnavailableView("暂无章节", systemImage: "list.bullet")
                     .frame(minHeight: 120)
             } else {
-                LazyVGrid(columns: episodeColumns, alignment: .leading, spacing: 8) {
-                    ForEach(model.episodes) { episode in
-                        Button {
-                            if let request = model.makeEpisodeReaderRequest(episode: episode) {
-                                openWindow(value: request)
+                VStack(alignment: .leading, spacing: 10) {
+                    if let error = model.episodesError {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle")
+                            Text(error)
+                                .lineLimit(2)
+                            Spacer()
+                            Button("重试") {
+                                Task { await model.reloadEpisodes() }
                             }
-                        } label: {
-                            episodeRow(episode)
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+
+                    LazyVGrid(columns: episodeColumns, alignment: .leading, spacing: 8) {
+                        ForEach(model.episodes) { episode in
+                            Button {
+                                if let request = model.makeEpisodeReaderRequest(episode: episode) {
+                                    openWindow(value: request)
+                                }
+                            } label: {
+                                episodeRow(episode)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
             }
@@ -434,7 +471,11 @@ struct MacComicDetailPane: View {
 
     private func recommendedCard(_ comic: Comic) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            MacCachedAsyncImage(url: comic.thumb?.imageURL, contentMode: .fill)
+            MacCachedAsyncImage(
+                url: comic.thumb?.imageURL,
+                contentMode: .fill,
+                targetSize: CGSize(width: 102, height: 136)
+            )
                 .frame(width: 102, height: 136)
                 .clipShape(RoundedRectangle(cornerRadius: 7))
 

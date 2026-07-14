@@ -2,50 +2,54 @@ import Foundation
 
 extension MacLibraryModel {
     func checkTokenIfNeeded() async {
-        guard !didCheckToken else { return }
-        didCheckToken = true
-        isCheckingToken = true
-        defer { isCheckingToken = false }
-
-        guard await client.tokenStore.getToken() != nil else {
-            isAuthenticated = false
-            return
-        }
-
-        isAuthenticated = true
-        do {
-            let response: APIResponse<UserProfileData> = try await client.send(.myProfile())
-            userProfile = response.data?.user
-            await selectSidebar(.categories)
-        } catch {
-            await client.tokenStore.clear()
-            isAuthenticated = false
-            userProfile = nil
-            authError = error.localizedDescription
+        await authenticationStore.checkTokenIfNeeded { [weak self] in
+            await self?.selectSidebar(.categories)
         }
     }
 
     func login(email: String, password: String) async {
-        isAuthenticating = true
-        authError = nil
-        defer { isAuthenticating = false }
+        await authenticationStore.login(email: email, password: password) { [weak self] in
+            await self?.selectSidebar(.categories)
+        }
+    }
 
-        do {
-            _ = try await client.signIn(email: email, password: password)
-            isAuthenticated = true
-            let profileResponse: APIResponse<UserProfileData> = try await client.send(.myProfile())
-            userProfile = profileResponse.data?.user
-            await selectSidebar(.categories)
-        } catch {
-            authError = error.localizedDescription
-            isAuthenticated = false
+    func retryProfileValidation() async {
+        await authenticationStore.retryProfileValidation { [weak self] in
+            await self?.selectSidebar(.categories)
         }
     }
 
     func logout() async {
-        await client.tokenStore.clear()
-        isAuthenticated = false
-        userProfile = nil
         clearSelection()
+        await authenticationStore.logout()
+    }
+
+    func loadProfile() async {
+        await listStore.loadProfile(
+            fetchProfile: { [authenticationStore] in
+                try await authenticationStore.fetchProfile()
+            },
+            applyProfile: { [authenticationStore] profile in
+                authenticationStore.applyProfile(profile)
+            }
+        )
+    }
+
+    func punchIn() async {
+        do {
+            guard try await authenticationStore.punchIn() else { return }
+            await loadProfile()
+        } catch {
+            listStore.setExternalError(error)
+        }
+    }
+
+    func updateSlogan(_ slogan: String) async {
+        do {
+            try await authenticationStore.updateSlogan(slogan)
+            await loadProfile()
+        } catch {
+            listStore.setExternalError(error)
+        }
     }
 }

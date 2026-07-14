@@ -28,7 +28,7 @@ struct ComicReaderView: View {
         episodes: [Episode],
         startEpisodeIndex: Int,
         startPageIndex: Int = 0,
-        readingProgressManager: ReadingProgressManager = .shared,
+        readingProgressManager: ReadingProgressManager? = nil,
         imageDataLoader: any ImageDataLoading = AppDependencies.shared.imageDataLoader,
         imageCache: ImageCache = .shared,
         isUITesting: Bool = AppDependencies.shared.isUITesting
@@ -39,7 +39,7 @@ struct ComicReaderView: View {
             startEpisodeIndex: startEpisodeIndex
         ))
         self.startPageIndex = startPageIndex
-        self.readingProgressManager = readingProgressManager
+        self.readingProgressManager = readingProgressManager ?? .shared
         self.imageDataLoader = imageDataLoader
         self.imageCache = imageCache
         self.isUITesting = isUITesting
@@ -52,7 +52,8 @@ struct ComicReaderView: View {
             if viewModel.isLoading && viewModel.pages.isEmpty {
                 ProgressView()
                     .tint(.white)
-            } else if let errorMessage = viewModel.errorMessage, viewModel.pages.isEmpty {
+            } else if viewModel.showsFullScreenLoadError,
+                      let errorMessage = viewModel.errorMessage {
                 VStack(spacing: 12) {
                     Text("页面加载失败")
                         .font(.headline)
@@ -83,6 +84,11 @@ struct ComicReaderView: View {
                 }
             }
 
+            if viewModel.showsPaginationError,
+               let errorMessage = viewModel.errorMessage {
+                paginationErrorBanner(errorMessage)
+            }
+
             if viewModel.showToolbar {
                 toolbarOverlay
             }
@@ -104,6 +110,7 @@ struct ComicReaderView: View {
             }
         }
         .onDisappear {
+            viewModel.cancelLoadingPages()
             cancelImagePrefetch()
             saveProgress()
         }
@@ -145,6 +152,40 @@ struct ComicReaderView: View {
             imagePrefetchKey = nil
             scheduleImagePrefetch(around: currentPage)
         }
+    }
+
+    private func paginationErrorBanner(_ errorMessage: String) -> some View {
+        VStack {
+            Spacer()
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.yellow)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("后续页面加载失败")
+                        .font(.subheadline.weight(.semibold))
+                    Text(errorMessage)
+                        .font(.caption)
+                        .lineLimit(2)
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+
+                Spacer(minLength: 8)
+
+                Button("重试") {
+                    viewModel.startLoadingPages()
+                }
+                .buttonStyle(.bordered)
+                .tint(.white)
+                .accessibilityIdentifier("reader.paginationRetry")
+            }
+            .padding(12)
+            .foregroundStyle(.white)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .accessibilityIdentifier("reader.paginationError")
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, viewModel.showToolbar ? 88 : 16)
     }
 
     // MARK: - Tap to Toggle Toolbar

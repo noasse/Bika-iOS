@@ -2,8 +2,10 @@ import SwiftUI
 
 struct MacSettingsView: View {
     @Binding var themeModeRawValue: String
-    @AppStorage(APIConfig.imageQualityKey) private var imageQualityRawValue = APIConfig.imageQualityDefault
+    @State private var imageQualityRawValue: String
     let blockedCategoriesStore: MacBlockedCategoriesStore
+    let client: any APIClientProtocol
+    let keyValueStore: any KeyValueStore
 
     @State private var categories: [Category] = []
     @State private var isLoadingCategories = false
@@ -16,9 +18,20 @@ struct MacSettingsView: View {
     @State private var isTestingCloudHistoryConnection = false
     @Environment(\.colorScheme) private var colorScheme
 
-    init(themeModeRawValue: Binding<String>, blockedCategoriesStore: MacBlockedCategoriesStore) {
+    init(
+        themeModeRawValue: Binding<String>,
+        blockedCategoriesStore: MacBlockedCategoriesStore,
+        client: any APIClientProtocol = APIClient.shared,
+        keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore
+    ) {
         _themeModeRawValue = themeModeRawValue
         self.blockedCategoriesStore = blockedCategoriesStore
+        self.client = client
+        self.keyValueStore = keyValueStore
+        _imageQualityRawValue = State(
+            initialValue: keyValueStore.string(forKey: APIConfig.imageQualityKey)
+                ?? APIConfig.imageQualityDefault
+        )
     }
 
     var body: some View {
@@ -122,10 +135,14 @@ struct MacSettingsView: View {
             } else if let categoriesError, categories.isEmpty {
                 ContentUnavailableView("分类载入失败", systemImage: "exclamationmark.triangle", description: Text(categoriesError))
             } else {
-                List(categories, id: \.title) { category in
+                List(categories, id: \.id) { category in
                     Toggle(isOn: blockedBinding(for: category.title)) {
                         HStack(spacing: 10) {
-                            MacCachedAsyncImage(url: category.thumb?.imageURL, contentMode: .fill)
+                            MacCachedAsyncImage(
+                                url: category.thumb?.imageURL,
+                                contentMode: .fill,
+                                targetSize: CGSize(width: 36, height: 36)
+                            )
                                 .frame(width: 36, height: 36)
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
 
@@ -163,8 +180,19 @@ struct MacSettingsView: View {
             ImageQuality(rawValue: imageQualityRawValue) ?? .original
         } set: { quality in
             imageQualityRawValue = quality.rawValue
-            APIConfig.setCurrentImageQuality(quality)
+            persistImageQuality(quality)
         }
+    }
+
+    func persistImageQuality(_ quality: ImageQuality) {
+        keyValueStore.set(quality.rawValue, forKey: APIConfig.imageQualityKey)
+    }
+
+    func fetchCategories() async throws -> [Category] {
+        let response: APIResponse<CategoriesData> = try await client.send(.categories())
+        return (response.data?.categories ?? [])
+            .filter { $0.isWeb != true }
+            .deduplicatedByIdentity()
     }
 
     private func blockedBinding(for category: String) -> Binding<Bool> {
@@ -189,33 +217,30 @@ struct MacSettingsView: View {
         defer { isLoadingCategories = false }
 
         do {
-            let response: APIResponse<CategoriesData> = try await APIClient.shared.send(.categories())
-            categories = response.data?.categories.filter { $0.isWeb != true } ?? []
+            categories = try await fetchCategories()
         } catch {
             categoriesError = error.localizedDescription
         }
     }
 
     private func loadCloudHistorySettings() {
-        let store = AppDependencies.shared.keyValueStore
-        cloudHistoryEnabled = store.string(forKey: CloudHistoryConfig.StorageKeys.isEnabled) == "1"
-        cloudHistoryBaseURL = store.string(forKey: CloudHistoryConfig.StorageKeys.baseURL) ?? ""
-        cloudHistoryBearerToken = store.string(forKey: CloudHistoryConfig.StorageKeys.bearerToken) ?? ""
-        cloudHistoryCertificatePins = (store.stringArray(forKey: CloudHistoryConfig.StorageKeys.certificateSHA256Pins) ?? [])
+        cloudHistoryEnabled = keyValueStore.string(forKey: CloudHistoryConfig.StorageKeys.isEnabled) == "1"
+        cloudHistoryBaseURL = keyValueStore.string(forKey: CloudHistoryConfig.StorageKeys.baseURL) ?? ""
+        cloudHistoryBearerToken = keyValueStore.string(forKey: CloudHistoryConfig.StorageKeys.bearerToken) ?? ""
+        cloudHistoryCertificatePins = (keyValueStore.stringArray(forKey: CloudHistoryConfig.StorageKeys.certificateSHA256Pins) ?? [])
             .joined(separator: "\n")
     }
 
     private func saveCloudHistorySettings() {
-        let store = AppDependencies.shared.keyValueStore
         let pins = parsedCloudHistoryPins()
         let trimmedURL = cloudHistoryBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedToken = cloudHistoryBearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard cloudHistoryEnabled else {
-            store.setCloudHistoryEnabled(false)
-            store.set(trimmedURL, forKey: CloudHistoryConfig.StorageKeys.baseURL)
-            store.set(trimmedToken, forKey: CloudHistoryConfig.StorageKeys.bearerToken)
-            store.set(pins, forKey: CloudHistoryConfig.StorageKeys.certificateSHA256Pins)
+            keyValueStore.setCloudHistoryEnabled(false)
+            keyValueStore.set(trimmedURL, forKey: CloudHistoryConfig.StorageKeys.baseURL)
+            keyValueStore.set(trimmedToken, forKey: CloudHistoryConfig.StorageKeys.bearerToken)
+            keyValueStore.set(pins, forKey: CloudHistoryConfig.StorageKeys.certificateSHA256Pins)
             cloudHistoryMessage = "云端历史同步已关闭"
             return
         }
@@ -226,7 +251,7 @@ struct MacSettingsView: View {
             trimmedToken: trimmedToken
         ) else { return }
 
-        store.setCloudHistoryConfig(config)
+        keyValueStore.setCloudHistoryConfig(config)
         cloudHistoryBaseURL = trimmedURL
         cloudHistoryBearerToken = trimmedToken
         cloudHistoryCertificatePins = pins.joined(separator: "\n")

@@ -19,10 +19,47 @@ nonisolated private final class ImageCacheKey: NSObject {
 }
 
 nonisolated private final class ImageCacheEntry: NSObject {
+    let id = UUID()
     let asset: DecodedImageAsset
+    let cost: Int
 
     init(asset: DecodedImageAsset) {
         self.asset = asset
+        cost = ImageDecoding.cacheCost(for: asset.image)
+    }
+}
+
+nonisolated private final class ImageCacheCostTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var costsByEntryID: [UUID: Int] = [:]
+
+    var totalCost: Int {
+        lock.withLock { costsByEntryID.values.reduce(0, +) }
+    }
+
+    func insert(_ entry: ImageCacheEntry) {
+        lock.withLock { costsByEntryID[entry.id] = entry.cost }
+    }
+
+    func remove(_ entry: ImageCacheEntry) {
+        lock.withLock { _ = costsByEntryID.removeValue(forKey: entry.id) }
+    }
+
+    func removeAll() {
+        lock.withLock { costsByEntryID.removeAll() }
+    }
+}
+
+nonisolated private final class ImageCacheEvictionDelegate: NSObject, NSCacheDelegate {
+    private let costTracker: ImageCacheCostTracker
+
+    init(costTracker: ImageCacheCostTracker) {
+        self.costTracker = costTracker
+    }
+
+    func cache(_ cache: NSCache<AnyObject, AnyObject>, willEvictObject obj: Any) {
+        guard let entry = obj as? ImageCacheEntry else { return }
+        costTracker.remove(entry)
     }
 }
 
@@ -30,12 +67,22 @@ nonisolated final class ImageCache: @unchecked Sendable {
     static let shared = ImageCache()
 
     private let cache = NSCache<ImageCacheKey, ImageCacheEntry>()
-    private let requestCoordinator = ImageAssetRequestCoordinator()
+    private let requestRegistry = CoalescingTaskRegistry<String, DecodedImageAsset>()
+    private let mutationLock = NSLock()
+    private let costTracker: ImageCacheCostTracker
+    private let evictionDelegate: ImageCacheEvictionDelegate
+    private var cacheGeneration = 0
 
     init(countLimit: Int = 200, totalCostLimit: Int = 100 * 1024 * 1024) {
+        let costTracker = ImageCacheCostTracker()
+        self.costTracker = costTracker
+        evictionDelegate = ImageCacheEvictionDelegate(costTracker: costTracker)
         cache.countLimit = countLimit
         cache.totalCostLimit = totalCostLimit
+        cache.delegate = evictionDelegate
     }
+
+    var currentMemoryUsage: Int { costTracker.totalCost }
 
     func image(for url: URL, targetSize: CGSize? = nil) -> UIImage? {
         asset(for: url, target: targetSize.map(ImageDecodeTarget.fit) ?? .full)?.image
@@ -65,16 +112,22 @@ nonisolated final class ImageCache: @unchecked Sendable {
         target: ImageDecodeTarget,
         overscan: CGFloat = 1
     ) {
-        let key = ImageCacheKey(url: url, target: target, overscan: overscan)
-        cache.setObject(
-            ImageCacheEntry(asset: asset),
-            forKey: key,
-            cost: ImageDecoding.cacheCost(for: asset.image)
+        _ = storeAsset(
+            asset,
+            for: url,
+            target: target,
+            overscan: overscan,
+            expectedGeneration: nil
         )
     }
 
-    func removeAllImages() {
-        cache.removeAllObjects()
+    func removeAllImages() async {
+        await requestRegistry.cancelAll()
+        mutationLock.withLock {
+            cacheGeneration &+= 1
+            cache.removeAllObjects()
+            costTracker.removeAll()
+        }
     }
 
     func loadAsset(
@@ -89,24 +142,42 @@ nonisolated final class ImageCache: @unchecked Sendable {
         }
 
         let identity = Self.cacheIdentity(for: url, target: target, overscan: overscan)
-        return try await requestCoordinator.asset(for: identity) { [self] in
+        let expectedGeneration = mutationLock.withLock { cacheGeneration }
+        return try await requestRegistry.value(for: identity) { [self] in
             if let cached = asset(for: url, target: target, overscan: overscan) {
                 return cached
             }
 
             let data = try await imageLoader.data(from: url)
-            let decoded = await Task.detached(priority: priority) {
-                ImageDecoding.decodeAsset(
+            try Task.checkCancellation()
+            let decodeTask = Task.detached(priority: priority) { () throws -> DecodedImageAsset in
+                try Task.checkCancellation()
+                guard let decoded = ImageDecoding.decodeAsset(
                     from: data,
                     target: target,
                     overscan: overscan
-                )
-            }.value
-            guard let decoded else {
-                throw URLError(.cannotDecodeContentData)
+                ) else {
+                    throw URLError(.cannotDecodeContentData)
+                }
+                try Task.checkCancellation()
+                return decoded
+            }
+            let decoded = try await withTaskCancellationHandler {
+                try await decodeTask.value
+            } onCancel: {
+                decodeTask.cancel()
             }
 
-            setAsset(decoded, for: url, target: target, overscan: overscan)
+            try Task.checkCancellation()
+            guard storeAsset(
+                decoded,
+                for: url,
+                target: target,
+                overscan: overscan,
+                expectedGeneration: expectedGeneration
+            ) else {
+                throw CancellationError()
+            }
             return decoded
         }
     }
@@ -120,22 +191,27 @@ nonisolated final class ImageCache: @unchecked Sendable {
         let overscanKey = Int((resolvedOverscan * 100).rounded())
         return "\(url.absoluteString)#\(target.cacheKey)#overscan-\(overscanKey)"
     }
-}
 
-private actor ImageAssetRequestCoordinator {
-    private var inFlightTasks: [String: Task<DecodedImageAsset, Error>] = [:]
-
-    func asset(
-        for identity: String,
-        operation: @escaping @Sendable () async throws -> DecodedImageAsset
-    ) async throws -> DecodedImageAsset {
-        if let task = inFlightTasks[identity] {
-            return try await task.value
+    private func storeAsset(
+        _ asset: DecodedImageAsset,
+        for url: URL,
+        target: ImageDecodeTarget,
+        overscan: CGFloat,
+        expectedGeneration: Int?
+    ) -> Bool {
+        let key = ImageCacheKey(url: url, target: target, overscan: overscan)
+        let entry = ImageCacheEntry(asset: asset)
+        return mutationLock.withLock {
+            if let expectedGeneration,
+               expectedGeneration != cacheGeneration {
+                return false
+            }
+            if let replacedEntry = cache.object(forKey: key) {
+                costTracker.remove(replacedEntry)
+            }
+            costTracker.insert(entry)
+            cache.setObject(entry, forKey: key, cost: entry.cost)
+            return true
         }
-
-        let task = Task { try await operation() }
-        inFlightTasks[identity] = task
-        defer { inFlightTasks[identity] = nil }
-        return try await task.value
     }
 }

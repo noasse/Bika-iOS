@@ -13,6 +13,12 @@ final class ComicDetailViewModel {
     var episodesError: String?
     var recommendedError: String?
     var actionErrorMessage: String?
+    private(set) var isTogglingLike = false
+    private(set) var isTogglingFavourite = false
+
+    var isPerformingAction: Bool {
+        isTogglingLike || isTogglingFavourite
+    }
 
     let comicId: String
     private let client: any APIClientProtocol
@@ -123,11 +129,18 @@ final class ComicDetailViewModel {
 
     @MainActor
     func toggleLike() async {
+        guard !isPerformingAction else { return }
+        isTogglingLike = true
+        actionErrorMessage = nil
+        defer { isTogglingLike = false }
+
         do {
             let _: APIResponse<LikeActionData> = try await client.send(.likeComic(id: comicId))
             // Refresh detail to get updated state
             let response: APIResponse<ComicDetailData> = try await client.send(.comicDetail(id: comicId))
-            detail = response.data?.comic
+            if let refreshedDetail = response.data?.comic {
+                detail = refreshedDetail
+            }
         } catch {
             actionErrorMessage = error.localizedDescription
         }
@@ -135,10 +148,17 @@ final class ComicDetailViewModel {
 
     @MainActor
     func toggleFavourite() async {
+        guard !isPerformingAction else { return }
+        isTogglingFavourite = true
+        actionErrorMessage = nil
+        defer { isTogglingFavourite = false }
+
         do {
             let _: APIResponse<EmptyData> = try await client.send(.favouriteComic(id: comicId))
             let response: APIResponse<ComicDetailData> = try await client.send(.comicDetail(id: comicId))
-            detail = response.data?.comic
+            if let refreshedDetail = response.data?.comic {
+                detail = refreshedDetail
+            }
         } catch {
             actionErrorMessage = error.localizedDescription
         }

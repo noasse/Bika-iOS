@@ -4,6 +4,7 @@ struct MediaImageView: View {
     let media: Media?
     var cornerRadius: CGFloat = 8
     var targetSize: CGSize? = nil
+    var contentMode: ContentMode = .fill
     var imageLoader: any ImageDataLoading = AppDependencies.shared.imageDataLoader
     var imageCache: ImageCache = .shared
 
@@ -11,6 +12,7 @@ struct MediaImageView: View {
         CachedAsyncImage(
             url: media?.imageURL,
             targetSize: targetSize,
+            contentMode: contentMode,
             imageLoader: imageLoader,
             imageCache: imageCache
         ) {
@@ -21,6 +23,7 @@ struct MediaImageView: View {
                         .foregroundStyle(.gray)
                 }
         }
+        .clipped()
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
     }
 }

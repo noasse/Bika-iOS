@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Security
 
 // MARK: - Token Storage
@@ -8,9 +9,99 @@ private nonisolated enum TokenStorageKeys {
 }
 
 nonisolated protocol TokenPersisting: Sendable {
-    func token() -> String?
-    func setToken(_ token: String?)
-    func clearToken()
+    func token() throws -> String?
+    func setToken(_ token: String?) throws
+    func clearToken() throws
+}
+
+nonisolated protocol KeychainAccessing: Sendable {
+    func read(service: String, account: String) throws -> Data?
+    func write(_ data: Data, service: String, account: String) throws
+    func delete(service: String, account: String) throws
+}
+
+nonisolated enum KeychainAccessError: LocalizedError, Sendable {
+    case invalidTokenData
+    case unexpectedStatus(operation: String, status: OSStatus)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidTokenData:
+            return "Keychain token data is not valid UTF-8"
+        case .unexpectedStatus(let operation, let status):
+            return "Keychain \(operation) failed with status \(status)"
+        }
+    }
+}
+
+nonisolated struct SecurityKeychainAccess: KeychainAccessing {
+    func read(service: String, account: String) throws -> Data? {
+        var query = baseQuery(service: service, account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        switch status {
+        case errSecSuccess:
+            guard let data = item as? Data else {
+                throw KeychainAccessError.invalidTokenData
+            }
+            return data
+        case errSecItemNotFound:
+            return nil
+        default:
+            throw KeychainAccessError.unexpectedStatus(operation: "read", status: status)
+        }
+    }
+
+    func write(_ data: Data, service: String, account: String) throws {
+        let query = baseQuery(service: service, account: account)
+        let attributes = tokenAttributes(data: data)
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+
+        if updateStatus == errSecSuccess {
+            return
+        }
+
+        guard updateStatus == errSecItemNotFound else {
+            throw KeychainAccessError.unexpectedStatus(operation: "update", status: updateStatus)
+        }
+
+        var addQuery = query
+        addQuery.merge(attributes) { _, new in new }
+        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+        guard addStatus == errSecSuccess else {
+            throw KeychainAccessError.unexpectedStatus(operation: "add", status: addStatus)
+        }
+    }
+
+    func delete(service: String, account: String) throws {
+        let status = SecItemDelete(baseQuery(service: service, account: account) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw KeychainAccessError.unexpectedStatus(operation: "delete", status: status)
+        }
+    }
+
+    private func baseQuery(service: String, account: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+    }
+
+    private func tokenAttributes(data: Data) -> [String: Any] {
+        var attributes: [String: Any] = [
+            kSecValueData as String: data,
+        ]
+
+        #if os(iOS) || os(tvOS) || os(watchOS)
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        #endif
+
+        return attributes
+    }
 }
 
 final nonisolated class KeyValueTokenStore: @unchecked Sendable, TokenPersisting {
@@ -34,24 +125,58 @@ final nonisolated class KeyValueTokenStore: @unchecked Sendable, TokenPersisting
 }
 
 final nonisolated class SecureTokenStore: @unchecked Sendable, TokenPersisting {
+    private enum SuppressionState {
+        static let suppressed = "suppressed:v1"
+        static let replacementPrefix = "replacement:v1:"
+    }
+
     private let service: String
     private let account: String
     private let legacyStore: any KeyValueStore
+    private let keychain: any KeychainAccessing
     private let lock = NSLock()
+
+    private var suppressionKey: String {
+        "\(TokenStorageKeys.authToken).suppressed.\(service).\(account)"
+    }
 
     init(
         service: String = Bundle.main.bundleIdentifier ?? "com.bika.auth",
         account: String = TokenStorageKeys.authToken,
-        legacyStore: any KeyValueStore = AppDependencies.shared.keyValueStore
+        legacyStore: any KeyValueStore = AppDependencies.shared.keyValueStore,
+        keychain: any KeychainAccessing = SecurityKeychainAccess()
     ) {
         self.service = service
         self.account = account
         self.legacyStore = legacyStore
+        self.keychain = keychain
     }
 
-    func token() -> String? {
-        lock.withLock {
-            if let keychainToken = readTokenLocked() {
+    func token() throws -> String? {
+        try lock.withLock {
+            if let suppressionState = legacyStore.string(forKey: suppressionKey) {
+                let keychainData = try keychain.read(service: service, account: account)
+                if let expectedDigest = replacementDigest(from: suppressionState),
+                   let keychainData,
+                   tokenDigest(keychainData) == expectedDigest {
+                    guard let replacementToken = String(data: keychainData, encoding: .utf8) else {
+                        throw KeychainAccessError.invalidTokenData
+                    }
+                    legacyStore.removeObject(forKey: TokenStorageKeys.authToken)
+                    legacyStore.removeObject(forKey: suppressionKey)
+                    return replacementToken
+                }
+
+                legacyStore.removeObject(forKey: TokenStorageKeys.authToken)
+                try keychain.delete(service: service, account: account)
+                legacyStore.removeObject(forKey: suppressionKey)
+                return nil
+            }
+
+            if let keychainData = try keychain.read(service: service, account: account) {
+                guard let keychainToken = String(data: keychainData, encoding: .utf8) else {
+                    throw KeychainAccessError.invalidTokenData
+                }
                 legacyStore.removeObject(forKey: TokenStorageKeys.authToken)
                 return keychainToken
             }
@@ -60,81 +185,53 @@ final nonisolated class SecureTokenStore: @unchecked Sendable, TokenPersisting {
                 return nil
             }
 
-            _ = storeTokenLocked(legacyToken)
+            try keychain.write(Data(legacyToken.utf8), service: service, account: account)
             legacyStore.removeObject(forKey: TokenStorageKeys.authToken)
             return legacyToken
         }
     }
 
-    func setToken(_ token: String?) {
-        lock.withLock {
+    func setToken(_ token: String?) throws {
+        try lock.withLock {
             if let token, !token.isEmpty {
-                _ = storeTokenLocked(token)
+                let tokenData = Data(token.utf8)
+                if legacyStore.string(forKey: suppressionKey) != nil {
+                    legacyStore.set(replacementState(for: tokenData), forKey: suppressionKey)
+                }
+                try keychain.write(tokenData, service: service, account: account)
+                legacyStore.removeObject(forKey: suppressionKey)
+                legacyStore.removeObject(forKey: TokenStorageKeys.authToken)
             } else {
-                deleteTokenLocked()
+                try clearTokenLocked()
             }
-            legacyStore.removeObject(forKey: TokenStorageKeys.authToken)
         }
     }
 
-    func clearToken() {
-        lock.withLock {
-            deleteTokenLocked()
-            legacyStore.removeObject(forKey: TokenStorageKeys.authToken)
+    func clearToken() throws {
+        try lock.withLock {
+            try clearTokenLocked()
         }
     }
 
-    private var baseQuery: [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
+    private func clearTokenLocked() throws {
+        legacyStore.set(SuppressionState.suppressed, forKey: suppressionKey)
+        legacyStore.removeObject(forKey: TokenStorageKeys.authToken)
+        try keychain.delete(service: service, account: account)
+        legacyStore.removeObject(forKey: suppressionKey)
     }
 
-    private func readTokenLocked() -> String? {
-        var query = baseQuery
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+    private func replacementState(for tokenData: Data) -> String {
+        SuppressionState.replacementPrefix + tokenDigest(tokenData)
     }
 
-    private func storeTokenLocked(_ token: String) -> Bool {
-        let data = Data(token.utf8)
-        let attributes = tokenAttributes(data: data)
-        let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
-
-        if updateStatus == errSecSuccess {
-            return true
-        }
-
-        guard updateStatus == errSecItemNotFound else {
-            return false
-        }
-
-        var addQuery = baseQuery
-        addQuery.merge(attributes) { _, new in new }
-        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+    private func replacementDigest(from state: String) -> String? {
+        guard state.hasPrefix(SuppressionState.replacementPrefix) else { return nil }
+        let digest = String(state.dropFirst(SuppressionState.replacementPrefix.count))
+        return digest.isEmpty ? nil : digest
     }
 
-    private func deleteTokenLocked() {
-        SecItemDelete(baseQuery as CFDictionary)
-    }
-
-    private func tokenAttributes(data: Data) -> [String: Any] {
-        var attributes: [String: Any] = [
-            kSecValueData as String: data,
-        ]
-
-        #if os(iOS) || os(tvOS) || os(watchOS)
-        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        #endif
-
-        return attributes
+    private func tokenDigest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -145,30 +242,35 @@ actor TokenStore {
 
     private let secureStore: any TokenPersisting
     private var token: String?
+    private var didLoadToken = false
 
     init(secureStore: any TokenPersisting = SecureTokenStore()) {
         self.secureStore = secureStore
-        token = secureStore.token()
     }
 
     init(store: any KeyValueStore) {
         let secureStore = KeyValueTokenStore(store: store)
         self.secureStore = secureStore
-        token = secureStore.token()
     }
 
-    func setToken(_ token: String?) {
+    func setToken(_ token: String?) throws {
+        try secureStore.setToken(token)
         self.token = token
-        secureStore.setToken(token)
+        didLoadToken = true
     }
 
-    func getToken() -> String? {
-        token
+    func getToken() throws -> String? {
+        if !didLoadToken {
+            token = try secureStore.token()
+            didLoadToken = true
+        }
+        return token
     }
 
-    func clear() {
+    func clear() throws {
         token = nil
-        secureStore.clearToken()
+        didLoadToken = true
+        try secureStore.clearToken()
     }
 }
 
@@ -177,13 +279,16 @@ actor TokenStore {
 nonisolated protocol APIClientProtocol: Sendable {
     var tokenStore: TokenStore { get }
     func send<T: Decodable & Sendable>(_ endpoint: APIEndpoint<T>) async throws -> T
+    func requestSignInToken(email: String, password: String) async throws -> String
     func signIn(email: String, password: String) async throws -> String
 }
 
 // MARK: - API Client
 
 final nonisolated class APIClient: APIClientProtocol, Sendable {
-    static var shared = APIClient()
+    static var shared: APIClient {
+        AppDependencies.shared.apiClient
+    }
 
     let tokenStore: TokenStore
     private let session: URLSession
@@ -233,7 +338,7 @@ final nonisolated class APIClient: APIClientProtocol, Sendable {
 
         // Auth token
         if endpoint.requiresAuth {
-            guard let token = await tokenStore.getToken() else {
+            guard let token = try await tokenStore.getToken() else {
                 throw APIError.noToken
             }
             request.setValue(token, forHTTPHeaderField: "authorization")
@@ -289,24 +394,36 @@ final nonisolated class APIClient: APIClientProtocol, Sendable {
             return nil
         }
 
+        if code == 401 {
+            return .unauthorized
+        }
+
         return .apiError(code: code, message: message)
     }
 
     private func validateBusinessResponseIfNeeded<T>(_ decoded: T) throws {
         guard let response = decoded as? any APIBusinessResponse else { return }
         guard (200...299).contains(response.code) else {
+            if response.code == 401 {
+                throw APIError.unauthorized
+            }
             throw APIError.apiError(code: response.code, message: response.message)
         }
     }
 
     // MARK: - Convenience: Sign In & store token
 
-    func signIn(email: String, password: String) async throws -> String {
+    func requestSignInToken(email: String, password: String) async throws -> String {
         let response: APIResponse<SignInData> = try await send(.signIn(email: email, password: password))
         guard let token = response.data?.token else {
             throw APIError.apiError(code: response.code, message: response.message)
         }
-        await tokenStore.setToken(token)
+        return token
+    }
+
+    func signIn(email: String, password: String) async throws -> String {
+        let token = try await requestSignInToken(email: email, password: password)
+        try await tokenStore.setToken(token)
         return token
     }
 }

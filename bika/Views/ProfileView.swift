@@ -96,7 +96,11 @@ struct ProfileView: View {
             .padding(.horizontal, 24)
         } else if let profile = viewModel.profile {
             VStack(spacing: 12) {
-                MediaImageView(media: profile.avatar, cornerRadius: 40)
+                MediaImageView(
+                    media: profile.avatar,
+                    cornerRadius: 40,
+                    targetSize: CGSize(width: 80, height: 80)
+                )
                     .frame(width: 80, height: 80)
 
                 Text(profile.name)

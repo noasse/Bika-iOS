@@ -1,468 +1,315 @@
 import Foundation
 import SwiftUI
 
+/// Compatibility façade retained while macOS views migrate to focused stores.
 @MainActor
 @Observable
 final class MacLibraryModel {
-    var isCheckingToken = true
-    var isAuthenticated = false
-    var authError: String?
-    var isAuthenticating = false
-
-    var sidebarSelection: MacSidebarItem = .categories
-    var userProfile: UserProfile?
-
-    var categories: [Category] = []
-    var selectedCategoryTitle: String?
-    var rankingType: LeaderboardType = .hour24
-    var searchText = ""
-    var sortMode: SortMode = .defaultSort
-
-    var listTitle = "分类"
-    var listItems: [MacComicSummary] = []
-    var isListLoading = false
-    var listError: String?
-    var currentPage = 0
-    var totalPages = 1
-
-    var selectedComicID: String?
-    var selectedSummary: MacComicSummary?
-    var detail: ComicDetail?
-    var episodes: [Episode] = []
-    var recommended: [Comic] = []
-    var isLoadingRecommended = false
-    var recommendedError: String?
-    var commentEntryCount: Int?
-    var isDetailLoading = false
-    var detailError: String?
-    var isTogglingLike = false
-    var isTogglingFavourite = false
-    var isPunching = false
-    var readingProgressRevision = 0
-
     let client: any APIClientProtocol
     let readingStore: MacReadingStore
     let blockedCategoriesStore: MacBlockedCategoriesStore
-    var didCheckToken = false
-    private var activeListRequestID = 0
-    private var activeDetailRequestID = 0
-    private var activeRecommendationRequestID = 0
+    let accountSessionStore: AccountSessionStore
+
+    let authenticationStore: MacAuthenticationStore
+    let listStore: MacLibraryListStore
+    let detailStore: MacComicDetailStore
 
     init(
         client: any APIClientProtocol = APIClient.shared,
         readingStore: MacReadingStore,
-        blockedCategoriesStore: MacBlockedCategoriesStore? = nil
+        blockedCategoriesStore: MacBlockedCategoriesStore? = nil,
+        accountSessionStore: AccountSessionStore? = nil
     ) {
+        let resolvedBlockedCategoriesStore = blockedCategoriesStore ?? MacBlockedCategoriesStore()
+        let resolvedAccountSessionStore = accountSessionStore ?? .shared
+
         self.client = client
         self.readingStore = readingStore
-        self.blockedCategoriesStore = blockedCategoriesStore ?? MacBlockedCategoriesStore()
+        self.blockedCategoriesStore = resolvedBlockedCategoriesStore
+        self.accountSessionStore = resolvedAccountSessionStore
+        self.authenticationStore = MacAuthenticationStore(
+            client: client,
+            accountSessionStore: resolvedAccountSessionStore
+        )
+        self.listStore = MacLibraryListStore(
+            client: client,
+            readingStore: readingStore,
+            blockedCategoriesStore: resolvedBlockedCategoriesStore
+        )
+        self.detailStore = MacComicDetailStore(
+            client: client,
+            readingStore: readingStore,
+            blockedCategoriesStore: resolvedBlockedCategoriesStore
+        )
     }
 
-    var selectedCategory: Category? {
-        categories.first { $0.title == selectedCategoryTitle }
+    // MARK: Authentication façade
+
+    var isCheckingToken: Bool {
+        get { authenticationStore.isCheckingToken }
+        set { authenticationStore.isCheckingToken = newValue }
     }
 
-    var canPageBackward: Bool {
-        currentPage > 1 && sidebarSelection != .history && sidebarSelection != .ranking
+    var isAuthenticated: Bool {
+        get { authenticationStore.isAuthenticated }
+        set { authenticationStore.isAuthenticated = newValue }
     }
 
-    var canPageForward: Bool {
-        currentPage < totalPages && sidebarSelection != .history && sidebarSelection != .ranking
+    var authError: String? {
+        get { authenticationStore.authError }
+        set { authenticationStore.authError = newValue }
     }
 
-    var displayedListItems: [MacComicSummary] {
-        if sidebarSelection == .history {
-            return readingStore.history.map(MacComicSummary.init(history:))
-        }
-        guard !blockedCategoriesStore.blockedCategories.isEmpty else { return listItems }
-        return listItems.filter { summary in
-            !summary.categories.contains { blockedCategoriesStore.isBlocked($0) }
-        }
+    var isAuthenticating: Bool {
+        get { authenticationStore.isAuthenticating }
+        set { authenticationStore.isAuthenticating = newValue }
     }
 
-    var displayedRecommended: [Comic] {
-        blockedCategoriesStore.filter(recommended)
+    var requiresProfileValidation: Bool {
+        get { authenticationStore.requiresProfileValidation }
+        set { authenticationStore.requiresProfileValidation = newValue }
     }
 
-    var blockedCategoryCount: Int {
-        blockedCategoriesStore.blockedCategories.count
+    var userProfile: UserProfile? {
+        get { authenticationStore.userProfile }
+        set { authenticationStore.userProfile = newValue }
     }
+
+    var isPunching: Bool {
+        get { authenticationStore.isPunching }
+        set { authenticationStore.isPunching = newValue }
+    }
+
+    // MARK: List façade
+
+    var sidebarSelection: MacSidebarItem {
+        get { listStore.sidebarSelection }
+        set { listStore.sidebarSelection = newValue }
+    }
+
+    var categories: [Category] {
+        get { listStore.categories }
+        set { listStore.categories = newValue }
+    }
+
+    var selectedCategoryTitle: String? {
+        get { listStore.selectedCategoryTitle }
+        set { listStore.selectedCategoryTitle = newValue }
+    }
+
+    var rankingType: LeaderboardType {
+        get { listStore.rankingType }
+        set { listStore.rankingType = newValue }
+    }
+
+    var searchText: String {
+        get { listStore.searchText }
+        set { listStore.searchText = newValue }
+    }
+
+    var sortMode: SortMode {
+        get { listStore.sortMode }
+        set { listStore.sortMode = newValue }
+    }
+
+    var listTitle: String {
+        get { listStore.listTitle }
+        set { listStore.listTitle = newValue }
+    }
+
+    var listItems: [MacComicSummary] {
+        get { listStore.listItems }
+        set { listStore.listItems = newValue }
+    }
+
+    var isListLoading: Bool {
+        get { listStore.isListLoading }
+        set { listStore.isListLoading = newValue }
+    }
+
+    var listError: String? {
+        get { listStore.listError }
+        set { listStore.listError = newValue }
+    }
+
+    var currentPage: Int {
+        get { listStore.currentPage }
+        set { listStore.currentPage = newValue }
+    }
+
+    var totalPages: Int {
+        get { listStore.totalPages }
+        set { listStore.totalPages = newValue }
+    }
+
+    var selectedCategory: Category? { listStore.selectedCategory }
+    var canPageBackward: Bool { listStore.canPageBackward }
+    var canPageForward: Bool { listStore.canPageForward }
+    var displayedListItems: [MacComicSummary] { listStore.displayedListItems }
+    var blockedCategoryCount: Int { listStore.blockedCategoryCount }
+
+    // MARK: Detail façade
+
+    var selectedComicID: String? {
+        get { detailStore.selectedComicID }
+        set { detailStore.selectedComicID = newValue }
+    }
+
+    var selectedSummary: MacComicSummary? {
+        get { detailStore.selectedSummary }
+        set { detailStore.selectedSummary = newValue }
+    }
+
+    var detail: ComicDetail? {
+        get { detailStore.detail }
+        set { detailStore.detail = newValue }
+    }
+
+    var episodes: [Episode] {
+        get { detailStore.episodes }
+        set { detailStore.episodes = newValue }
+    }
+
+    var recommended: [Comic] {
+        get { detailStore.recommended }
+        set { detailStore.recommended = newValue }
+    }
+
+    var isLoadingRecommended: Bool {
+        get { detailStore.isLoadingRecommended }
+        set { detailStore.isLoadingRecommended = newValue }
+    }
+
+    var recommendedError: String? {
+        get { detailStore.recommendedError }
+        set { detailStore.recommendedError = newValue }
+    }
+
+    var commentEntryCount: Int? {
+        get { detailStore.commentEntryCount }
+        set { detailStore.commentEntryCount = newValue }
+    }
+
+    var isDetailLoading: Bool {
+        get { detailStore.isDetailLoading }
+        set { detailStore.isDetailLoading = newValue }
+    }
+
+    var detailError: String? {
+        get { detailStore.detailError }
+        set { detailStore.detailError = newValue }
+    }
+
+    var isLoadingEpisodes: Bool {
+        get { detailStore.isLoadingEpisodes }
+        set { detailStore.isLoadingEpisodes = newValue }
+    }
+
+    var episodesError: String? {
+        get { detailStore.episodesError }
+        set { detailStore.episodesError = newValue }
+    }
+
+    var isTogglingLike: Bool {
+        get { detailStore.isTogglingLike }
+        set { detailStore.isTogglingLike = newValue }
+    }
+
+    var isTogglingFavourite: Bool {
+        get { detailStore.isTogglingFavourite }
+        set { detailStore.isTogglingFavourite = newValue }
+    }
+
+    var readingProgressRevision: Int {
+        get { detailStore.readingProgressRevision }
+        set { detailStore.readingProgressRevision = newValue }
+    }
+
+    var isPerformingDetailAction: Bool { detailStore.isPerformingDetailAction }
+    var displayedRecommended: [Comic] { detailStore.displayedRecommended }
+
+    // MARK: List forwarding
 
     func selectSidebar(_ item: MacSidebarItem) async {
-        sidebarSelection = item
-        listError = nil
-        selectedCategoryTitle = item == .categories ? selectedCategoryTitle : nil
-
-        switch item {
-        case .categories:
-            listTitle = selectedCategoryTitle ?? "分类"
-            if selectedCategoryTitle == nil {
-                if !categories.isEmpty {
-                    invalidateListRequest()
-                }
-                listItems = []
-                currentPage = 0
-                totalPages = 1
-                await loadCategoriesIfNeeded()
-            } else if let category = selectedCategoryTitle {
-                await loadCategory(category, page: max(currentPage, 1))
-            }
-        case .ranking:
-            await loadRanking()
-        case .search:
-            invalidateListRequest()
-            listTitle = "搜索"
-            listItems = []
-            currentPage = 0
-            totalPages = 1
-        case .favourites:
-            await loadFavourites(page: 1)
-        case .history:
-            await loadHistoryFromCloud()
-        case .profile:
-            invalidateListRequest()
-            listTitle = "我的"
-            listItems = []
-            currentPage = 0
-            totalPages = 1
-            await loadProfile()
-        case .settings:
-            invalidateListRequest()
-            listTitle = "设置"
-            listItems = []
-            currentPage = 0
-            totalPages = 1
+        await listStore.selectSidebar(item) { [weak self] in
+            await self?.loadProfile()
         }
     }
 
     func refreshCurrentSurface() async {
-        switch sidebarSelection {
-        case .categories:
-            if let selectedCategoryTitle {
-                await loadCategory(selectedCategoryTitle, page: max(currentPage, 1), force: true)
-            } else {
-                await loadCategories(force: true)
-            }
-        case .ranking:
-            await loadRanking()
-        case .search:
-            await search(page: max(currentPage, 1))
-        case .favourites:
-            await loadFavourites(page: max(currentPage, 1))
-        case .history:
-            await loadHistoryFromCloud()
-        case .profile:
-            await loadProfile()
-        case .settings:
-            break
+        await listStore.refreshCurrentSurface { [weak self] in
+            await self?.loadProfile()
         }
     }
 
     func loadCategoriesIfNeeded() async {
-        guard categories.isEmpty else { return }
-        await loadCategories(force: false)
+        await listStore.loadCategoriesIfNeeded()
     }
 
     func loadCategories(force: Bool) async {
-        guard force || categories.isEmpty else { return }
-        let requestID = beginListRequest(title: "分类")
-        defer { finishListRequest(requestID) }
-
-        do {
-            let response: APIResponse<CategoriesData> = try await client.send(.categories())
-            guard isActiveListRequest(requestID) else { return }
-            categories = response.data?.categories.filter { $0.isWeb != true } ?? []
-            listError = nil
-        } catch {
-            guard isActiveListRequest(requestID) else { return }
-            listError = error.localizedDescription
-        }
+        await listStore.loadCategories(force: force)
     }
 
     func selectCategory(_ category: Category) async {
-        selectedCategoryTitle = category.title
-        await loadCategory(category.title, page: 1, force: true)
+        await listStore.selectCategory(category)
     }
 
     func showCategoryIndex() {
-        invalidateListRequest()
-        selectedCategoryTitle = nil
-        listTitle = "分类"
-        listItems = []
-        currentPage = 0
-        totalPages = 1
+        listStore.showCategoryIndex()
     }
 
     func changeSort(_ mode: SortMode) async {
-        guard sortMode != mode else { return }
-        sortMode = mode
-        switch sidebarSelection {
-        case .categories:
-            if let selectedCategoryTitle {
-                await loadCategory(selectedCategoryTitle, page: 1, force: true)
-            }
-        case .search:
-            await search(page: 1)
-        case .favourites:
-            await loadFavourites(page: 1)
-        default:
-            break
-        }
+        await listStore.changeSort(mode)
     }
 
     func changeRanking(_ type: LeaderboardType) async {
-        guard rankingType != type else { return }
-        rankingType = type
-        await loadRanking()
+        await listStore.changeRanking(type)
     }
 
     func search(page: Int = 1) async {
-        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !keyword.isEmpty else {
-            invalidateListRequest()
-            listTitle = "搜索"
-            listItems = []
-            currentPage = 0
-            totalPages = 1
-            listError = "请输入搜索关键词"
-            return
-        }
-
-        let requestID = beginListRequest(title: "搜索：\(keyword)")
-        let keywords = SearchKeywordExpander.keywords(for: keyword)
-        let targetPage = macClampedPage(page, totalPages: max(totalPages, page))
-        do {
-            let pageData = try await loadExpandedSearchPage(
-                keywords: keywords.isEmpty ? [keyword] : keywords,
-                page: targetPage,
-                sort: sortMode
-            )
-            guard isActiveListRequest(requestID) else { return }
-            applyComicsData(pageData, fallbackPage: targetPage)
-            listError = nil
-        } catch {
-            guard isActiveListRequest(requestID) else { return }
-            listError = error.localizedDescription
-        }
-        finishListRequest(requestID)
+        await listStore.search(page: page)
     }
 
     func nextPage() async {
-        guard canPageForward, !isListLoading else { return }
-        await loadPage(currentPage + 1)
+        await listStore.nextPage()
     }
 
     func previousPage() async {
-        guard canPageBackward, !isListLoading else { return }
-        await loadPage(currentPage - 1)
+        await listStore.previousPage()
     }
 
     func goToPage(_ page: Int) async {
-        guard sidebarSelection != .history, sidebarSelection != .ranking else { return }
-        guard !isListLoading else { return }
-        let targetPage = macClampedPage(page, totalPages: totalPages)
-        guard targetPage != currentPage else { return }
-        await loadPage(targetPage)
+        await listStore.goToPage(page)
     }
 
     func selectRoute(_ route: MacListRoute) async {
-        sidebarSelection = .search
-        selectedCategoryTitle = nil
-
-        switch route {
-        case .category(let category):
-            sidebarSelection = .categories
-            selectedCategoryTitle = category
-            await loadCategory(category, page: 1, force: true)
-        case .author(let author):
-            searchText = author
-            await search(page: 1)
-        case .tag(let tag):
-            searchText = tag
-            await search(page: 1)
-        }
-    }
-
-    private func loadPage(_ page: Int) async {
-        switch sidebarSelection {
-        case .categories:
-            if let selectedCategoryTitle {
-                await loadCategory(selectedCategoryTitle, page: page)
-            }
-        case .search:
-            await search(page: page)
-        case .favourites:
-            await loadFavourites(page: page)
-        default:
-            break
-        }
-    }
-
-    private func loadCategory(_ category: String, page: Int, force: Bool = false) async {
-        if !force, selectedCategoryTitle == category, currentPage == page, !listItems.isEmpty {
-            return
-        }
-
-        let requestID = beginListRequest(title: category)
-        let targetPage = macClampedPage(page, totalPages: max(totalPages, page))
-        do {
-            let response: APIResponse<ComicsData> = try await client.send(
-                .comics(category: category, page: targetPage, sort: sortMode)
-            )
-            guard isActiveListRequest(requestID) else { return }
-            applyComicsData(response.data?.comics, fallbackPage: targetPage)
-            listError = nil
-        } catch {
-            guard isActiveListRequest(requestID) else { return }
-            listError = error.localizedDescription
-        }
-        finishListRequest(requestID)
-    }
-
-    private func loadRanking() async {
-        let requestID = beginListRequest(title: "排行榜 · \(rankingType.macTitle)")
-        do {
-            let response: APIResponse<LeaderboardData> = try await client.send(.leaderboard(type: rankingType))
-            guard isActiveListRequest(requestID) else { return }
-            listItems = response.data?.comics.map(MacComicSummary.init(comic:)) ?? []
-            currentPage = 1
-            totalPages = 1
-            listError = nil
-        } catch {
-            guard isActiveListRequest(requestID) else { return }
-            listError = error.localizedDescription
-        }
-        finishListRequest(requestID)
+        await listStore.selectRoute(route)
     }
 
     func loadFavourites(page: Int) async {
-        let requestID = beginListRequest(title: "收藏")
-        let targetPage = macClampedPage(page, totalPages: max(totalPages, page))
-        do {
-            let response: APIResponse<ComicsData> = try await client.send(.favourites(page: targetPage, sort: sortMode))
-            guard isActiveListRequest(requestID) else { return }
-            applyComicsData(response.data?.comics, fallbackPage: targetPage)
-            listError = nil
-        } catch {
-            guard isActiveListRequest(requestID) else { return }
-            listError = error.localizedDescription
-        }
-        finishListRequest(requestID)
+        await listStore.loadFavourites(page: page)
     }
 
     func loadHistory() {
-        invalidateListRequest()
-        listTitle = "历史"
-        listItems = readingStore.history.map(MacComicSummary.init(history:))
-        currentPage = listItems.isEmpty ? 0 : 1
-        totalPages = 1
-        listError = nil
+        listStore.loadHistory()
     }
 
     func loadHistoryFromCloud() async {
-        await readingStore.syncFromCloud()
-        loadHistory()
+        await listStore.loadHistoryFromCloud()
     }
 
-    func loadProfile() async {
-        let requestID = beginListRequest(title: "我的")
-        defer { finishListRequest(requestID) }
-
-        do {
-            let response: APIResponse<UserProfileData> = try await client.send(.myProfile())
-            guard isActiveListRequest(requestID) else { return }
-            userProfile = response.data?.user
-            listError = nil
-        } catch {
-            guard isActiveListRequest(requestID) else { return }
-            listError = error.localizedDescription
-        }
-    }
+    // MARK: Detail forwarding
 
     func loadDetail(comicId: String) async {
-        activeDetailRequestID += 1
-        let requestID = activeDetailRequestID
-        isDetailLoading = true
-        detailError = nil
-        detail = nil
-        episodes = []
-        recommended = []
-        recommendedError = nil
-        commentEntryCount = nil
-
-        do {
-            async let detailResponse: APIResponse<ComicDetailData> = client.send(.comicDetail(id: comicId))
-            async let loadedEpisodes = loadAllEpisodes(comicId: comicId)
-            async let loadedComments = loadCommentEntryCount(comicId: comicId)
-            let resolvedDetail = try await detailResponse.data?.comic
-            let resolvedEpisodes = try await loadedEpisodes
-            let resolvedCommentCount = await loadedComments
-
-            guard requestID == activeDetailRequestID else { return }
-            detail = resolvedDetail
-            episodes = resolvedEpisodes.sorted { $0.order < $1.order }
-            commentEntryCount = resolvedCommentCount ?? resolvedDetail?.totalComments ?? resolvedDetail?.commentsCount
-        } catch {
-            guard requestID == activeDetailRequestID else { return }
-            detailError = error.localizedDescription
-        }
-
-        guard requestID == activeDetailRequestID else { return }
-        isDetailLoading = false
-        await loadRecommended(comicId: comicId)
+        await detailStore.loadDetail(comicId: comicId)
     }
 
-    private func loadAllEpisodes(comicId: String) async throws -> [Episode] {
-        var result: [Episode] = []
-        var nextPage = 1
-        var total = 1
-
-        while nextPage <= total {
-            let response: APIResponse<EpisodesData> = try await client.send(.episodes(comicId: comicId, page: nextPage))
-            guard let page = response.data?.eps else { break }
-            result.append(contentsOf: page.docs)
-            total = max(page.pages, page.page)
-            nextPage = page.page + 1
-            if nextPage <= page.page {
-                break
-            }
-        }
-
-        return result
+    func reloadEpisodes() async {
+        await detailStore.reloadEpisodes()
     }
 
-    private func loadRecommended(comicId: String) async {
-        activeRecommendationRequestID += 1
-        let requestID = activeRecommendationRequestID
-        isLoadingRecommended = true
-        recommendedError = nil
-        defer {
-            if requestID == activeRecommendationRequestID {
-                isLoadingRecommended = false
-            }
-        }
-
-        do {
-            let response: APIResponse<RecommendedData> = try await client.send(.recommended(comicId: comicId))
-            guard requestID == activeRecommendationRequestID else { return }
-            recommended = response.data?.comics ?? []
-            if recommended.isEmpty {
-                recommendedError = response.data == nil ? "推荐数据为空" : nil
-            }
-        } catch {
-            guard requestID == activeRecommendationRequestID else { return }
-            recommended = []
-            recommendedError = error.localizedDescription
-        }
-    }
-
-    private func loadCommentEntryCount(comicId: String) async -> Int? {
-        do {
-            let response: APIResponse<CommentsData> = try await client.send(.comments(comicId: comicId, page: 1))
-            return response.data?.topLevelCommentDisplayCount
-        } catch {
-            return nil
-        }
+    func refreshDetailAfterMutation(comicId: String) async {
+        await detailStore.refreshDetailAfterMutation(comicId: comicId)
     }
 
     func makeReaderRequest(
@@ -471,114 +318,20 @@ final class MacLibraryModel {
         startPageIndex: Int,
         restore: Bool
     ) -> MacReaderLaunchRequest? {
-        guard !episodes.isEmpty else { return nil }
-        let clampedEpisodeIndex = min(max(startEpisodeIndex, 0), episodes.count - 1)
-        return MacReaderLaunchRequest(
-            comicId: detail.id,
-            comicTitle: detail.title,
-            author: detail.author,
-            thumbPath: detail.thumb?.path,
-            thumbServer: detail.thumb?.fileServer,
-            episodes: episodes.map(MacReaderEpisode.init(episode:)),
-            startEpisodeIndex: clampedEpisodeIndex,
-            startPageIndex: max(startPageIndex, 0),
-            restoreSavedProgress: restore
+        detailStore.makeReaderRequest(
+            detail: detail,
+            startEpisodeIndex: startEpisodeIndex,
+            startPageIndex: startPageIndex,
+            restore: restore
         )
     }
 
-    private func applyComicsData(_ page: PaginatedResponse<Comic>?, fallbackPage: Int) {
-        guard let page else {
-            listItems = []
-            currentPage = fallbackPage
-            totalPages = 1
-            return
-        }
-
-        listItems = page.docs.map(MacComicSummary.init(comic:))
-        currentPage = page.page
-        totalPages = max(page.pages, page.page)
-    }
-
-    private func loadExpandedSearchPage(
-        keywords: [String],
-        page: Int,
-        sort: SortMode
-    ) async throws -> PaginatedResponse<Comic>? {
-        var loadedPages: [PaginatedResponse<Comic>] = []
-        var firstError: Error?
-
-        for keyword in keywords {
-            do {
-                let response: APIResponse<ComicsData> = try await client.send(
-                    .search(keyword: keyword, page: page, sort: sort)
-                )
-                if let page = response.data?.comics {
-                    loadedPages.append(page)
-                }
-            } catch {
-                if firstError == nil {
-                    firstError = error
-                }
-            }
-        }
-
-        if loadedPages.isEmpty, let firstError {
-            throw firstError
-        }
-
-        return SearchResultMerger.mergedPage(from: loadedPages)
-    }
-
-    private func beginListRequest(title: String) -> Int {
-        activeListRequestID += 1
-        listTitle = title
-        isListLoading = true
-        listError = nil
-        return activeListRequestID
-    }
-
-    private func isActiveListRequest(_ requestID: Int) -> Bool {
-        requestID == activeListRequestID
-    }
-
-    private func finishListRequest(_ requestID: Int) {
-        guard isActiveListRequest(requestID) else { return }
-        isListLoading = false
-    }
-
-    private func invalidateListRequest() {
-        activeListRequestID += 1
-        isListLoading = false
-    }
-
-    private func invalidateDetailRequest() {
-        activeDetailRequestID += 1
-        activeRecommendationRequestID += 1
-        isDetailLoading = false
-        isLoadingRecommended = false
-    }
-
     func clearSelection() {
-        invalidateListRequest()
-        invalidateDetailRequest()
-        sidebarSelection = .categories
-        selectedCategoryTitle = nil
-        categories = []
-        listItems = []
-        currentPage = 0
-        totalPages = 1
-        clearDetail()
+        listStore.clearSelection()
+        detailStore.clearDetail()
     }
 
     func clearDetail() {
-        selectedComicID = nil
-        selectedSummary = nil
-        detail = nil
-        episodes = []
-        recommended = []
-        recommendedError = nil
-        commentEntryCount = nil
-        detailError = nil
-        isDetailLoading = false
+        detailStore.clearDetail()
     }
 }

@@ -287,7 +287,11 @@ private struct MacCommentCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
-                MacCachedAsyncImage(url: comment.user?.avatar?.imageURL, contentMode: .fill)
+                MacCachedAsyncImage(
+                    url: comment.user?.avatar?.imageURL,
+                    contentMode: .fill,
+                    targetSize: CGSize(width: 36, height: 36)
+                )
                     .frame(width: 36, height: 36)
                     .clipShape(Circle())
 

@@ -1,7 +1,7 @@
 import XCTest
 @testable import BikaMacos
 
-enum MacTestSupport {
+nonisolated enum MacTestSupport {
     static func makeAPIClient(
         store: InMemoryKeyValueStore = InMemoryKeyValueStore(),
         handler: @escaping MockURLProtocolHandler
@@ -54,13 +54,41 @@ enum MacTestSupport {
         )
     }
 
+    static func page(from request: URLRequest) -> Int {
+        guard let url = request.url,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return 1
+        }
+
+        return Int(components.queryItems?.first(where: { $0.name == "page" })?.value ?? "1") ?? 1
+    }
+
     static func restoreLiveDependencies() {
         MockURLProtocol.reset()
         AppDependencies.shared.configureForLaunch()
     }
 }
 
-final class LockedValue<T>: @unchecked Sendable {
+extension XCTestCase {
+    @MainActor
+    func waitUntil(
+        timeout: TimeInterval = 2.0,
+        pollInterval: UInt64 = 50_000_000,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        condition: @escaping () -> Bool
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return }
+            try? await Task.sleep(nanoseconds: pollInterval)
+        }
+
+        XCTFail("等待条件满足超时", file: file, line: line)
+    }
+}
+
+final nonisolated class LockedValue<T>: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: T
 
@@ -71,5 +99,29 @@ final class LockedValue<T>: @unchecked Sendable {
     var value: T {
         get { lock.withLock { storage } }
         set { lock.withLock { storage = newValue } }
+    }
+}
+
+actor TestAsyncGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation in
+            if isOpen {
+                continuation.resume()
+            } else {
+                waiters.append(continuation)
+            }
+        }
+    }
+
+    func open() {
+        guard !isOpen else { return }
+        isOpen = true
+        let pendingWaiters = waiters
+        waiters.removeAll()
+        pendingWaiters.forEach { $0.resume() }
     }
 }

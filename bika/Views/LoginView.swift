@@ -52,6 +52,14 @@ struct LoginView: View {
                         .padding(.horizontal)
                 }
 
+                if authVM.requiresProfileValidation {
+                    Button("重试验证") {
+                        Task { await authVM.retryProfileValidation() }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(authVM.isLoading)
+                }
+
                 // Login button
                 Button {
                     Task { await authVM.login(email: email, password: password) }

@@ -19,6 +19,24 @@ final class ReaderViewModel {
     private var activeLoadSequence = 0
     private var paginationPage = 0
     private var paginationTotalPages = 1
+    private var displayedEpisodeID: String?
+
+    private enum PageLoadError: LocalizedError {
+        case missingData
+        case pageDidNotAdvance(requested: Int, returned: Int)
+        case emptyPageWithMorePages(page: Int)
+
+        var errorDescription: String? {
+            switch self {
+            case .missingData:
+                return "页面数据为空，请重试"
+            case .pageDidNotAdvance(let requested, let returned):
+                return "分页数据异常：请求第 \(requested) 页，返回第 \(returned) 页"
+            case .emptyPageWithMorePages(let page):
+                return "分页数据异常：第 \(page) 页为空，但服务端声明还有后续页面"
+            }
+        }
+    }
 
     enum ReaderMode: String {
         case horizontal, vertical
@@ -47,35 +65,62 @@ final class ReaderViewModel {
 
     var hasPreviousEpisode: Bool { currentEpisodeIndex > 0 }
     var hasNextEpisode: Bool { currentEpisodeIndex < episodes.count - 1 }
+    var showsFullScreenLoadError: Bool { errorMessage != nil && pages.isEmpty }
+    var showsPaginationError: Bool { errorMessage != nil && !pages.isEmpty }
 
     func startLoadingPages() {
         activeLoadSequence += 1
         let loadSequence = activeLoadSequence
+        loadTask?.cancel()
         errorMessage = nil
         guard let episode = currentEpisode else {
-            loadTask?.cancel()
             pages = []
+            displayedEpisodeID = nil
             paginationPage = 0
             paginationTotalPages = 1
             isLoading = false
+            loadTask = nil
             return
         }
 
-        loadTask?.cancel()
+        let retainedPages: [ComicPage]
+        if displayedEpisodeID == episode.id {
+            retainedPages = pages
+        } else {
+            retainedPages = []
+            pages = []
+            displayedEpisodeID = episode.id
+        }
+
         isLoading = true
-        pages = []
         paginationPage = 0
         paginationTotalPages = 1
 
         loadTask = Task { [weak self] in
-            await self?.loadPages(for: episode, loadSequence: loadSequence)
+            await self?.loadPages(
+                for: episode,
+                loadSequence: loadSequence,
+                retainedPages: retainedPages
+            )
         }
     }
 
-    private func loadPages(for episode: Episode, loadSequence: Int) async {
+    func cancelLoadingPages() {
+        activeLoadSequence += 1
+        loadTask?.cancel()
+        loadTask = nil
+        isLoading = false
+    }
+
+    private func loadPages(
+        for episode: Episode,
+        loadSequence: Int,
+        retainedPages: [ComicPage]
+    ) async {
         defer {
             if activeLoadSequence == loadSequence {
                 isLoading = false
+                loadTask = nil
             }
         }
 
@@ -93,19 +138,45 @@ final class ReaderViewModel {
                 guard !Task.isCancelled, activeLoadSequence == loadSequence else { return }
 
                 guard let data = response.data else {
-                    break
+                    applyLoadFailure(
+                        PageLoadError.missingData,
+                        attemptedPages: loadedPages,
+                        retainedPages: retainedPages,
+                        episodeID: episode.id,
+                        paginationPage: resolvedPaginationPage,
+                        paginationTotalPages: resolvedTotalPages
+                    )
+                    return
                 }
 
                 let resolvedPage = data.pages.page
                 let resolvedPages = max(data.pages.pages, resolvedPage)
 
                 guard resolvedPage >= nextPage else {
-                    resolvedPaginationPage = resolvedPages
-                    resolvedTotalPages = resolvedPages
-                    break
+                    applyLoadFailure(
+                        PageLoadError.pageDidNotAdvance(requested: nextPage, returned: resolvedPage),
+                        attemptedPages: loadedPages,
+                        retainedPages: retainedPages,
+                        episodeID: episode.id,
+                        paginationPage: resolvedPaginationPage,
+                        paginationTotalPages: resolvedTotalPages
+                    )
+                    return
                 }
 
-                guard !data.pages.docs.isEmpty else {
+                if data.pages.docs.isEmpty {
+                    guard resolvedPage >= resolvedPages else {
+                        applyLoadFailure(
+                            PageLoadError.emptyPageWithMorePages(page: resolvedPage),
+                            attemptedPages: loadedPages,
+                            retainedPages: retainedPages,
+                            episodeID: episode.id,
+                            paginationPage: resolvedPaginationPage,
+                            paginationTotalPages: resolvedTotalPages
+                        )
+                        return
+                    }
+
                     resolvedPaginationPage = resolvedPage
                     resolvedTotalPages = resolvedPages
                     break
@@ -123,15 +194,41 @@ final class ReaderViewModel {
                 nextPage = upcomingPage
             } catch {
                 guard !Task.isCancelled, activeLoadSequence == loadSequence else { return }
-                errorMessage = error.localizedDescription
-                break
+                applyLoadFailure(
+                    error,
+                    attemptedPages: loadedPages,
+                    retainedPages: retainedPages,
+                    episodeID: episode.id,
+                    paginationPage: resolvedPaginationPage,
+                    paginationTotalPages: resolvedTotalPages
+                )
+                return
             }
         }
 
         guard !Task.isCancelled, activeLoadSequence == loadSequence else { return }
         pages = loadedPages
+        displayedEpisodeID = episode.id
         paginationPage = resolvedPaginationPage
         paginationTotalPages = resolvedTotalPages
+        errorMessage = nil
+    }
+
+    private func applyLoadFailure(
+        _ error: Error,
+        attemptedPages: [ComicPage],
+        retainedPages: [ComicPage],
+        episodeID: String,
+        paginationPage: Int,
+        paginationTotalPages: Int
+    ) {
+        if retainedPages.isEmpty {
+            pages = attemptedPages
+        }
+        displayedEpisodeID = episodeID
+        self.paginationPage = paginationPage
+        self.paginationTotalPages = paginationTotalPages
+        errorMessage = error.localizedDescription
     }
 
     func goToEpisode(_ index: Int) {

@@ -1,5 +1,6 @@
 import Foundation
 
+@MainActor
 @Observable
 final class ReadingHistoryManager {
     static let shared = ReadingHistoryManager()
@@ -18,28 +19,42 @@ final class ReadingHistoryManager {
         var id: String { comicId }
     }
 
-    var items: [HistoryItem] = []
+    var items: [HistoryItem] {
+        ensureLoadedForCurrentScope()
+        return scopedItems
+    }
 
     private let keyValueStore: any KeyValueStore
     private let cloudHistorySync: CloudHistorySyncService
     private let readingProgressManager: ReadingProgressManager
-    private let storageKey = "readingHistory"
+    private let accountSessionStore: AccountSessionStore
+    private let legacyStorageKey = "readingHistory"
+    private let scopedStoragePrefix = "readingHistory.account."
     private let maxItems = 200
+    private var scopedItems: [HistoryItem] = []
+    private var loadedScope: AccountScope?
 
     init(
         keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore,
         cloudHistorySync: CloudHistorySyncService? = nil,
-        readingProgressManager: ReadingProgressManager? = nil
+        readingProgressManager: ReadingProgressManager? = nil,
+        accountSessionStore: AccountSessionStore? = nil
     ) {
+        let resolvedAccountSessionStore = accountSessionStore ?? .shared
         self.keyValueStore = keyValueStore
         self.cloudHistorySync = cloudHistorySync ?? CloudHistorySyncService(keyValueStore: keyValueStore)
-        self.readingProgressManager = readingProgressManager ?? ReadingProgressManager(keyValueStore: keyValueStore)
-        load()
+        self.accountSessionStore = resolvedAccountSessionStore
+        self.readingProgressManager = readingProgressManager ?? ReadingProgressManager(
+            keyValueStore: keyValueStore,
+            accountSessionStore: resolvedAccountSessionStore
+        )
+        ensureLoadedForCurrentScope()
     }
 
     func record(comicId: String, title: String, thumbPath: String, thumbServer: String?, author: String?) {
+        guard prepareActiveScope() != nil else { return }
         // Remove existing entry for this comic
-        items.removeAll { $0.comicId == comicId }
+        scopedItems.removeAll { $0.comicId == comicId }
         let progress = readingProgressManager.get(comicId: comicId)
 
         // Insert at front
@@ -54,11 +69,11 @@ final class ReadingHistoryManager {
             episodeTitle: progress?.episodeTitle,
             pageIndex: progress?.pageIndex
         )
-        items.insert(item, at: 0)
+        scopedItems.insert(item, at: 0)
 
         // Trim to max
-        if items.count > maxItems {
-            items = Array(items.prefix(maxItems))
+        if scopedItems.count > maxItems {
+            scopedItems = Array(scopedItems.prefix(maxItems))
         }
 
         save()
@@ -66,31 +81,50 @@ final class ReadingHistoryManager {
     }
 
     func remove(comicId: String) {
-        items.removeAll { $0.comicId == comicId }
+        guard prepareActiveScope() != nil else { return }
+        scopedItems.removeAll { $0.comicId == comicId }
+        readingProgressManager.remove(comicId: comicId)
         save()
         cloudHistorySync.delete(comicID: comicId)
     }
 
     func clearAll() {
-        items = []
+        guard prepareActiveScope() != nil else { return }
+        scopedItems = []
+        readingProgressManager.removeAllForCurrentAccount()
         save()
         cloudHistorySync.clear()
     }
 
     func syncFromCloud() async {
+        guard let scope = prepareActiveScope() else { return }
         let cloudItems = await cloudHistorySync.fetchHistory(limit: maxItems)
-        applyCloudHistoryItems(cloudItems)
+        guard !Task.isCancelled,
+              accountSessionStore.currentScope == scope else { return }
+        applyCloudHistoryItems(cloudItems, expectedScope: scope)
     }
 
     func syncProgressFromCloud(for comicId: String) async {
+        guard let scope = prepareActiveScope() else { return }
         let cloudItems = await cloudHistorySync.fetchHistory(limit: maxItems)
+        guard !Task.isCancelled,
+              accountSessionStore.currentScope == scope else { return }
         guard let cloudItem = cloudItems.first(where: { $0.comicID == comicId }) else { return }
-        applyCloudHistoryItems([cloudItem])
+        applyCloudHistoryItems([cloudItem], expectedScope: scope)
     }
 
     func applyCloudHistoryItems(_ cloudItems: [CloudHistoryItem]) {
+        guard let scope = prepareActiveScope() else { return }
+        applyCloudHistoryItems(cloudItems, expectedScope: scope)
+    }
+
+    func applyCloudHistoryItems(
+        _ cloudItems: [CloudHistoryItem],
+        expectedScope: AccountScope
+    ) {
+        guard prepareActiveScope() == expectedScope else { return }
         guard !cloudItems.isEmpty else { return }
-        var itemsByComicID = Dictionary(uniqueKeysWithValues: items.map { ($0.comicId, $0) })
+        var itemsByComicID = Dictionary(uniqueKeysWithValues: scopedItems.map { ($0.comicId, $0) })
         for cloudItem in cloudItems {
             let localItem = itemsByComicID[cloudItem.comicID]
             guard localItem == nil || localItem!.lastReadDate < cloudItem.lastReadAt else { continue }
@@ -100,23 +134,102 @@ final class ReadingHistoryManager {
             }
         }
 
-        items = Array(itemsByComicID.values)
+        scopedItems = Array(itemsByComicID.values)
             .sorted { $0.lastReadDate > $1.lastReadDate }
-        if items.count > maxItems {
-            items = Array(items.prefix(maxItems))
+        if scopedItems.count > maxItems {
+            scopedItems = Array(scopedItems.prefix(maxItems))
         }
         save()
     }
 
-    private func load() {
-        guard let data = keyValueStore.data(forKey: storageKey) else { return }
-        items = (try? JSONDecoder().decode([HistoryItem].self, from: data)) ?? []
+    @discardableResult
+    private func prepareActiveScope() -> AccountScope? {
+        ensureLoadedForCurrentScope()
+        return accountSessionStore.currentScope
+    }
+
+    private func ensureLoadedForCurrentScope() {
+        let scope = accountSessionStore.currentScope
+        guard scope != loadedScope else { return }
+
+        loadedScope = scope
+        scopedItems = []
+        guard let scope else { return }
+
+        migrateLegacyHistoryIfNeeded(to: scope)
+        scopedItems = loadHistory(for: storageKey(for: scope))
+    }
+
+    private func migrateLegacyHistoryIfNeeded(to scope: AccountScope) {
+        guard accountSessionStore.ownsLegacyData(scope),
+              let legacyData = keyValueStore.data(forKey: legacyStorageKey) else { return }
+
+        guard let legacyItems = decodeHistory(legacyData) else {
+            preserveCorruptData(legacyData, forKey: legacyStorageKey)
+            keyValueStore.removeObject(forKey: legacyStorageKey)
+            return
+        }
+
+        let destinationKey = storageKey(for: scope)
+        let existingItems = keyValueStore.data(forKey: destinationKey)
+            .flatMap(decodeHistory) ?? []
+        var merged = Dictionary(uniqueKeysWithValues: existingItems.map { ($0.comicId, $0) })
+        for item in legacyItems {
+            if let existing = merged[item.comicId], existing.lastReadDate >= item.lastReadDate {
+                continue
+            }
+            merged[item.comicId] = item
+        }
+
+        let mergedItems = Array(merged.values)
+            .sorted { $0.lastReadDate > $1.lastReadDate }
+        persist(Array(mergedItems.prefix(maxItems)), forKey: destinationKey)
+        keyValueStore.removeObject(forKey: legacyStorageKey)
+    }
+
+    private func loadHistory(for key: String) -> [HistoryItem] {
+        guard let data = keyValueStore.data(forKey: key) else { return [] }
+        if let envelope = try? JSONDecoder().decode(PersistenceEnvelope<[HistoryItem]>.self, from: data),
+           envelope.schemaVersion == PersistenceEnvelope<[HistoryItem]>.currentSchemaVersion {
+            return envelope.payload
+        }
+        if let legacyItems = try? JSONDecoder().decode([HistoryItem].self, from: data) {
+            persist(legacyItems, forKey: key)
+            return legacyItems
+        }
+
+        preserveCorruptData(data, forKey: key)
+        keyValueStore.removeObject(forKey: key)
+        persist([], forKey: key)
+        return []
+    }
+
+    private func decodeHistory(_ data: Data) -> [HistoryItem]? {
+        if let envelope = try? JSONDecoder().decode(PersistenceEnvelope<[HistoryItem]>.self, from: data) {
+            return envelope.payload
+        }
+        return try? JSONDecoder().decode([HistoryItem].self, from: data)
     }
 
     private func save() {
-        if let data = try? JSONEncoder().encode(items) {
-            keyValueStore.set(data, forKey: storageKey)
+        guard let scope = accountSessionStore.currentScope else { return }
+        persist(scopedItems, forKey: storageKey(for: scope))
+    }
+
+    private func persist(_ items: [HistoryItem], forKey key: String) {
+        if let data = try? JSONEncoder().encode(PersistenceEnvelope(payload: items)) {
+            keyValueStore.set(data, forKey: key)
         }
+    }
+
+    private func preserveCorruptData(_ data: Data, forKey key: String) {
+        let backupKey = "\(key).corruptBackup"
+        guard keyValueStore.data(forKey: backupKey) == nil else { return }
+        keyValueStore.set(data, forKey: backupKey)
+    }
+
+    private func storageKey(for scope: AccountScope) -> String {
+        "\(scopedStoragePrefix)\(scope.rawValue)"
     }
 }
 

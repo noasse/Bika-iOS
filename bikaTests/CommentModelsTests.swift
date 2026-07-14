@@ -107,6 +107,6 @@ final class CommentModelsTests: XCTestCase {
     }
 }
 
-private func jsonData(_ object: Any) -> Data {
+nonisolated private func jsonData(_ object: Any) -> Data {
     (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
 }

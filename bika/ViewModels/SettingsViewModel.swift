@@ -216,7 +216,9 @@ final class BlockedCategoriesViewModel {
 
         do {
             let response: APIResponse<CategoriesData> = try await client.send(.categories())
-            categories = response.data?.categories.filter { $0.isWeb != true } ?? []
+            categories = (response.data?.categories ?? [])
+                .filter { $0.isWeb != true }
+                .deduplicatedByIdentity()
         } catch {
             errorMessage = error.localizedDescription
         }

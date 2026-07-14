@@ -21,7 +21,9 @@ final class CategoriesViewModel {
         do {
             let response: APIResponse<CategoriesData> = try await client.send(.categories())
             if let data = response.data {
-                categories = data.categories.filter { $0.isWeb != true }
+                categories = data.categories
+                    .filter { $0.isWeb != true }
+                    .deduplicatedByIdentity()
             }
         } catch {
             errorMessage = error.localizedDescription

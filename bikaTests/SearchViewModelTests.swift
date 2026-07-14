@@ -104,6 +104,55 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.totalPages, 1)
     }
 
+    func testResetFinishesLoadingDiscardsStaleResultsAndStopsRemainingAliasRequests() async throws {
+        let firstResponseGate = TestAsyncGate()
+        let requestKeywords = LockedValue<[String]>([])
+        let firstRequestStarted = LockedValue(false)
+
+        let (client, store) = TestSupport.makeAPIClient { request in
+            let body = try XCTUnwrap(request.resolvedHTTPBodyData())
+            let requestBody = try JSONDecoder().decode(SearchRequestBody.self, from: body)
+            var keywords = requestKeywords.value
+            keywords.append(requestBody.keyword)
+            requestKeywords.value = keywords
+
+            if keywords.count == 1 {
+                firstRequestStarted.value = true
+                await firstResponseGate.wait()
+            }
+
+            return TestSupport.jsonResponse(data: [
+                "comics": searchComicsPage(
+                    page: 1,
+                    pages: 1,
+                    docs: [searchComic(id: "stale-result", title: "旧搜索结果")]
+                ),
+            ])
+        }
+
+        let viewModel = SearchViewModel(client: client, keyValueStore: store)
+        viewModel.keyword = "生蚝（花生）"
+
+        let searchTask = Task { await viewModel.search() }
+        await waitUntil { firstRequestStarted.value }
+        XCTAssertTrue(viewModel.isLoading)
+
+        viewModel.reset()
+
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertFalse(viewModel.hasSearched)
+        XCTAssertTrue(viewModel.comics.isEmpty)
+
+        await firstResponseGate.open()
+        await searchTask.value
+
+        XCTAssertEqual(requestKeywords.value, ["生蚝（花生）"])
+        XCTAssertTrue(viewModel.comics.isEmpty)
+        XCTAssertEqual(viewModel.currentPage, 0)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertFalse(viewModel.isLoading)
+    }
+
     func testNextPageUsesActiveKeywordInsteadOfEditedKeyword() async throws {
         let requestKeywords = LockedValue<[String]>([])
 
@@ -193,7 +242,7 @@ private struct SearchRequestBody: Decodable {
     let categories: [String]?
 }
 
-private func searchComicsPage(page: Int, pages: Int, docs: [[String: Any]]) -> [String: Any] {
+nonisolated private func searchComicsPage(page: Int, pages: Int, docs: [[String: Any]]) -> [String: Any] {
     [
         "docs": docs,
         "total": docs.count,
@@ -203,7 +252,7 @@ private func searchComicsPage(page: Int, pages: Int, docs: [[String: Any]]) -> [
     ]
 }
 
-private func searchComic(id: String, title: String) -> [String: Any] {
+nonisolated private func searchComic(id: String, title: String) -> [String: Any] {
     [
         "_id": id,
         "title": title,

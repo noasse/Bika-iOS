@@ -19,6 +19,7 @@ final class MacCommentsModel {
 
     private let client: any APIClientProtocol
     private var activeRequestID = 0
+    private var inFlightLikeCommentIDs: Set<String> = []
     private var lastPaginationTriggerCommentID: String?
 
     init(comicId: String, client: any APIClientProtocol = APIClient.shared) {
@@ -30,9 +31,19 @@ final class MacCommentsModel {
         currentPage < totalPages
     }
 
-    func loadFirstPage() async {
+    func loadFirstPage(replacingContent: Bool = false) async {
+        guard replacingContent || !isLoading else { return }
         activeRequestID += 1
         let requestID = activeRequestID
+
+        if replacingContent {
+            comments = []
+            topComments = []
+            currentPage = 0
+            totalPages = 1
+            totalVisibleComments = 0
+        }
+
         isLoading = true
         errorMessage = nil
         lastPaginationTriggerCommentID = nil
@@ -53,6 +64,7 @@ final class MacCommentsModel {
     }
 
     func loadMoreIfNeeded(currentItemID: String) async {
+        guard hasMore, !isLoading else { return }
         guard currentItemID == comments.last?.id else { return }
         guard lastPaginationTriggerCommentID != currentItemID else { return }
         lastPaginationTriggerCommentID = currentItemID
@@ -61,12 +73,19 @@ final class MacCommentsModel {
 
     func loadMore() async {
         guard hasMore, !isLoading else { return }
+        activeRequestID += 1
+        let requestID = activeRequestID
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            if requestID == activeRequestID {
+                isLoading = false
+            }
+        }
 
         let nextPage = currentPage + 1
         do {
             let response: APIResponse<CommentsData> = try await client.send(.comments(comicId: comicId, page: nextPage))
+            guard requestID == activeRequestID else { return }
             guard let data = response.data else {
                 currentPage = totalPages
                 return
@@ -92,6 +111,7 @@ final class MacCommentsModel {
             comments.append(contentsOf: newComments)
             currentPage = data.page
         } catch {
+            guard requestID == activeRequestID else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -106,23 +126,21 @@ final class MacCommentsModel {
         do {
             let _: APIResponse<EmptyData> = try await client.send(.postComment(comicId: comicId, content: text))
             commentText = ""
-            comments = []
-            topComments = []
-            currentPage = 0
-            totalPages = 1
-            totalVisibleComments = 0
-            lastPaginationTriggerCommentID = nil
-            await loadFirstPage()
+            await loadFirstPage(replacingContent: true)
         } catch {
             actionErrorMessage = error.localizedDescription
         }
     }
 
     func likeComment(id: String) async {
+        guard inFlightLikeCommentIDs.insert(id).inserted else { return }
+        defer { inFlightLikeCommentIDs.remove(id) }
+
         do {
-            let _: APIResponse<LikeActionData> = try await client.send(.likeComment(id: id))
-            toggleLike(id: id, in: &comments)
-            toggleLike(id: id, in: &topComments)
+            let response: APIResponse<LikeActionData> = try await client.send(.likeComment(id: id))
+            guard let action = response.data?.action else { return }
+            CommentLikeReducer.apply(action: action, commentID: id, to: &comments)
+            CommentLikeReducer.apply(action: action, commentID: id, to: &topComments)
         } catch {
             actionErrorMessage = error.localizedDescription
         }
@@ -143,13 +161,6 @@ final class MacCommentsModel {
         currentPage = data.page
         totalPages = max(data.pages, data.page)
         totalVisibleComments = data.topLevelCommentDisplayCount
-    }
-
-    private func toggleLike(id: String, in list: inout [Comment]) {
-        guard let index = list.firstIndex(where: { $0.id == id }) else { return }
-        let wasLiked = list[index].isLiked ?? false
-        list[index].isLiked = !wasLiked
-        list[index].likesCount = max((list[index].likesCount ?? 0) + (wasLiked ? -1 : 1), 0)
     }
 
     private func uniqueComments(_ comments: [Comment]) -> [Comment] {
@@ -173,6 +184,8 @@ final class MacChildCommentsModel {
     let commentId: String
 
     private let client: any APIClientProtocol
+    private var activeRequestID = 0
+    private var inFlightLikeCommentIDs: Set<String> = []
     private var lastPaginationTriggerCommentID: String?
 
     init(commentId: String, client: any APIClientProtocol = APIClient.shared) {
@@ -184,15 +197,29 @@ final class MacChildCommentsModel {
         currentPage < totalPages
     }
 
-    func loadFirstPage() async {
-        guard !isLoading else { return }
+    func loadFirstPage(replacingContent: Bool = false) async {
+        guard replacingContent || !isLoading else { return }
+        activeRequestID += 1
+        let requestID = activeRequestID
+
+        if replacingContent {
+            comments = []
+            currentPage = 0
+            totalPages = 1
+        }
+
         isLoading = true
         errorMessage = nil
         lastPaginationTriggerCommentID = nil
-        defer { isLoading = false }
+        defer {
+            if requestID == activeRequestID {
+                isLoading = false
+            }
+        }
 
         do {
             let response: APIResponse<ChildCommentsData> = try await client.send(.childComments(commentId: commentId, page: 1))
+            guard requestID == activeRequestID else { return }
             if let data = response.data {
                 comments = data.docs
                 currentPage = data.page
@@ -203,11 +230,13 @@ final class MacChildCommentsModel {
                 totalPages = 1
             }
         } catch {
+            guard requestID == activeRequestID else { return }
             errorMessage = error.localizedDescription
         }
     }
 
     func loadMoreIfNeeded(currentItemID: String) async {
+        guard hasMore, !isLoading else { return }
         guard currentItemID == comments.last?.id else { return }
         guard lastPaginationTriggerCommentID != currentItemID else { return }
         lastPaginationTriggerCommentID = currentItemID
@@ -216,13 +245,20 @@ final class MacChildCommentsModel {
 
     func loadMore() async {
         guard hasMore, !isLoading else { return }
+        activeRequestID += 1
+        let requestID = activeRequestID
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            if requestID == activeRequestID {
+                isLoading = false
+            }
+        }
 
         let nextPage = currentPage + 1
         let existingIDs = Set(comments.map(\.id))
         do {
             let response: APIResponse<ChildCommentsData> = try await client.send(.childComments(commentId: commentId, page: nextPage))
+            guard requestID == activeRequestID else { return }
             guard let data = response.data else {
                 currentPage = totalPages
                 return
@@ -243,6 +279,7 @@ final class MacChildCommentsModel {
             comments.append(contentsOf: newComments)
             currentPage = data.page
         } catch {
+            guard requestID == activeRequestID else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -257,23 +294,20 @@ final class MacChildCommentsModel {
         do {
             let _: APIResponse<EmptyData> = try await client.send(.postChildComment(commentId: commentId, content: text))
             replyText = ""
-            comments = []
-            currentPage = 0
-            totalPages = 1
-            lastPaginationTriggerCommentID = nil
-            await loadFirstPage()
+            await loadFirstPage(replacingContent: true)
         } catch {
             actionErrorMessage = error.localizedDescription
         }
     }
 
     func likeComment(id: String) async {
+        guard inFlightLikeCommentIDs.insert(id).inserted else { return }
+        defer { inFlightLikeCommentIDs.remove(id) }
+
         do {
-            let _: APIResponse<LikeActionData> = try await client.send(.likeComment(id: id))
-            guard let index = comments.firstIndex(where: { $0.id == id }) else { return }
-            let wasLiked = comments[index].isLiked ?? false
-            comments[index].isLiked = !wasLiked
-            comments[index].likesCount = max((comments[index].likesCount ?? 0) + (wasLiked ? -1 : 1), 0)
+            let response: APIResponse<LikeActionData> = try await client.send(.likeComment(id: id))
+            guard let action = response.data?.action else { return }
+            CommentLikeReducer.apply(action: action, commentID: id, to: &comments)
         } catch {
             actionErrorMessage = error.localizedDescription
         }

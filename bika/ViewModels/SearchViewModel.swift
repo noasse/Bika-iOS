@@ -45,6 +45,7 @@ final class SearchViewModel {
     func loadPage(_ page: Int) async {
         guard page >= 1, !activeKeyword.isEmpty else { return }
         let requestID = beginRequest()
+        defer { finishRequest(requestID) }
         let requestedKeywords = activeSearchKeywords.isEmpty ? [activeKeyword] : activeSearchKeywords
         let requestedSort = sortMode
 
@@ -52,9 +53,10 @@ final class SearchViewModel {
             let pageData = try await loadExpandedSearchPage(
                 keywords: requestedKeywords,
                 page: page,
-                sort: requestedSort
+                sort: requestedSort,
+                requestID: requestID
             )
-            guard requestID == activeRequestID else { return }
+            guard requestID == activeRequestID, !Task.isCancelled else { return }
             if let pageData {
                 comics = pageData.docs
                 currentPage = pageData.page
@@ -65,11 +67,9 @@ final class SearchViewModel {
                 totalPages = 1
             }
         } catch {
-            guard requestID == activeRequestID else { return }
+            guard requestID == activeRequestID, !Task.isCancelled else { return }
             errorMessage = error.localizedDescription
         }
-
-        finishRequest(requestID)
     }
 
     func nextPage() async {
@@ -101,6 +101,8 @@ final class SearchViewModel {
     }
 
     func reset() {
+        activeRequestID += 1
+        isLoading = false
         keyword = ""
         activeKeyword = ""
         activeSearchKeywords = []
@@ -132,20 +134,24 @@ final class SearchViewModel {
     private func loadExpandedSearchPage(
         keywords: [String],
         page: Int,
-        sort: SortMode
+        sort: SortMode,
+        requestID: Int
     ) async throws -> PaginatedResponse<Comic>? {
         var loadedPages: [PaginatedResponse<Comic>] = []
         var firstError: Error?
 
         for keyword in keywords {
+            guard requestID == activeRequestID, !Task.isCancelled else { return nil }
             do {
                 let response: APIResponse<ComicsData> = try await client.send(
                     .search(keyword: keyword, page: page, sort: sort)
                 )
+                guard requestID == activeRequestID, !Task.isCancelled else { return nil }
                 if let page = response.data?.comics {
                     loadedPages.append(page)
                 }
             } catch {
+                guard requestID == activeRequestID, !Task.isCancelled else { return nil }
                 if firstError == nil {
                     firstError = error
                 }

@@ -7,6 +7,7 @@ final class MacReaderViewModel {
     var pages: [ComicPage] = []
     var isLoading = false
     var errorMessage: String?
+    var partialErrorMessage: String?
     var currentPageIndex: Int
     var currentEpisodeIndex: Int
     var readerMode: MacReaderMode
@@ -19,6 +20,7 @@ final class MacReaderViewModel {
     private let keyValueStore: any KeyValueStore
     private var didStart = false
     private var activeLoadID = 0
+    private var loadTask: Task<Void, Never>?
 
     init(
         request: MacReaderLaunchRequest,
@@ -27,7 +29,7 @@ final class MacReaderViewModel {
         keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore
     ) {
         self.request = request
-        self.readingStore = readingStore
+        self.readingStore = readingStore.scopedForReader()
         self.client = client
         self.keyValueStore = keyValueStore
 
@@ -69,7 +71,7 @@ final class MacReaderViewModel {
     func startIfNeeded() async {
         guard !didStart else { return }
         didStart = true
-        await loadCurrentEpisode()
+        await loadCurrentEpisode(preservingExistingPages: false)
     }
 
     func setReaderMode(_ mode: MacReaderMode) {
@@ -119,74 +121,183 @@ final class MacReaderViewModel {
     }
 
     func nextEpisode() async {
-        guard hasNextEpisode, !isLoading else { return }
+        guard hasNextEpisode else { return }
         currentEpisodeIndex += 1
         currentPageIndex = 0
-        await loadCurrentEpisode()
+        await loadCurrentEpisode(preservingExistingPages: false)
     }
 
     func previousEpisode() async {
-        guard hasPreviousEpisode, !isLoading else { return }
+        guard hasPreviousEpisode else { return }
         currentEpisodeIndex -= 1
         currentPageIndex = 0
-        await loadCurrentEpisode()
+        await loadCurrentEpisode(preservingExistingPages: false)
     }
 
-    private func loadCurrentEpisode() async {
+    func retryCurrentEpisode() async {
+        didStart = true
+        await loadCurrentEpisode(preservingExistingPages: !pages.isEmpty)
+    }
+
+    func cancelLoading() {
+        let wasLoading = isLoading
+        activeLoadID += 1
+        loadTask?.cancel()
+        loadTask = nil
+        isLoading = false
+        if wasLoading, pages.isEmpty {
+            didStart = false
+        }
+    }
+
+    private func loadCurrentEpisode(preservingExistingPages: Bool) async {
         guard let episode = currentEpisode else {
+            cancelLoading()
             pages = []
             errorMessage = "没有可读取的章节"
+            partialErrorMessage = nil
             return
         }
 
+        loadTask?.cancel()
         activeLoadID += 1
         let loadID = activeLoadID
+        let previousPages = pages
         isLoading = true
         errorMessage = nil
-        pages = []
-
-        do {
-            let loadedPages = try await loadPages(for: episode)
-            guard loadID == activeLoadID else { return }
-            pages = loadedPages
-            if pages.isEmpty {
-                currentPageIndex = 0
-            } else {
-                currentPageIndex = min(max(currentPageIndex, 0), pages.count - 1)
-            }
-            saveProgress()
-        } catch {
-            guard loadID == activeLoadID else { return }
-            errorMessage = error.localizedDescription
+        partialErrorMessage = nil
+        if !preservingExistingPages {
+            pages = []
         }
 
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.performLoad(
+                for: episode,
+                loadID: loadID,
+                preservingExistingPages: preservingExistingPages,
+                previousPages: previousPages
+            )
+        }
+        loadTask = task
+        await task.value
+
         guard loadID == activeLoadID else { return }
+        loadTask = nil
+    }
+
+    private func performLoad(
+        for episode: MacReaderEpisode,
+        loadID: Int,
+        preservingExistingPages: Bool,
+        previousPages: [ComicPage]
+    ) async {
+        guard let outcome = await loadPages(for: episode, loadID: loadID) else { return }
+        guard !Task.isCancelled, loadID == activeLoadID else { return }
+
+        if let failureMessage = outcome.failureMessage {
+            let retainedPages: [ComicPage]
+            if preservingExistingPages, !previousPages.isEmpty {
+                retainedPages = previousPages
+            } else {
+                retainedPages = outcome.pages
+            }
+            pages = retainedPages
+            if retainedPages.isEmpty {
+                errorMessage = failureMessage
+                partialErrorMessage = nil
+            } else {
+                errorMessage = nil
+                partialErrorMessage = failureMessage
+            }
+        } else {
+            pages = outcome.pages
+            errorMessage = nil
+            partialErrorMessage = nil
+        }
+
+        if pages.isEmpty {
+            currentPageIndex = 0
+        } else {
+            currentPageIndex = min(max(currentPageIndex, 0), pages.count - 1)
+            saveProgress()
+        }
         isLoading = false
     }
 
-    private func loadPages(for episode: MacReaderEpisode) async throws -> [ComicPage] {
+    private func loadPages(for episode: MacReaderEpisode, loadID: Int) async -> PageLoadOutcome? {
         var result: [ComicPage] = []
-        var nextPage = 1
-        var total = 1
+        var requestedPage = 1
+        var totalPages = 1
+        var returnedPages: Set<Int> = []
 
-        while nextPage <= total {
-            let response: APIResponse<ComicPagesData> = try await client.send(
-                .comicPages(comicId: request.comicId, epsOrder: episode.order, page: nextPage)
-            )
-            guard let page = response.data?.pages else { break }
-            result.append(contentsOf: page.docs)
-            total = max(page.pages, page.page)
-            nextPage = page.page + 1
-            if nextPage <= page.page {
-                break
+        while requestedPage <= totalPages {
+            guard !Task.isCancelled, loadID == activeLoadID else { return nil }
+
+            do {
+                let response: APIResponse<ComicPagesData> = try await client.send(
+                    .comicPages(
+                        comicId: request.comicId,
+                        epsOrder: episode.order,
+                        page: requestedPage
+                    )
+                )
+                guard !Task.isCancelled, loadID == activeLoadID else { return nil }
+                guard let page = response.data?.pages else {
+                    return PageLoadOutcome(
+                        pages: result,
+                        failureMessage: "页面响应缺少分页数据，请重试"
+                    )
+                }
+
+                let returnedPage = page.page
+                let resolvedTotalPages = max(page.pages, returnedPage)
+                guard returnedPage >= requestedPage else {
+                    return PageLoadOutcome(
+                        pages: result,
+                        failureMessage: "服务器返回了重复或倒退的页码（请求第 \(requestedPage) 页，返回第 \(returnedPage) 页）"
+                    )
+                }
+                guard returnedPages.insert(returnedPage).inserted else {
+                    return PageLoadOutcome(
+                        pages: result,
+                        failureMessage: "服务器重复返回第 \(returnedPage) 页，已停止继续加载"
+                    )
+                }
+
+                if page.docs.isEmpty {
+                    if returnedPage < resolvedTotalPages {
+                        return PageLoadOutcome(
+                            pages: result,
+                            failureMessage: "第 \(returnedPage) 页为空，但服务器声明仍有后续页面"
+                        )
+                    }
+                    return PageLoadOutcome(pages: result, failureMessage: nil)
+                }
+
+                result.append(contentsOf: page.docs)
+                totalPages = resolvedTotalPages
+                if returnedPage >= totalPages {
+                    return PageLoadOutcome(pages: result, failureMessage: nil)
+                }
+
+                requestedPage = returnedPage + 1
+            } catch {
+                guard !Task.isCancelled, loadID == activeLoadID else { return nil }
+                return PageLoadOutcome(pages: result, failureMessage: error.localizedDescription)
             }
         }
 
-        return result
+        return PageLoadOutcome(pages: result, failureMessage: nil)
     }
 
     private func saveProgress() {
         guard let episode = currentEpisode else { return }
         readingStore.record(request: request, episode: episode, pageIndex: currentPageIndex)
     }
+}
+
+private struct PageLoadOutcome {
+    let pages: [ComicPage]
+    let failureMessage: String?
 }

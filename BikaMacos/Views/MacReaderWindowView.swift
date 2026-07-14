@@ -18,8 +18,10 @@ struct MacReaderWindowView: View {
     @State private var lastHorizontalReaderSize: CGSize = .zero
     @State private var imagePrefetchTask: Task<Void, Never>?
     @State private var imagePrefetchKey: String?
+    @State private var readerViewportWidth: CGFloat = 1_024
     @Environment(\.colorScheme) private var colorScheme
     private let keyValueStore: any KeyValueStore
+    private let imageCache: MacImageCache
 
     private let horizontalPageAnimation = Animation.interactiveSpring(response: 0.28, dampingFraction: 0.9, blendDuration: 0.06)
 
@@ -27,12 +29,14 @@ struct MacReaderWindowView: View {
         request: MacReaderLaunchRequest,
         readingStore: MacReadingStore,
         keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore,
+        imageCache: MacImageCache = .shared,
         onClose: @escaping (String) -> Void = { _ in }
     ) {
         let initialViewModel = MacReaderViewModel(request: request, readingStore: readingStore)
         _viewModel = State(initialValue: initialViewModel)
         _waterfallScrollRequest = State(initialValue: Self.initialWaterfallScrollRequest(for: initialViewModel))
         self.keyValueStore = keyValueStore
+        self.imageCache = imageCache
         self.onClose = onClose
     }
 
@@ -45,6 +49,10 @@ struct MacReaderWindowView: View {
         ZStack {
             Color.black.ignoresSafeArea()
             readerBody
+            if !viewModel.pages.isEmpty {
+                partialLoadStatus
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
             MacReaderKeyboardBridge(isEnabled: !showPageInput) {
                 navigatePreviousPage()
             } onRight: {
@@ -88,6 +96,7 @@ struct MacReaderWindowView: View {
             cancelImagePrefetch()
         }
         .onDisappear {
+            viewModel.cancelLoading()
             viewModel.saveCurrentProgress()
             cancelImagePrefetch()
             onClose(viewModel.request.comicId)
@@ -105,7 +114,7 @@ struct MacReaderWindowView: View {
 
     @ViewBuilder
     private var readerBody: some View {
-        if viewModel.isLoading {
+        if viewModel.isLoading && viewModel.pages.isEmpty {
             VStack(spacing: 12) {
                 ProgressView()
                     .tint(.white)
@@ -113,8 +122,20 @@ struct MacReaderWindowView: View {
                     .foregroundStyle(.white.opacity(0.72))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let error = viewModel.errorMessage {
-            ContentUnavailableView("页面载入失败", systemImage: "exclamationmark.triangle", description: Text(error))
+        } else if let error = viewModel.errorMessage, viewModel.pages.isEmpty {
+            VStack(spacing: 12) {
+                ContentUnavailableView(
+                    "页面载入失败",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(error)
+                )
+                Button("重试") {
+                    Task { await viewModel.retryCurrentEpisode() }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(MacUI.accentPink)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if viewModel.pages.isEmpty {
             ContentUnavailableView("这一章没有页面", systemImage: "photo.on.rectangle")
         } else {
@@ -127,6 +148,39 @@ struct MacReaderWindowView: View {
         }
     }
 
+    @ViewBuilder
+    private var partialLoadStatus: some View {
+        if let error = viewModel.partialErrorMessage {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text(error)
+                    .lineLimit(2)
+                Button("重试") {
+                    Task { await viewModel.retryCurrentEpisode() }
+                }
+                .buttonStyle(.bordered)
+            }
+            .font(.caption)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(.black.opacity(0.78), in: RoundedRectangle(cornerRadius: MacUI.cornerRadius))
+            .padding(12)
+        } else if viewModel.isLoading {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("正在重新载入本章…")
+            }
+            .font(.caption)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(.black.opacity(0.72), in: Capsule())
+            .padding(12)
+        }
+    }
+
     private var waterfallReader: some View {
         GeometryReader { geometry in
             ScrollViewReader { proxy in
@@ -134,7 +188,7 @@ struct MacReaderWindowView: View {
                     LazyVStack(spacing: 0) {
                         ForEach(Array(viewModel.pages.enumerated()), id: \.offset) { index, page in
                             let imageWidth = pageViewportWidth(in: geometry.size)
-                            MacZoomableImageView(url: page.media.imageURL, onImageLoaded: { size in
+                            MacZoomableImageView(url: page.media.imageURL, imageCache: imageCache, onImageLoaded: { size in
                                 updateImageSize(size, for: index)
                             }, onZoomStateChanged: { isZoomed in
                                 setZoomState(isZoomed, for: index)
@@ -157,7 +211,11 @@ struct MacReaderWindowView: View {
                 }
                 .background(.black)
                 .onAppear {
+                    updateReaderViewportWidth(geometry.size.width)
                     scrollToRequestedWaterfallPage(with: proxy)
+                }
+                .onChange(of: geometry.size) { _, newSize in
+                    updateReaderViewportWidth(newSize.width)
                 }
                 .onChange(of: waterfallScrollRequest) { _, _ in
                     scrollToRequestedWaterfallPage(with: proxy)
@@ -214,8 +272,10 @@ struct MacReaderWindowView: View {
             }
             .onAppear {
                 lastHorizontalReaderSize = geometry.size
+                updateReaderViewportWidth(geometry.size.width)
             }
             .onChange(of: geometry.size) { _, newSize in
+                updateReaderViewportWidth(newSize.width)
                 guard hasMeaningfulSizeChange(newSize, from: lastHorizontalReaderSize) else { return }
                 lastHorizontalReaderSize = newSize
                 beginHorizontalResizeGuard()
@@ -231,7 +291,7 @@ struct MacReaderWindowView: View {
     }
 
     private func horizontalPage(_ pageIndex: Int, in size: CGSize) -> some View {
-        MacZoomableImageView(url: viewModel.pages[pageIndex].media.imageURL, onImageLoaded: { imageSize in
+        MacZoomableImageView(url: viewModel.pages[pageIndex].media.imageURL, imageCache: imageCache, onImageLoaded: { imageSize in
             updateImageSize(imageSize, for: pageIndex)
         }, onZoomStateChanged: { isZoomed in
             setZoomState(isZoomed, for: pageIndex)
@@ -471,7 +531,11 @@ struct MacReaderWindowView: View {
             return viewModel.pages[pageIndex].media.imageURL
         }
 
-        let nextKey = urls.map(\.absoluteString).joined(separator: "|")
+        let baseVariant = MacReaderImageResolutionPlan.variant(
+            viewportWidth: readerViewportWidth,
+            magnification: 1
+        )
+        let nextKey = "\(Int(baseVariant.viewportWidth))|" + urls.map(\.absoluteString).joined(separator: "|")
         guard nextKey != imagePrefetchKey else { return }
         imagePrefetchKey = nextKey
 
@@ -479,8 +543,21 @@ struct MacReaderWindowView: View {
         guard !urls.isEmpty else { return }
 
         imagePrefetchTask = Task(priority: .utility) {
-            await MacReaderImagePrefetcher.prefetch(urls: urls, imageCache: .shared)
+            await MacReaderImagePrefetcher.prefetch(
+                urls: urls,
+                imageCache: imageCache,
+                viewportWidth: baseVariant.viewportWidth
+            )
         }
+    }
+
+    private func updateReaderViewportWidth(_ width: CGFloat) {
+        let oldBucket = MacReaderImageResolutionPlan.viewportBucket(for: readerViewportWidth)
+        let newBucket = MacReaderImageResolutionPlan.viewportBucket(for: width)
+        guard oldBucket != newBucket else { return }
+        readerViewportWidth = width
+        imagePrefetchKey = nil
+        scheduleImagePrefetch(around: viewModel.currentPageIndex)
     }
 
     private func imagePrefetchExcludedIndices(around index: Int) -> Set<Int> {
@@ -597,6 +674,7 @@ nonisolated enum MacZoomableImageLayout {
 
 private struct MacZoomableImageView<Placeholder: View>: View {
     let url: URL?
+    let imageCache: MacImageCache
     var onImageLoaded: ((CGSize) -> Void)?
     var onZoomStateChanged: ((Bool) -> Void)?
     @ViewBuilder let placeholder: () -> Placeholder
@@ -605,11 +683,13 @@ private struct MacZoomableImageView<Placeholder: View>: View {
 
     init(
         url: URL?,
+        imageCache: MacImageCache = .shared,
         onImageLoaded: ((CGSize) -> Void)? = nil,
         onZoomStateChanged: ((Bool) -> Void)? = nil,
         @ViewBuilder placeholder: @escaping () -> Placeholder
     ) {
         self.url = url
+        self.imageCache = imageCache
         self.onImageLoaded = onImageLoaded
         self.onZoomStateChanged = onZoomStateChanged
         self.placeholder = placeholder
@@ -623,6 +703,7 @@ private struct MacZoomableImageView<Placeholder: View>: View {
 
             MacZoomableImageRepresentable(
                 url: url,
+                imageCache: imageCache,
                 onImageLoaded: { size in
                     isLoaded = true
                     onImageLoaded?(size)
@@ -641,17 +722,19 @@ private struct MacZoomableImageView<Placeholder: View>: View {
 
 private struct MacZoomableImageRepresentable: NSViewRepresentable {
     let url: URL?
+    let imageCache: MacImageCache
     var onImageLoaded: ((CGSize) -> Void)?
     var onZoomStateChanged: ((Bool) -> Void)?
     var onLoadStateChanged: ((Bool) -> Void)?
 
     func makeNSView(context: Context) -> MacZoomableImageContainerView {
-        MacZoomableImageContainerView()
+        MacZoomableImageContainerView(imageCache: imageCache)
     }
 
     func updateNSView(_ nsView: MacZoomableImageContainerView, context: Context) {
         nsView.configure(
             url: url,
+            imageCache: imageCache,
             onImageLoaded: onImageLoaded,
             onZoomStateChanged: onZoomStateChanged,
             onLoadStateChanged: onLoadStateChanged
@@ -664,15 +747,20 @@ private final class MacZoomableImageContainerView: NSView {
     private let canvasView = MacZoomableImageCanvasView()
     private let imageView = NSImageView()
     private let failureLabel = NSTextField(labelWithString: "图片载入失败")
+    private var imageCache: MacImageCache
     private var currentURL: URL?
     private var imageSize: CGSize?
-    private var loadTask: Task<Void, Never>?
+    private var currentBaseVariant: MacReaderImageVariant?
+    private var loadedVariant: MacReaderImageVariant?
+    private var baseLoadTask: Task<Void, Never>?
+    private var upgradeLoadTask: Task<Void, Never>?
     private var onImageLoaded: ((CGSize) -> Void)?
     private var onZoomStateChanged: ((Bool) -> Void)?
     private var onLoadStateChanged: ((Bool) -> Void)?
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(imageCache: MacImageCache) {
+        self.imageCache = imageCache
+        super.init(frame: .zero)
         configureViews()
     }
 
@@ -682,7 +770,8 @@ private final class MacZoomableImageContainerView: NSView {
     }
 
     deinit {
-        loadTask?.cancel()
+        baseLoadTask?.cancel()
+        upgradeLoadTask?.cancel()
     }
 
     override func layout() {
@@ -690,10 +779,12 @@ private final class MacZoomableImageContainerView: NSView {
         scrollView.frame = bounds
         failureLabel.frame = bounds
         layoutImageIfPossible()
+        refreshBaseVariantForCurrentViewport()
     }
 
     func configure(
         url: URL?,
+        imageCache: MacImageCache,
         onImageLoaded: ((CGSize) -> Void)?,
         onZoomStateChanged: ((Bool) -> Void)?,
         onLoadStateChanged: ((Bool) -> Void)?
@@ -702,9 +793,16 @@ private final class MacZoomableImageContainerView: NSView {
         self.onZoomStateChanged = onZoomStateChanged
         self.onLoadStateChanged = onLoadStateChanged
 
-        guard currentURL != url else { return }
+        let cacheChanged = self.imageCache !== imageCache
+        self.imageCache = imageCache
+        guard currentURL != url || cacheChanged else { return }
         currentURL = url
-        loadTask?.cancel()
+        baseLoadTask?.cancel()
+        upgradeLoadTask?.cancel()
+        baseLoadTask = nil
+        upgradeLoadTask = nil
+        currentBaseVariant = nil
+        loadedVariant = nil
         imageSize = nil
         imageView.image = nil
         failureLabel.isHidden = true
@@ -714,27 +812,11 @@ private final class MacZoomableImageContainerView: NSView {
             self?.notifyZoomState()
         }
 
-        guard let url else {
+        guard url != nil else {
             failureLabel.isHidden = false
             return
         }
-
-        loadTask = Task { [weak self] in
-            do {
-                let image = try await MacImageCache.shared.image(for: url)
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    guard self?.currentURL == url else { return }
-                    self?.show(image)
-                }
-            } catch {
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    guard self?.currentURL == url else { return }
-                    self?.showFailure()
-                }
-            }
-        }
+        refreshBaseVariantForCurrentViewport()
     }
 
     private func configureViews() {
@@ -751,8 +833,8 @@ private final class MacZoomableImageContainerView: NSView {
         scrollView.maxMagnification = MacZoomableImageLayout.maximumMagnification
         scrollView.documentView = canvasView
         scrollView.isHidden = true
-        scrollView.onMagnificationChanged = { [weak self] _ in
-            self?.notifyZoomState()
+        scrollView.onMagnificationChanged = { [weak self] magnification in
+            self?.handleMagnificationChange(magnification)
         }
 
         canvasView.addSubview(imageView)
@@ -773,21 +855,123 @@ private final class MacZoomableImageContainerView: NSView {
         addSubview(failureLabel)
     }
 
-    private func show(_ image: NSImage) {
-        let loadedSize = image.size
-        imageSize = loadedSize
-        imageView.image = image
-        failureLabel.isHidden = true
-        scrollView.isHidden = false
-        scrollView.magnification = scrollView.minMagnification
-        needsLayout = true
-        layoutSubtreeIfNeeded()
-        onLoadStateChanged?(true)
-        onImageLoaded?(loadedSize)
-        notifyZoomState()
+    private func refreshBaseVariantForCurrentViewport() {
+        guard currentURL != nil else { return }
+        let viewportWidth = scrollView.contentView.bounds.width > 0
+            ? scrollView.contentView.bounds.width
+            : bounds.width
+        guard viewportWidth > 0 else { return }
+
+        let variant = MacReaderImageResolutionPlan.variant(
+            viewportWidth: viewportWidth,
+            magnification: 1
+        )
+        guard variant != currentBaseVariant else { return }
+
+        currentBaseVariant = variant
+        baseLoadTask?.cancel()
+        upgradeLoadTask?.cancel()
+        upgradeLoadTask = nil
+        loadBaseVariant(variant)
     }
 
-    private func showFailure() {
+    private func loadBaseVariant(_ variant: MacReaderImageVariant) {
+        guard let url = currentURL else { return }
+        let cache = imageCache
+
+        baseLoadTask = Task { [weak self] in
+            do {
+                let asset = try await cache.asset(
+                    for: url,
+                    target: .fitWidth(variant.viewportWidth),
+                    pixelScale: variant.pixelScale,
+                    maximumPixelSize: variant.maximumPixelSize
+                )
+                try Task.checkCancellation()
+                guard let self,
+                      self.currentURL == url,
+                      self.currentBaseVariant == variant else { return }
+                if let loadedVariant = self.loadedVariant,
+                   loadedVariant.viewportWidth == variant.viewportWidth,
+                   loadedVariant.pixelScale > variant.pixelScale {
+                    return
+                }
+                self.show(asset, variant: variant)
+                if self.scrollView.magnification >= MacReaderImageResolutionPlan.upgradeMagnificationThreshold {
+                    self.loadUpgradeVariantIfNeeded()
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self,
+                      self.currentURL == url,
+                      self.currentBaseVariant == variant else { return }
+                self.showFailureIfNeeded()
+            }
+        }
+    }
+
+    private func handleMagnificationChange(_ magnification: CGFloat) {
+        notifyZoomState()
+        if magnification >= MacReaderImageResolutionPlan.upgradeMagnificationThreshold {
+            loadUpgradeVariantIfNeeded()
+        } else {
+            upgradeLoadTask?.cancel()
+            upgradeLoadTask = nil
+        }
+    }
+
+    private func loadUpgradeVariantIfNeeded() {
+        guard let url = currentURL, let baseVariant = currentBaseVariant else { return }
+        let variant = MacReaderImageResolutionPlan.variant(
+            viewportWidth: baseVariant.viewportWidth,
+            magnification: MacReaderImageResolutionPlan.upgradeMagnificationThreshold
+        )
+        guard loadedVariant != variant else { return }
+
+        upgradeLoadTask?.cancel()
+        let cache = imageCache
+        upgradeLoadTask = Task { [weak self] in
+            do {
+                let asset = try await cache.asset(
+                    for: url,
+                    target: .fitWidth(variant.viewportWidth),
+                    pixelScale: variant.pixelScale,
+                    maximumPixelSize: variant.maximumPixelSize
+                )
+                try Task.checkCancellation()
+                guard let self,
+                      self.currentURL == url,
+                      self.currentBaseVariant?.viewportWidth == variant.viewportWidth,
+                      self.scrollView.magnification >= MacReaderImageResolutionPlan.upgradeMagnificationThreshold else {
+                    return
+                }
+                self.show(asset, variant: variant)
+            } catch {
+                // The base variant remains visible when an upgrade is cancelled or fails.
+            }
+        }
+    }
+
+    private func show(_ asset: MacDecodedImageAsset, variant: MacReaderImageVariant) {
+        let isInitialDisplay = imageView.image == nil
+        loadedVariant = variant
+        imageView.image = asset.image
+        failureLabel.isHidden = true
+        scrollView.isHidden = false
+
+        if isInitialDisplay {
+            imageSize = asset.displaySize
+            needsLayout = true
+            layoutSubtreeIfNeeded()
+            onLoadStateChanged?(true)
+            onImageLoaded?(asset.displaySize)
+            notifyZoomState()
+        }
+    }
+
+    private func showFailureIfNeeded() {
+        guard imageView.image == nil else { return }
         imageSize = nil
         imageView.image = nil
         scrollView.isHidden = true
@@ -995,8 +1179,16 @@ nonisolated enum MacReaderImagePrefetchPlan {
 nonisolated enum MacReaderImagePrefetcher {
     private static let maximumConcurrentRequests = 2
 
-    static func prefetch(urls: [URL], imageCache: MacImageCache) async {
+    static func prefetch(
+        urls: [URL],
+        imageCache: MacImageCache,
+        viewportWidth: CGFloat
+    ) async {
         guard !urls.isEmpty else { return }
+        let baseVariant = MacReaderImageResolutionPlan.variant(
+            viewportWidth: viewportWidth,
+            magnification: 1
+        )
 
         var nextIndex = 0
         await withTaskGroup(of: Void.self) { group in
@@ -1005,7 +1197,7 @@ nonisolated enum MacReaderImagePrefetcher {
                 let url = urls[nextIndex]
                 nextIndex += 1
                 group.addTask {
-                    await prefetch(url: url, imageCache: imageCache)
+                    await prefetch(url: url, imageCache: imageCache, variant: baseVariant)
                 }
             }
 
@@ -1019,16 +1211,25 @@ nonisolated enum MacReaderImagePrefetcher {
                 let url = urls[nextIndex]
                 nextIndex += 1
                 group.addTask {
-                    await prefetch(url: url, imageCache: imageCache)
+                    await prefetch(url: url, imageCache: imageCache, variant: baseVariant)
                 }
             }
         }
     }
 
-    private static func prefetch(url: URL, imageCache: MacImageCache) async {
+    private static func prefetch(
+        url: URL,
+        imageCache: MacImageCache,
+        variant: MacReaderImageVariant
+    ) async {
         guard !Task.isCancelled else { return }
         do {
-            _ = try await imageCache.image(for: url)
+            _ = try await imageCache.asset(
+                for: url,
+                target: .fitWidth(variant.viewportWidth),
+                pixelScale: variant.pixelScale,
+                maximumPixelSize: variant.maximumPixelSize
+            )
         } catch {
             // Prefetch failures should never block the visible page loader.
         }

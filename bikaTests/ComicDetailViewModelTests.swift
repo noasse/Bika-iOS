@@ -263,6 +263,133 @@ final class ComicDetailViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.actionErrorMessage)
     }
 
+    func testToggleLikeIgnoresSecondCallWhileMutationIsInFlight() async {
+        let likeRequestCount = LockedValue(0)
+        let firstRequestGate = AsyncGate()
+        let (client, _) = TestSupport.makeAPIClient { request in
+            let path = request.url?.path ?? ""
+            let method = request.httpMethod ?? "GET"
+
+            if method == "POST", path == "/comics/comic-1/like" {
+                likeRequestCount.value += 1
+                if likeRequestCount.value == 1 {
+                    await firstRequestGate.wait()
+                }
+                return TestSupport.jsonResponse(data: ["action": "like"])
+            }
+
+            if method == "GET", path == "/comics/comic-1" {
+                return TestSupport.jsonResponse(data: [
+                    "comic": [
+                        "_id": "comic-1",
+                        "title": "测试漫画",
+                        "isLiked": true,
+                    ],
+                ])
+            }
+
+            return TestSupport.jsonResponse(data: [:])
+        }
+
+        let viewModel = ComicDetailViewModel(comicId: "comic-1", client: client)
+        let firstTask = Task { await viewModel.toggleLike() }
+        await waitUntil { likeRequestCount.value == 1 }
+
+        let secondTask = Task { await viewModel.toggleLike() }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(likeRequestCount.value, 1)
+        XCTAssertTrue(viewModel.isPerformingAction)
+
+        await firstRequestGate.open()
+        await firstTask.value
+        await secondTask.value
+        XCTAssertFalse(viewModel.isPerformingAction)
+    }
+
+    func testFavouriteCannotOverlapLikeMutation() async {
+        let likeRequestCount = LockedValue(0)
+        let favouriteRequestCount = LockedValue(0)
+        let firstRequestGate = AsyncGate()
+        let (client, _) = TestSupport.makeAPIClient { request in
+            let path = request.url?.path ?? ""
+            let method = request.httpMethod ?? "GET"
+
+            if method == "POST", path == "/comics/comic-1/like" {
+                likeRequestCount.value += 1
+                await firstRequestGate.wait()
+                return TestSupport.jsonResponse(data: ["action": "like"])
+            }
+
+            if method == "POST", path == "/comics/comic-1/favourite" {
+                favouriteRequestCount.value += 1
+                return TestSupport.jsonResponse(data: [:])
+            }
+
+            if method == "GET", path == "/comics/comic-1" {
+                return TestSupport.jsonResponse(data: [
+                    "comic": [
+                        "_id": "comic-1",
+                        "title": "测试漫画",
+                        "isLiked": true,
+                    ],
+                ])
+            }
+
+            return TestSupport.jsonResponse(data: [:])
+        }
+
+        let viewModel = ComicDetailViewModel(comicId: "comic-1", client: client)
+        let likeTask = Task { await viewModel.toggleLike() }
+        await waitUntil { likeRequestCount.value == 1 }
+
+        await viewModel.toggleFavourite()
+
+        XCTAssertEqual(favouriteRequestCount.value, 0)
+        XCTAssertTrue(viewModel.isTogglingLike)
+        XCTAssertFalse(viewModel.isTogglingFavourite)
+
+        await firstRequestGate.open()
+        await likeTask.value
+        XCTAssertFalse(viewModel.isPerformingAction)
+    }
+
+    func testDetailActionFlagsResetAfterFailure() async {
+        let (client, _) = TestSupport.makeAPIClient { request in
+            if request.url?.path == "/comics/comic-1/like" {
+                return TestSupport.jsonResponse(code: 500, message: "操作失败", data: [:])
+            }
+            return TestSupport.jsonResponse(data: [:])
+        }
+
+        let viewModel = ComicDetailViewModel(comicId: "comic-1", client: client)
+        await viewModel.toggleLike()
+
+        XCTAssertFalse(viewModel.isTogglingLike)
+        XCTAssertFalse(viewModel.isTogglingFavourite)
+        XCTAssertFalse(viewModel.isPerformingAction)
+        XCTAssertNotNil(viewModel.actionErrorMessage)
+    }
+
+    func testDetailRefreshWithMissingComicKeepsExistingDetail() async {
+        let (client, _) = TestSupport.makeAPIClient { request in
+            if request.url?.path == "/comics/comic-1/like" {
+                return TestSupport.jsonResponse(data: ["action": "like"])
+            }
+            if request.url?.path == "/comics/comic-1" {
+                return TestSupport.jsonResponse(data: [:])
+            }
+            return TestSupport.jsonResponse(data: [:])
+        }
+
+        let viewModel = ComicDetailViewModel(comicId: "comic-1", client: client)
+        viewModel.detail = makeComicDetail(id: "comic-1", title: "原详情")
+
+        await viewModel.toggleLike()
+
+        XCTAssertEqual(viewModel.detail?.title, "原详情")
+    }
+
     func testLoadRecommendedAcceptsNumericStringMetrics() async {
         let (client, _) = TestSupport.makeAPIClient { request in
             let path = request.url?.path ?? ""
@@ -521,7 +648,7 @@ private actor AsyncGate {
     }
 }
 
-private func comic(id: String, title: String) -> [String: Any] {
+nonisolated private func comic(id: String, title: String) -> [String: Any] {
     [
         "_id": id,
         "title": title,
@@ -541,7 +668,7 @@ private func comic(id: String, title: String) -> [String: Any] {
     ]
 }
 
-private func episode(id: String, title: String, order: Int) -> [String: Any] {
+nonisolated private func episode(id: String, title: String, order: Int) -> [String: Any] {
     [
         "_id": id,
         "title": title,
@@ -550,7 +677,7 @@ private func episode(id: String, title: String, order: Int) -> [String: Any] {
     ]
 }
 
-private func comment(id: String, content: String, commentsCount: Int, isTop: Bool = false) -> [String: Any] {
+nonisolated private func comment(id: String, content: String, commentsCount: Int, isTop: Bool = false) -> [String: Any] {
     [
         "_id": id,
         "content": content,
@@ -566,4 +693,33 @@ private func comment(id: String, content: String, commentsCount: Int, isTop: Boo
         "likesCount": 0,
         "isLiked": false,
     ]
+}
+
+nonisolated private func makeComicDetail(id: String, title: String) -> ComicDetail {
+    ComicDetail(
+        id: id,
+        title: title,
+        author: nil,
+        description: nil,
+        chineseTeam: nil,
+        categories: nil,
+        tags: nil,
+        pagesCount: nil,
+        epsCount: nil,
+        finished: nil,
+        updated_at: nil,
+        created_at: nil,
+        thumb: nil,
+        creator: nil,
+        totalViews: nil,
+        totalLikes: nil,
+        totalComments: nil,
+        viewsCount: nil,
+        likesCount: nil,
+        commentsCount: nil,
+        isFavourite: nil,
+        isLiked: nil,
+        allowDownload: nil,
+        allowComment: nil
+    )
 }

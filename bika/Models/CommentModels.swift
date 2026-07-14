@@ -49,6 +49,28 @@ nonisolated struct Comment: Decodable, Sendable, Identifiable, Hashable {
     }
 }
 
+nonisolated enum CommentLikeReducer {
+    static func apply(action: String, commentID: String, to comments: inout [Comment]) {
+        let shouldLike: Bool
+        switch action {
+        case "like":
+            shouldLike = true
+        case "unlike":
+            shouldLike = false
+        default:
+            return
+        }
+
+        guard let index = comments.firstIndex(where: { $0.id == commentID }) else { return }
+        let wasLiked = comments[index].isLiked ?? false
+        guard wasLiked != shouldLike else { return }
+
+        comments[index].isLiked = shouldLike
+        let delta = shouldLike ? 1 : -1
+        comments[index].likesCount = max(0, (comments[index].likesCount ?? 0) + delta)
+    }
+}
+
 nonisolated struct CommentsData: Decodable, Sendable {
     let docs: [Comment]
     let topComments: [Comment]

@@ -5,6 +5,7 @@ import UIKit
 nonisolated enum ImageDecodeTarget: Sendable, Equatable {
     case full
     case fit(CGSize)
+    case fill(CGSize)
     case fitWidth(CGFloat)
 
     var cacheKey: String {
@@ -13,6 +14,8 @@ nonisolated enum ImageDecodeTarget: Sendable, Equatable {
             return "full"
         case .fit(let size):
             return "fit-\(Self.rounded(size.width))x\(Self.rounded(size.height))"
+        case .fill(let size):
+            return "fill-\(Self.rounded(size.width))x\(Self.rounded(size.height))"
         case .fitWidth(let width):
             return "width-\(Self.rounded(width))"
         }
@@ -146,7 +149,21 @@ nonisolated enum ImageDecoding {
                   size.height.isFinite,
                   size.width > 0,
                   size.height > 0 else { return nil }
-            targetDimension = max(size.width, size.height)
+            targetDimension = scaledMaximumDimension(
+                displaySize: displaySize,
+                targetSize: size,
+                fillsTarget: false
+            )
+        case .fill(let size):
+            guard size.width.isFinite,
+                  size.height.isFinite,
+                  size.width > 0,
+                  size.height > 0 else { return nil }
+            targetDimension = scaledMaximumDimension(
+                displaySize: displaySize,
+                targetSize: size,
+                fillsTarget: true
+            )
         case .fitWidth(let width):
             guard width.isFinite, width > 0 else { return nil }
             if let displaySize, displaySize.width > 0, displaySize.height > 0 {
@@ -160,6 +177,25 @@ nonisolated enum ImageDecoding {
             maximumThumbnailPixelSize,
             max(1, targetDimension * resolvedScale * resolvedOverscan)
         )
+    }
+
+    private static func scaledMaximumDimension(
+        displaySize: CGSize?,
+        targetSize: CGSize,
+        fillsTarget: Bool
+    ) -> CGFloat {
+        guard let displaySize,
+              displaySize.width > 0,
+              displaySize.height > 0 else {
+            return max(targetSize.width, targetSize.height)
+        }
+
+        let horizontalScale = targetSize.width / displaySize.width
+        let verticalScale = targetSize.height / displaySize.height
+        let contentScale = fillsTarget
+            ? max(horizontalScale, verticalScale)
+            : min(horizontalScale, verticalScale)
+        return max(displaySize.width, displaySize.height) * contentScale
     }
 
     private static func number(from value: Any?) -> CGFloat? {

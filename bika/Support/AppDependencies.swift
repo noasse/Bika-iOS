@@ -3,23 +3,45 @@ import Foundation
 final nonisolated class AppDependencies: @unchecked Sendable {
     static let shared = AppDependencies()
 
-    private let lock = NSLock()
-    private var _keyValueStore: any KeyValueStore = UserDefaultsKeyValueStore.standard
-    private var _imageDataLoader: any ImageDataLoading = AppDependencies.makeLiveImageDataLoader()
-    private var _launchConfig = UITestLaunchConfig.disabled
+    struct Snapshot: Sendable {
+        let apiClient: APIClient
+        let keyValueStore: any KeyValueStore
+        let imageDataLoader: any ImageDataLoading
+        let launchConfig: UITestLaunchConfig
+    }
 
-    private init() {}
+    private let lock = NSLock()
+    private var state: Snapshot
+
+    private init() {
+        let keyValueStore = UserDefaultsKeyValueStore.standard
+        let launchConfig = UITestLaunchConfig.disabled
+        state = Snapshot(
+            apiClient: Self.makeAPIClient(using: keyValueStore, launchConfig: launchConfig),
+            keyValueStore: keyValueStore,
+            imageDataLoader: Self.makeLiveImageDataLoader(),
+            launchConfig: launchConfig
+        )
+    }
+
+    var snapshot: Snapshot {
+        lock.withLock { state }
+    }
+
+    var apiClient: APIClient {
+        snapshot.apiClient
+    }
 
     var keyValueStore: any KeyValueStore {
-        lock.withLock { _keyValueStore }
+        snapshot.keyValueStore
     }
 
     var imageDataLoader: any ImageDataLoading {
-        lock.withLock { _imageDataLoader }
+        snapshot.imageDataLoader
     }
 
     var launchConfig: UITestLaunchConfig {
-        lock.withLock { _launchConfig }
+        snapshot.launchConfig
     }
 
     var isUITesting: Bool {
@@ -44,13 +66,15 @@ final nonisolated class AppDependencies: @unchecked Sendable {
             ? FixtureImageDataLoader()
             : Self.makeLiveImageDataLoader()
 
-        let apiClient = makeAPIClient(using: keyValueStore, launchConfig: launchConfig)
-        APIClient.shared = apiClient
+        let apiClient = Self.makeAPIClient(using: keyValueStore, launchConfig: launchConfig)
 
         lock.withLock {
-            _keyValueStore = keyValueStore
-            _imageDataLoader = imageDataLoader
-            _launchConfig = launchConfig
+            state = Snapshot(
+                apiClient: apiClient,
+                keyValueStore: keyValueStore,
+                imageDataLoader: imageDataLoader,
+                launchConfig: launchConfig
+            )
         }
     }
 
@@ -60,13 +84,16 @@ final nonisolated class AppDependencies: @unchecked Sendable {
         imageDataLoader: any ImageDataLoading = FixtureImageDataLoader(),
         launchConfig: UITestLaunchConfig = .disabled
     ) {
-        let resolvedAPIClient = apiClient ?? makeAPIClient(using: keyValueStore, launchConfig: launchConfig)
-        APIClient.shared = resolvedAPIClient
+        let resolvedAPIClient = apiClient
+            ?? Self.makeAPIClient(using: keyValueStore, launchConfig: launchConfig)
 
         lock.withLock {
-            _keyValueStore = keyValueStore
-            _imageDataLoader = imageDataLoader
-            _launchConfig = launchConfig
+            state = Snapshot(
+                apiClient: resolvedAPIClient,
+                keyValueStore: keyValueStore,
+                imageDataLoader: imageDataLoader,
+                launchConfig: launchConfig
+            )
         }
     }
 
@@ -83,7 +110,10 @@ final nonisolated class AppDependencies: @unchecked Sendable {
         return uiTestStore
     }
 
-    private func makeAPIClient(using keyValueStore: any KeyValueStore, launchConfig: UITestLaunchConfig) -> APIClient {
+    private static func makeAPIClient(
+        using keyValueStore: any KeyValueStore,
+        launchConfig: UITestLaunchConfig
+    ) -> APIClient {
         let tokenStore = launchConfig.isEnabled
             ? TokenStore(store: keyValueStore)
             : TokenStore(secureStore: SecureTokenStore(legacyStore: keyValueStore))

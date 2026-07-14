@@ -68,6 +68,7 @@ struct ComicDetailHeaderSection: View {
 
 struct ComicDetailActionsSection: View {
     let detail: ComicDetail
+    let isDisabled: Bool
     let onToggleLike: () -> Void
     let onToggleFavourite: () -> Void
 
@@ -79,6 +80,7 @@ struct ComicDetailActionsSection: View {
                 tint: detail.isLiked == true ? .red : .gray,
                 action: onToggleLike
             )
+            .disabled(isDisabled)
 
             ComicDetailActionButton(
                 title: detail.isFavourite == true ? "已收藏" : "收藏",
@@ -86,6 +88,7 @@ struct ComicDetailActionsSection: View {
                 tint: detail.isFavourite == true ? .yellow : .gray,
                 action: onToggleFavourite
             )
+            .disabled(isDisabled)
         }
         .padding(.horizontal)
     }

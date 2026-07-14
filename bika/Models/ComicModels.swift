@@ -1,9 +1,10 @@
 import Foundation
+import CryptoKit
 
 // MARK: - Category
 
 nonisolated struct Category: Decodable, Sendable, Identifiable, Hashable {
-    let id: String?
+    private let backendID: String?
     let title: String
     let description: String?
     let thumb: Media?
@@ -12,8 +13,53 @@ nonisolated struct Category: Decodable, Sendable, Identifiable, Hashable {
     let link: String?
 
     enum CodingKeys: String, CodingKey {
-        case id = "_id"
+        case backendID = "_id"
         case title, description, thumb, isWeb, active, link
+    }
+
+    var id: String {
+        if let backendID {
+            return "id:\(backendID)"
+        }
+
+        let components = [
+            title,
+            link,
+            thumb?.fileServer,
+            thumb?.path,
+        ]
+        let fingerprintSource = components
+            .map(Self.identityComponent)
+            .joined(separator: "|")
+        let digest = SHA256.hash(data: Data(fingerprintSource.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return "content:\(digest)"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedBackendID = try container.decodeIfPresent(String.self, forKey: .backendID)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        backendID = decodedBackendID.flatMap { $0.isEmpty ? nil : $0 }
+        title = try container.decode(String.self, forKey: .title)
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        thumb = try container.decodeIfPresent(Media.self, forKey: .thumb)
+        isWeb = try container.decodeIfPresent(Bool.self, forKey: .isWeb)
+        active = try container.decodeIfPresent(Bool.self, forKey: .active)
+        link = try container.decodeIfPresent(String.self, forKey: .link)
+    }
+
+    private static func identityComponent(_ value: String?) -> String {
+        guard let value else { return "nil" }
+        return "\(value.utf8.count):\(value)"
+    }
+}
+
+nonisolated extension Array where Element == Category {
+    func deduplicatedByIdentity() -> [Category] {
+        var seenIDs = Set<String>()
+        return filter { seenIDs.insert($0.id).inserted }
     }
 }
 

@@ -124,12 +124,16 @@ struct MacListPaneView: View {
         } else {
             ScrollView {
                 LazyVGrid(columns: categoryColumns, spacing: 12) {
-                    ForEach(model.categories, id: \.title) { category in
+                    ForEach(model.categories, id: \.id) { category in
                         Button {
                             Task { await model.selectCategory(category) }
                         } label: {
                             VStack(alignment: .leading, spacing: 10) {
-                                MacCachedAsyncImage(url: category.thumb?.imageURL, contentMode: .fill)
+                                MacCachedAsyncImage(
+                                    url: category.thumb?.imageURL,
+                                    contentMode: .fill,
+                                    targetSize: CGSize(width: 240, height: 86)
+                                )
                                     .frame(height: 86)
                                     .clipShape(RoundedRectangle(cornerRadius: 6))
 
@@ -305,7 +309,11 @@ struct MacListPaneView: View {
         VStack(alignment: .leading, spacing: 18) {
             if let user = model.userProfile {
                 HStack(alignment: .top, spacing: 14) {
-                    MacCachedAsyncImage(url: user.avatar?.imageURL, contentMode: .fill)
+                    MacCachedAsyncImage(
+                        url: user.avatar?.imageURL,
+                        contentMode: .fill,
+                        targetSize: CGSize(width: 68, height: 68)
+                    )
                         .frame(width: 68, height: 68)
                         .clipShape(Circle())
 
@@ -503,7 +511,11 @@ private struct MacComicRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            MacCachedAsyncImage(url: item.thumbURL, contentMode: .fill)
+            MacCachedAsyncImage(
+                url: item.thumbURL,
+                contentMode: .fill,
+                targetSize: CGSize(width: 56, height: 76)
+            )
                 .frame(width: 56, height: 76)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay {

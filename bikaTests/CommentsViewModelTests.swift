@@ -88,6 +88,164 @@ final class CommentsViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.comments.map(\.id), ["comment-1", "comment-2", "comment-3"])
     }
 
+    func testPostCommentReplacesInFlightPaginationAndStalePageCannotFinishReplacementLoading() async {
+        let pageTwoGate = TestAsyncGate()
+        let replacementGate = TestAsyncGate()
+        let firstPageRequestCount = LockedValue(0)
+        let pageTwoStarted = LockedValue(false)
+        let replacementStarted = LockedValue(false)
+
+        let (client, _) = TestSupport.makeAPIClient { request in
+            if request.httpMethod == "POST" {
+                return TestSupport.jsonResponse(data: [:])
+            }
+
+            let page = TestSupport.page(from: request)
+            if page == 2 {
+                pageTwoStarted.value = true
+                await pageTwoGate.wait()
+                return TestSupport.jsonResponse(
+                    data: commentsPage(
+                        page: 2,
+                        pages: 2,
+                        docs: [comment(id: "stale-page-2", content: "旧分页", commentsCount: 0)]
+                    )
+                )
+            }
+
+            firstPageRequestCount.value += 1
+            if firstPageRequestCount.value == 1 {
+                return TestSupport.jsonResponse(
+                    data: commentsPage(
+                        page: 1,
+                        pages: 2,
+                        docs: [comment(id: "initial", content: "旧首页", commentsCount: 0)]
+                    )
+                )
+            }
+
+            replacementStarted.value = true
+            await replacementGate.wait()
+            return TestSupport.jsonResponse(
+                data: commentsPage(
+                    page: 1,
+                    pages: 1,
+                    docs: [comment(id: "fresh", content: "新评论", commentsCount: 0)]
+                )
+            )
+        }
+
+        let viewModel = CommentsViewModel(comicId: "comic-1", client: client)
+        await viewModel.loadFirstPage()
+
+        let paginationTask = Task { await viewModel.loadMore() }
+        await waitUntil { pageTwoStarted.value }
+
+        viewModel.commentText = "新评论"
+        let postTask = Task { await viewModel.postComment() }
+        await waitUntil(timeout: 0.5) { replacementStarted.value }
+
+        guard replacementStarted.value else {
+            await pageTwoGate.open()
+            await replacementGate.open()
+            await paginationTask.value
+            await postTask.value
+            return
+        }
+
+        await pageTwoGate.open()
+        await paginationTask.value
+
+        XCTAssertTrue(viewModel.isLoading)
+        XCTAssertFalse(viewModel.comments.contains { $0.id == "stale-page-2" })
+
+        await replacementGate.open()
+        await postTask.value
+
+        XCTAssertEqual(viewModel.comments.map(\.id), ["fresh"])
+        XCTAssertEqual(viewModel.currentPage, 1)
+        XCTAssertFalse(viewModel.isLoading)
+    }
+
+    func testPostReplyReplacesInFlightPaginationAndStalePageCannotFinishReplacementLoading() async {
+        let pageTwoGate = TestAsyncGate()
+        let replacementGate = TestAsyncGate()
+        let firstPageRequestCount = LockedValue(0)
+        let pageTwoStarted = LockedValue(false)
+        let replacementStarted = LockedValue(false)
+
+        let (client, _) = TestSupport.makeAPIClient { request in
+            if request.httpMethod == "POST" {
+                return TestSupport.jsonResponse(data: [:])
+            }
+
+            let page = TestSupport.page(from: request)
+            if page == 2 {
+                pageTwoStarted.value = true
+                await pageTwoGate.wait()
+                return TestSupport.jsonResponse(
+                    data: childCommentsPage(
+                        page: 2,
+                        pages: 2,
+                        docs: [comment(id: "stale-child-page-2", content: "旧分页回复", commentsCount: 0)]
+                    )
+                )
+            }
+
+            firstPageRequestCount.value += 1
+            if firstPageRequestCount.value == 1 {
+                return TestSupport.jsonResponse(
+                    data: childCommentsPage(
+                        page: 1,
+                        pages: 2,
+                        docs: [comment(id: "initial-child", content: "旧首页回复", commentsCount: 0)]
+                    )
+                )
+            }
+
+            replacementStarted.value = true
+            await replacementGate.wait()
+            return TestSupport.jsonResponse(
+                data: childCommentsPage(
+                    page: 1,
+                    pages: 1,
+                    docs: [comment(id: "fresh-child", content: "新回复", commentsCount: 0)]
+                )
+            )
+        }
+
+        let viewModel = ChildCommentsViewModel(commentId: "comment-1", client: client)
+        await viewModel.loadFirstPage()
+
+        let paginationTask = Task { await viewModel.loadMore() }
+        await waitUntil { pageTwoStarted.value }
+
+        viewModel.replyText = "新回复"
+        let postTask = Task { await viewModel.postReply() }
+        await waitUntil(timeout: 0.5) { replacementStarted.value }
+
+        guard replacementStarted.value else {
+            await pageTwoGate.open()
+            await replacementGate.open()
+            await paginationTask.value
+            await postTask.value
+            return
+        }
+
+        await pageTwoGate.open()
+        await paginationTask.value
+
+        XCTAssertTrue(viewModel.isLoading)
+        XCTAssertFalse(viewModel.comments.contains { $0.id == "stale-child-page-2" })
+
+        await replacementGate.open()
+        await postTask.value
+
+        XCTAssertEqual(viewModel.comments.map(\.id), ["fresh-child"])
+        XCTAssertEqual(viewModel.currentPage, 1)
+        XCTAssertFalse(viewModel.isLoading)
+    }
+
     func testLoadMoreStopsWhenPageDoesNotAdvance() async throws {
         let (client, _) = TestSupport.makeAPIClient { request in
             let page = TestSupport.page(from: request)
@@ -282,7 +440,7 @@ final class CommentsViewModelTests: XCTestCase {
     }
 }
 
-private func comment(
+nonisolated private func comment(
     id: String,
     content: String,
     commentsCount: Int,
@@ -303,5 +461,30 @@ private func comment(
         "created_at": "2024-01-01T00:00:00.000Z",
         "likesCount": likesCount,
         "isLiked": isLiked,
+    ]
+}
+
+nonisolated private func commentsPage(page: Int, pages: Int, docs: [[String: Any]]) -> [String: Any] {
+    [
+        "comments": [
+            "docs": docs,
+            "total": docs.count,
+            "limit": max(docs.count, 1),
+            "page": page,
+            "pages": pages,
+        ],
+        "topComments": [],
+    ]
+}
+
+nonisolated private func childCommentsPage(page: Int, pages: Int, docs: [[String: Any]]) -> [String: Any] {
+    [
+        "comments": [
+            "docs": docs,
+            "total": docs.count,
+            "limit": max(docs.count, 1),
+            "page": page,
+            "pages": pages,
+        ],
     ]
 }

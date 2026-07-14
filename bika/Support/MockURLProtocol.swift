@@ -13,6 +13,52 @@ nonisolated enum MockURLProtocolError: Error {
 
 typealias MockURLProtocolHandler = @Sendable (URLRequest) async throws -> MockHTTPResponse
 
+private final nonisolated class MockURLProtocolState: @unchecked Sendable {
+    nonisolated struct Snapshot: Sendable {
+        let requestHandler: MockURLProtocolHandler?
+        let activeScenario: UITestLaunchConfig.Scenario?
+        let keyValueStore: any KeyValueStore
+    }
+
+    private let lock = NSLock()
+    private var _requestHandler: MockURLProtocolHandler?
+    private var _activeScenario: UITestLaunchConfig.Scenario?
+    private var _keyValueStore: any KeyValueStore = UserDefaultsKeyValueStore.standard
+
+    var requestHandler: MockURLProtocolHandler? {
+        get { lock.withLock { _requestHandler } }
+        set { lock.withLock { _requestHandler = newValue } }
+    }
+
+    var activeScenario: UITestLaunchConfig.Scenario? {
+        get { lock.withLock { _activeScenario } }
+        set { lock.withLock { _activeScenario = newValue } }
+    }
+
+    var keyValueStore: any KeyValueStore {
+        get { lock.withLock { _keyValueStore } }
+        set { lock.withLock { _keyValueStore = newValue } }
+    }
+
+    func snapshot() -> Snapshot {
+        lock.withLock {
+            Snapshot(
+                requestHandler: _requestHandler,
+                activeScenario: _activeScenario,
+                keyValueStore: _keyValueStore
+            )
+        }
+    }
+
+    func reset() {
+        lock.withLock {
+            _requestHandler = nil
+            _activeScenario = nil
+            _keyValueStore = UserDefaultsKeyValueStore.standard
+        }
+    }
+}
+
 extension URLRequest {
     nonisolated func resolvedHTTPBodyData() -> Data? {
         if let httpBody {
@@ -50,9 +96,28 @@ extension URLRequest {
 final nonisolated class MockURLProtocol: URLProtocol, @unchecked Sendable {
     static let lastImageQualityHeaderKey = "uiTest.lastImageQualityHeader"
 
-    nonisolated(unsafe) static var requestHandler: MockURLProtocolHandler?
-    nonisolated(unsafe) static var activeScenario: UITestLaunchConfig.Scenario?
-    nonisolated(unsafe) static var keyValueStore: any KeyValueStore = UserDefaultsKeyValueStore.standard
+    private static let state = MockURLProtocolState()
+
+    static var requestHandler: MockURLProtocolHandler? {
+        get { state.requestHandler }
+        set { state.requestHandler = newValue }
+    }
+
+    static var activeScenario: UITestLaunchConfig.Scenario? {
+        get { state.activeScenario }
+        set { state.activeScenario = newValue }
+    }
+
+    static var keyValueStore: any KeyValueStore {
+        get { state.keyValueStore }
+        set { state.keyValueStore = newValue }
+    }
+
+    private let loadingTaskLock = NSLock()
+    private var loadingTask: Task<Void, Never>?
+    private var isStopRequested = false
+    private let clientCallbackLock = NSRecursiveLock()
+    private var isStopped = false
 
     override class func canInit(with request: URLRequest) -> Bool {
         guard let scheme = request.url?.scheme?.lowercased() else { return false }
@@ -64,46 +129,102 @@ final nonisolated class MockURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func startLoading() {
-        Task {
-            do {
-                let response = try await Self.resolveResponse(for: request)
-                Self.recordHeaders(from: request)
+        var taskToCancel: Task<Void, Never>?
+        loadingTaskLock.withLock {
+            let task = Task<Void, Never> { [weak self] in
+                guard let self else { return }
+                await self.loadRequest()
+            }
 
-                guard let url = request.url,
-                      let client else {
-                    throw URLError(.badURL)
-                }
+            if isStopRequested {
+                taskToCancel = task
+            } else {
+                taskToCancel = loadingTask
+                loadingTask = task
+            }
+        }
+        taskToCancel?.cancel()
+    }
 
-                let httpResponse = HTTPURLResponse(
-                    url: url,
-                    statusCode: response.statusCode,
-                    httpVersion: nil,
-                    headerFields: response.headers
-                )!
+    override func stopLoading() {
+        let task = loadingTaskLock.withLock {
+            isStopRequested = true
+            defer { loadingTask = nil }
+            return loadingTask
+        }
+        task?.cancel()
 
-                client.urlProtocol(self, didReceive: httpResponse, cacheStoragePolicy: .notAllowed)
-                client.urlProtocol(self, didLoad: response.data)
-                client.urlProtocolDidFinishLoading(self)
-            } catch {
-                client?.urlProtocol(self, didFailWithError: error)
+        withClientCallbackLock {
+            isStopped = true
+        }
+    }
+
+    static func reset() {
+        state.reset()
+    }
+
+    private func loadRequest() async {
+        do {
+            let configuration = Self.state.snapshot()
+            let response = try await Self.resolveResponse(for: request, configuration: configuration)
+            guard !Task.isCancelled else { return }
+
+            Self.recordHeaders(from: request, keyValueStore: configuration.keyValueStore)
+            guard !Task.isCancelled else { return }
+
+            guard let url = request.url,
+                  client != nil else {
+                throw URLError(.badURL)
+            }
+
+            let httpResponse = HTTPURLResponse(
+                url: url,
+                statusCode: response.statusCode,
+                httpVersion: nil,
+                headerFields: response.headers
+            )!
+
+            notifyClient {
+                $0.urlProtocol(self, didReceive: httpResponse, cacheStoragePolicy: .notAllowed)
+            }
+            notifyClient {
+                $0.urlProtocol(self, didLoad: response.data)
+            }
+            notifyClient {
+                $0.urlProtocolDidFinishLoading(self)
+            }
+        } catch {
+            notifyClient {
+                $0.urlProtocol(self, didFailWithError: error)
             }
         }
     }
 
-    override func stopLoading() {}
-
-    static func reset() {
-        requestHandler = nil
-        activeScenario = nil
-        keyValueStore = UserDefaultsKeyValueStore.standard
+    private func notifyClient(_ callback: (any URLProtocolClient) -> Void) {
+        withClientCallbackLock {
+            guard !isStopped,
+                  !Task.isCancelled,
+                  let client else { return }
+            callback(client)
+        }
     }
 
-    private static func resolveResponse(for request: URLRequest) async throws -> MockHTTPResponse {
-        if let requestHandler {
+    @discardableResult
+    private func withClientCallbackLock<T>(_ action: () throws -> T) rethrows -> T {
+        clientCallbackLock.lock()
+        defer { clientCallbackLock.unlock() }
+        return try action()
+    }
+
+    private static func resolveResponse(
+        for request: URLRequest,
+        configuration: MockURLProtocolState.Snapshot
+    ) async throws -> MockHTTPResponse {
+        if let requestHandler = configuration.requestHandler {
             return try await requestHandler(request)
         }
 
-        guard let scenario = activeScenario else {
+        guard let scenario = configuration.activeScenario else {
             throw MockURLProtocolError.missingResponse
         }
 
@@ -113,7 +234,7 @@ final nonisolated class MockURLProtocol: URLProtocol, @unchecked Sendable {
         }
     }
 
-    private static func recordHeaders(from request: URLRequest) {
+    private static func recordHeaders(from request: URLRequest, keyValueStore: any KeyValueStore) {
         if let imageQuality = request.value(forHTTPHeaderField: "image-quality") {
             keyValueStore.set(imageQuality, forKey: lastImageQualityHeaderKey)
         }

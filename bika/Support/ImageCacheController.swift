@@ -18,26 +18,30 @@ final nonisolated class ImageCacheController: @unchecked Sendable, ImageCacheMan
     static let shared = ImageCacheController()
 
     let responseCache: URLCache
+    let dataRequestRegistry: CoalescingTaskRegistry<URL, Data>
     private let decodedCache: ImageCache
 
     init(
         responseCache: URLCache = ImageCacheController.makeResponseCache(),
-        decodedCache: ImageCache = .shared
+        decodedCache: ImageCache = .shared,
+        dataRequestRegistry: CoalescingTaskRegistry<URL, Data> = .init()
     ) {
         self.responseCache = responseCache
         self.decodedCache = decodedCache
+        self.dataRequestRegistry = dataRequestRegistry
     }
 
     func usage() async -> ImageCacheUsage {
         ImageCacheUsage(
-            memoryBytes: responseCache.currentMemoryUsage,
+            memoryBytes: responseCache.currentMemoryUsage + decodedCache.currentMemoryUsage,
             diskBytes: responseCache.currentDiskUsage
         )
     }
 
     func clear() async {
+        await dataRequestRegistry.cancelAll()
+        await decodedCache.removeAllImages()
         responseCache.removeAllCachedResponses()
-        decodedCache.removeAllImages()
     }
 
     private static func makeResponseCache() -> URLCache {

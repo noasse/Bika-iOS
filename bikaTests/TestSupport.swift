@@ -1,7 +1,7 @@
 import XCTest
 @testable import bika
 
-enum TestSupport {
+nonisolated enum TestSupport {
     static func makeAPIClient(
         store: InMemoryKeyValueStore = InMemoryKeyValueStore(),
         handler: @escaping MockURLProtocolHandler
@@ -97,7 +97,7 @@ extension XCTestCase {
     }
 }
 
-final class LockedValue<T>: @unchecked Sendable {
+final nonisolated class LockedValue<T>: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: T
 
@@ -108,5 +108,29 @@ final class LockedValue<T>: @unchecked Sendable {
     var value: T {
         get { lock.withLock { storage } }
         set { lock.withLock { storage = newValue } }
+    }
+}
+
+actor TestAsyncGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation in
+            if isOpen {
+                continuation.resume()
+            } else {
+                waiters.append(continuation)
+            }
+        }
+    }
+
+    func open() {
+        guard !isOpen else { return }
+        isOpen = true
+        let pendingWaiters = waiters
+        waiters.removeAll()
+        pendingWaiters.forEach { $0.resume() }
     }
 }

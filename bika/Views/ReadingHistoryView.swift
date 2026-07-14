@@ -6,8 +6,8 @@ struct ReadingHistoryView: View {
     @State private var showClearAlert = false
     @Environment(\.colorScheme) private var colorScheme
 
-    init(historyManager: ReadingHistoryManager = .shared) {
-        self.historyManager = historyManager
+    init(historyManager: ReadingHistoryManager? = nil) {
+        self.historyManager = historyManager ?? .shared
     }
 
     var body: some View {
@@ -60,7 +60,11 @@ struct ReadingHistoryView: View {
     private func historyCard(item: ReadingHistoryManager.HistoryItem) -> some View {
         HStack(spacing: 12) {
             let media = Media(originalName: nil, path: item.thumbPath, fileServer: item.thumbServer)
-            MediaImageView(media: media, cornerRadius: 6)
+            MediaImageView(
+                media: media,
+                cornerRadius: 6,
+                targetSize: CGSize(width: 60, height: 84)
+            )
                 .frame(width: 60, height: 84)
                 .highPriorityGesture(
                     TapGesture().onEnded {

@@ -18,7 +18,7 @@ final nonisolated class NavigationStateStore: @unchecked Sendable {
     private var comicListStates: [String: ComicListNavigationState] = [:]
     private var leaderboardState: LeaderboardNavigationState?
 
-    private init() {}
+    init() {}
 
     func comicListState(for key: String) -> ComicListNavigationState? {
         lock.withLock { comicListStates[key] }

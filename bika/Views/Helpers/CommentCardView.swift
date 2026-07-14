@@ -28,7 +28,11 @@ struct CommentCardView: View {
                     onAvatarTap?()
                 } label: {
                     if let avatar = comment.user?.avatar {
-                        MediaImageView(media: avatar, cornerRadius: 16)
+                        MediaImageView(
+                            media: avatar,
+                            cornerRadius: 16,
+                            targetSize: CGSize(width: 32, height: 32)
+                        )
                             .frame(width: 32, height: 32)
                     } else {
                         Circle()
@@ -145,7 +149,11 @@ struct UserProfileOverlay: ViewModifier {
 
                     VStack(spacing: 12) {
                         if let avatar = user.avatar {
-                            MediaImageView(media: avatar, cornerRadius: 40)
+                            MediaImageView(
+                                media: avatar,
+                                cornerRadius: 40,
+                                targetSize: CGSize(width: 80, height: 80)
+                            )
                                 .frame(width: 80, height: 80)
                         } else {
                             Circle()

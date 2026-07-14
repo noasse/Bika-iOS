@@ -299,7 +299,7 @@ private extension ImageDecodeTarget {
         switch self {
         case .full:
             return true
-        case .fit(let size):
+        case .fit(let size), .fill(let size):
             return size.width.isFinite && size.height.isFinite && size.width > 0 && size.height > 0
         case .fitWidth(let width):
             return width.isFinite && width > 0

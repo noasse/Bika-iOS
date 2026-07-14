@@ -14,12 +14,12 @@ struct ComicDetailView: View {
 
     init(
         comicId: String,
-        readingProgressManager: ReadingProgressManager = .shared,
-        readingHistoryManager: ReadingHistoryManager = .shared
+        readingProgressManager: ReadingProgressManager? = nil,
+        readingHistoryManager: ReadingHistoryManager? = nil
     ) {
         self.comicId = comicId
-        self.readingProgressManager = readingProgressManager
-        self.readingHistoryManager = readingHistoryManager
+        self.readingProgressManager = readingProgressManager ?? .shared
+        self.readingHistoryManager = readingHistoryManager ?? .shared
         _viewModel = State(initialValue: ComicDetailViewModel(comicId: comicId))
     }
 
@@ -68,7 +68,8 @@ struct ComicDetailView: View {
                 comicId: comicId,
                 episodes: viewModel.episodes,
                 startEpisodeIndex: selectedEpisodeIndex,
-                startPageIndex: resumePageIndex
+                startPageIndex: resumePageIndex,
+                readingProgressManager: readingProgressManager
             )
         }
         .onChange(of: showReader) { _, isShowing in
@@ -119,6 +120,7 @@ struct ComicDetailView: View {
 
             ComicDetailActionsSection(
                 detail: detail,
+                isDisabled: viewModel.isPerformingAction,
                 onToggleLike: { Task { await viewModel.toggleLike() } },
                 onToggleFavourite: { Task { await viewModel.toggleFavourite() } }
             )
