@@ -1,6 +1,12 @@
 import SwiftUI
 import UIKit
 
+nonisolated struct ReaderPageID: Hashable, Sendable {
+    let episodeID: String
+    let backendPageID: String?
+    let imageURL: URL
+}
+
 // MARK: - Comic Reader View
 
 struct ComicReaderView: View {
@@ -8,12 +14,12 @@ struct ComicReaderView: View {
     @State private var currentPage = 0
     @State private var scrollPosition: Int?
     @State private var hasJumpedToStart = false
-    @State private var imageSizes: [Int: CGSize] = [:]
-    @State private var sampledIndices: [Int] = []
-    @State private var sampledAspectRatios: [Int: CGFloat] = [:]
+    @State private var imageAspectRatios: [ReaderPageID: CGFloat] = [:]
+    @State private var sampledPageIDs: [ReaderPageID] = []
+    @State private var sampledAspectRatios: [ReaderPageID: CGFloat] = [:]
     @State private var estimatedAspectRatio: CGFloat?
     @State private var imagePrefetchTask: Task<Void, Never>?
-    @State private var imagePrefetchKey: String?
+    @State private var imagePrefetchKey: [ReaderImagePrefetchRequest]?
     @State private var viewportSize = CGSize.zero
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -211,6 +217,7 @@ struct ComicReaderView: View {
                         url: page.media.imageURL,
                         imageLoader: imageDataLoader,
                         imageCache: imageCache,
+                        pageID: readerPageID(for: index),
                         onSingleTap: handleTap
                     )
                         .containerRelativeFrame(.horizontal)
@@ -233,18 +240,22 @@ struct ComicReaderView: View {
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(viewModel.pages.enumerated()), id: \.offset) { index, page in
+                        let pageID = readerPageID(for: index)
                         ZoomableImageView(
                             url: page.media.imageURL,
                             imageLoader: imageDataLoader,
                             imageCache: imageCache,
                             sizing: .fitWidth(viewportWidth),
-                            onImageSize: { size in
-                                updateImageSize(size, for: index)
+                            pageID: pageID,
+                            onImageAspectRatio: { aspectRatio in
+                                guard let pageID else { return }
+                                updateImageAspectRatio(aspectRatio, for: pageID)
                             },
                             onSingleTap: handleTap
                         )
                         .onAppear {
-                            registerSampleIndexIfNeeded(index)
+                            guard let pageID else { return }
+                            registerSamplePageIfNeeded(pageID)
                         }
                         .frame(
                             width: viewportWidth,
@@ -264,33 +275,43 @@ struct ComicReaderView: View {
     private func pageHeight(for index: Int, viewportWidth: CGFloat) -> CGFloat {
         ReaderVerticalImageLayout.pageHeight(
             viewportWidth: viewportWidth,
-            imageSize: imageSizes[index],
+            exactAspectRatio: readerPageID(for: index).flatMap { imageAspectRatios[$0] },
             estimatedAspectRatio: estimatedAspectRatio
         )
     }
 
-    private func registerSampleIndexIfNeeded(_ index: Int) {
-        guard sampledIndices.count < 3 else { return }
-        guard !sampledIndices.contains(index) else { return }
-        sampledIndices.append(index)
+    private func registerSamplePageIfNeeded(_ pageID: ReaderPageID) {
+        guard sampledPageIDs.count < 3,
+              !sampledPageIDs.contains(pageID) else {
+            return
+        }
+        sampledPageIDs.append(pageID)
+        if let aspectRatio = imageAspectRatios[pageID] {
+            sampledAspectRatios[pageID] = aspectRatio
+            estimatedAspectRatio = sampledMedianAspectRatio()
+        }
     }
 
-    private func updateImageSize(_ size: CGSize, for index: Int) {
-        guard size.width > 0, size.height > 0 else { return }
-
-        if let previous = imageSizes[index], isNearlyEqual(previous, size) {
+    private func updateImageAspectRatio(_ aspectRatio: CGFloat, for pageID: ReaderPageID) {
+        guard aspectRatio.isFinite,
+              aspectRatio > 0 else {
             return
         }
 
-        imageSizes[index] = size
+        if let previous = imageAspectRatios[pageID],
+           abs(previous - aspectRatio) < 0.0001 {
+            return
+        }
 
-        guard sampledIndices.contains(index) else { return }
-        sampledAspectRatios[index] = size.height / size.width
+        imageAspectRatios[pageID] = aspectRatio
+
+        guard sampledPageIDs.contains(pageID) else { return }
+        sampledAspectRatios[pageID] = aspectRatio
         estimatedAspectRatio = sampledMedianAspectRatio()
     }
 
     private func sampledMedianAspectRatio() -> CGFloat? {
-        let ratios = sampledIndices.compactMap { sampledAspectRatios[$0] }.sorted()
+        let ratios = sampledPageIDs.compactMap { sampledAspectRatios[$0] }.sorted()
         guard !ratios.isEmpty else { return nil }
         let mid = ratios.count / 2
         if ratios.count.isMultiple(of: 2) {
@@ -300,10 +321,26 @@ struct ComicReaderView: View {
     }
 
     private func resetImageLayoutState() {
-        imageSizes = [:]
-        sampledIndices = []
+        imageAspectRatios = [:]
+        sampledPageIDs = []
         sampledAspectRatios = [:]
         estimatedAspectRatio = nil
+    }
+
+    private func readerPageID(for index: Int) -> ReaderPageID? {
+        guard viewModel.pages.indices.contains(index),
+              let episodeID = viewModel.currentEpisode?.id,
+              let imageURL = viewModel.pages[index].media.imageURL else {
+            return nil
+        }
+
+        let page = viewModel.pages[index]
+        let backendID = page.id?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ReaderPageID(
+            episodeID: episodeID,
+            backendPageID: backendID.flatMap { $0.isEmpty ? nil : $0 },
+            imageURL: imageURL
+        )
     }
 
     private func isNearlyEqual(_ lhs: CGSize, _ rhs: CGSize) -> Bool {
@@ -328,7 +365,7 @@ struct ComicReaderView: View {
         )
         .compactMap(imagePrefetchRequest)
 
-        let nextKey = requests.map(\.cacheIdentity).joined(separator: "|")
+        let nextKey = requests
         guard nextKey != imagePrefetchKey else { return }
         imagePrefetchKey = nextKey
 
@@ -339,14 +376,14 @@ struct ComicReaderView: View {
         let imageCache = imageCache
         let prefetchKey = nextKey
         imagePrefetchTask = Task(priority: .utility) {
-            let prefetchedSizes = await ReaderImagePrefetcher.prefetch(
+            let prefetchedAspectRatios = await ReaderImagePrefetcher.prefetch(
                 requests: requests,
                 imageLoader: imageLoader,
                 imageCache: imageCache
             )
             guard !Task.isCancelled, imagePrefetchKey == prefetchKey else { return }
-            for (index, size) in prefetchedSizes {
-                updateImageSize(size, for: index)
+            for (pageID, aspectRatio) in prefetchedAspectRatios {
+                updateImageAspectRatio(aspectRatio, for: pageID)
             }
         }
     }
@@ -359,12 +396,13 @@ struct ComicReaderView: View {
 
     private func imagePrefetchRequest(for index: Int) -> ReaderImagePrefetchRequest? {
         guard viewModel.pages.indices.contains(index),
-              let url = viewModel.pages[index].media.imageURL else {
+              let url = viewModel.pages[index].media.imageURL,
+              let pageID = readerPageID(for: index) else {
             return nil
         }
 
         guard let target = imagePrefetchTarget() else { return nil }
-        return ReaderImagePrefetchRequest(index: index, url: url, target: target)
+        return ReaderImagePrefetchRequest(pageID: pageID, url: url, target: target)
     }
 
     private func imagePrefetchTarget() -> ImageDecodeTarget? {
@@ -480,21 +518,20 @@ struct ComicReaderView: View {
 
 nonisolated enum ReaderVerticalImageLayout {
     static let fallbackPageHeight: CGFloat = 500
+    static let fallbackAspectRatio: CGFloat = 1.5
 
     static func pageHeight(
         viewportWidth: CGFloat,
-        imageSize: CGSize?,
+        exactAspectRatio: CGFloat?,
         estimatedAspectRatio: CGFloat?,
-        fallbackHeight: CGFloat = fallbackPageHeight
+        fallbackAspectRatio: CGFloat = fallbackAspectRatio
     ) -> CGFloat {
-        guard viewportWidth.isFinite, viewportWidth > 0 else { return fallbackHeight }
+        guard viewportWidth.isFinite, viewportWidth > 0 else { return fallbackPageHeight }
 
-        if let imageSize,
-           imageSize.width.isFinite,
-           imageSize.height.isFinite,
-           imageSize.width > 0,
-           imageSize.height > 0 {
-            return viewportWidth * (imageSize.height / imageSize.width)
+        if let exactAspectRatio,
+           exactAspectRatio.isFinite,
+           exactAspectRatio > 0 {
+            return viewportWidth * exactAspectRatio
         }
 
         if let estimatedAspectRatio,
@@ -503,7 +540,10 @@ nonisolated enum ReaderVerticalImageLayout {
             return viewportWidth * estimatedAspectRatio
         }
 
-        return fallbackHeight
+        let resolvedFallback = fallbackAspectRatio.isFinite && fallbackAspectRatio > 0
+            ? fallbackAspectRatio
+            : Self.fallbackAspectRatio
+        return viewportWidth * resolvedFallback
     }
 }
 
@@ -532,19 +572,15 @@ nonisolated enum ReaderImagePrefetchPlan {
     }
 }
 
-nonisolated struct ReaderImagePrefetchRequest: Sendable {
-    let index: Int
+nonisolated struct ReaderImagePrefetchRequest: Equatable, Sendable {
+    let pageID: ReaderPageID
     let url: URL
     let target: ImageDecodeTarget
-
-    var cacheIdentity: String {
-        ImageCache.cacheIdentity(for: url, target: target, overscan: 2)
-    }
 }
 
 nonisolated private struct ReaderImagePrefetchResult: Sendable {
-    let index: Int
-    let displaySize: CGSize
+    let pageID: ReaderPageID
+    let layoutAspectRatio: CGFloat
 }
 
 nonisolated enum ReaderImagePrefetcher {
@@ -554,11 +590,11 @@ nonisolated enum ReaderImagePrefetcher {
         requests: [ReaderImagePrefetchRequest],
         imageLoader: any ImageDataLoading,
         imageCache: ImageCache
-    ) async -> [Int: CGSize] {
+    ) async -> [ReaderPageID: CGFloat] {
         guard !requests.isEmpty else { return [:] }
 
         var nextIndex = 0
-        var displaySizes: [Int: CGSize] = [:]
+        var layoutAspectRatios: [ReaderPageID: CGFloat] = [:]
         await withTaskGroup(of: ReaderImagePrefetchResult?.self) { group in
             let initialRequestCount = min(maximumConcurrentRequests, requests.count)
             for _ in 0..<initialRequestCount {
@@ -571,7 +607,7 @@ nonisolated enum ReaderImagePrefetcher {
 
             while let result = await group.next() {
                 if let result {
-                    displaySizes[result.index] = result.displaySize
+                    layoutAspectRatios[result.pageID] = result.layoutAspectRatio
                 }
 
                 if Task.isCancelled {
@@ -587,7 +623,7 @@ nonisolated enum ReaderImagePrefetcher {
                 }
             }
         }
-        return displaySizes
+        return layoutAspectRatios
     }
 
     private static func prefetch(
@@ -602,8 +638,8 @@ nonisolated enum ReaderImagePrefetcher {
             overscan: 2
         ) {
             return ReaderImagePrefetchResult(
-                index: request.index,
-                displaySize: cached.displaySize
+                pageID: request.pageID,
+                layoutAspectRatio: cached.layoutAspectRatio
             )
         }
 
@@ -617,8 +653,8 @@ nonisolated enum ReaderImagePrefetcher {
             )
             guard !Task.isCancelled else { return nil }
             return ReaderImagePrefetchResult(
-                index: request.index,
-                displaySize: asset.displaySize
+                pageID: request.pageID,
+                layoutAspectRatio: asset.layoutAspectRatio
             )
         } catch {
             // Prefetch failures should never block reading; the visible page loader still handles retries.

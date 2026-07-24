@@ -30,6 +30,15 @@ final class ImagePipelineTests: XCTestCase {
         XCTAssertEqual(asset.image.size.height / asset.image.size.width, 2, accuracy: 0.01)
     }
 
+    func testDecodedAssetLayoutAspectRatioUsesRenderedImageSize() {
+        let asset = DecodedImageAsset(
+            image: makeImage(size: CGSize(width: 200, height: 500)),
+            displaySize: CGSize(width: 200, height: 600)
+        )
+
+        XCTAssertEqual(asset.layoutAspectRatio, 2.5, accuracy: 0.001)
+    }
+
     func testFillDecodePreservesEnoughPixelsOnTheTargetShortSide() throws {
         let data = try makeJPEGData(
             size: CGSize(width: 400, height: 100),
@@ -85,6 +94,155 @@ final class ImagePipelineTests: XCTestCase {
         scrollView.layoutIfNeeded()
 
         XCTAssertEqual(imageView.frame, CGRect(x: 0, y: 0, width: 320, height: 160))
+    }
+
+    @MainActor
+    func testFitWidthZoomingScrollViewWaitsForMatchingBoundsBeforeShowingImage() throws {
+        let scrollView = ZoomingImageScrollView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 500)
+        )
+        let image = makeImage(size: CGSize(width: 200, height: 500))
+
+        scrollView.setImage(
+            image,
+            layoutAspectRatio: 2.5,
+            waitsForFitWidthBounds: true
+        )
+        scrollView.layoutIfNeeded()
+
+        let imageView = try XCTUnwrap(
+            scrollView.subviews.compactMap { $0 as? UIImageView }.first
+        )
+        XCTAssertTrue(imageView.isHidden)
+
+        scrollView.frame.size.height = 800
+        scrollView.setNeedsLayout()
+        scrollView.layoutIfNeeded()
+
+        XCTAssertFalse(imageView.isHidden)
+        XCTAssertEqual(imageView.frame, CGRect(x: 0, y: 0, width: 320, height: 800))
+    }
+
+    @MainActor
+    func testViewportZoomingScrollViewShowsImageWithoutMatchingImageHeight() throws {
+        let scrollView = ZoomingImageScrollView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 500)
+        )
+        let image = makeImage(size: CGSize(width: 200, height: 100))
+
+        scrollView.setImage(
+            image,
+            layoutAspectRatio: 0.5,
+            waitsForFitWidthBounds: false
+        )
+        scrollView.layoutIfNeeded()
+
+        let imageView = try XCTUnwrap(
+            scrollView.subviews.compactMap { $0 as? UIImageView }.first
+        )
+        XCTAssertFalse(imageView.isHidden)
+        XCTAssertEqual(imageView.frame, CGRect(x: 0, y: 170, width: 320, height: 160))
+    }
+
+    @MainActor
+    func testZoomableCoordinatorRepublishesAspectRatioWhenPageIdentityChangesForSameURL() async throws {
+        let url = try XCTUnwrap(URL(string: "https://images.bika.test/reused.jpg"))
+        let target = ImageDecodeTarget.fitWidth(320)
+        let cache = ImageCache(countLimit: 10, totalCostLimit: 1_024 * 1_024)
+        cache.setAsset(
+            DecodedImageAsset(
+                image: makeImage(size: CGSize(width: 200, height: 500)),
+                displaySize: CGSize(width: 200, height: 600)
+            ),
+            for: url,
+            target: target,
+            overscan: 2
+        )
+        let firstPageID = ReaderPageID(
+            episodeID: "episode-1",
+            backendPageID: "page",
+            imageURL: url
+        )
+        let secondPageID = ReaderPageID(
+            episodeID: "episode-2",
+            backendPageID: "page",
+            imageURL: url
+        )
+        var publishedRatios: [CGFloat] = []
+        let scrollView = ZoomingImageScrollView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 800)
+        )
+        let coordinator = ZoomableImageView(
+            url: url,
+            imageLoader: CountingImageDataLoader(data: Data()),
+            imageCache: cache,
+            sizing: .fitWidth(320),
+            pageID: firstPageID,
+            onImageAspectRatio: { publishedRatios.append($0) }
+        ).makeCoordinator()
+
+        coordinator.loadImageIfNeeded(in: scrollView)
+        await waitUntilAsync { publishedRatios.count == 1 }
+
+        coordinator.parent = ZoomableImageView(
+            url: url,
+            imageLoader: CountingImageDataLoader(data: Data()),
+            imageCache: cache,
+            sizing: .fitWidth(320),
+            pageID: secondPageID,
+            onImageAspectRatio: { publishedRatios.append($0) }
+        )
+        coordinator.loadImageIfNeeded(in: scrollView)
+        await waitUntilAsync { publishedRatios.count == 2 }
+
+        XCTAssertEqual(publishedRatios, [2.5, 2.5])
+    }
+
+    func testReaderImagePrefetcherReturnsRatiosByStablePageIdentity() async throws {
+        let firstURL = try XCTUnwrap(URL(string: "https://images.bika.test/first.jpg"))
+        let secondURL = try XCTUnwrap(URL(string: "https://images.bika.test/second.jpg"))
+        let target = ImageDecodeTarget.fitWidth(320)
+        let cache = ImageCache(countLimit: 10, totalCostLimit: 1_024 * 1_024)
+        let firstPageID = ReaderPageID(
+            episodeID: "episode",
+            backendPageID: "first",
+            imageURL: firstURL
+        )
+        let secondPageID = ReaderPageID(
+            episodeID: "episode",
+            backendPageID: "second",
+            imageURL: secondURL
+        )
+        cache.setAsset(
+            DecodedImageAsset(
+                image: makeImage(size: CGSize(width: 200, height: 400)),
+                displaySize: CGSize(width: 200, height: 900)
+            ),
+            for: firstURL,
+            target: target,
+            overscan: 2
+        )
+        cache.setAsset(
+            DecodedImageAsset(
+                image: makeImage(size: CGSize(width: 200, height: 600)),
+                displaySize: CGSize(width: 200, height: 300)
+            ),
+            for: secondURL,
+            target: target,
+            overscan: 2
+        )
+
+        let ratios = await ReaderImagePrefetcher.prefetch(
+            requests: [
+                ReaderImagePrefetchRequest(pageID: firstPageID, url: firstURL, target: target),
+                ReaderImagePrefetchRequest(pageID: secondPageID, url: secondURL, target: target),
+            ],
+            imageLoader: CountingImageDataLoader(data: Data()),
+            imageCache: cache
+        )
+
+        XCTAssertEqual(try XCTUnwrap(ratios[firstPageID]), 2, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(ratios[secondPageID]), 3, accuracy: 0.001)
     }
 
     func testImageLoaderCoalescesConcurrentRequestsForTheSameURL() async throws {

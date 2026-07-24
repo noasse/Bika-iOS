@@ -1,3 +1,4 @@
+import SwiftUI
 import UIKit
 import XCTest
 @testable import bika
@@ -48,6 +49,51 @@ final class CachedAsyncImageTests: XCTestCase {
 
         XCTAssertEqual(Int(try XCTUnwrap(loadingState.image).size.width), 24)
         XCTAssertEqual(observedWidths.value, [12, 24])
+    }
+
+    func testMediaImageViewUsesTargetSizeAsItsClippingBoundsForWideImage() async throws {
+        let targetSize = CGSize(width: 80, height: 110)
+        let media = Media(
+            originalName: nil,
+            path: "wide-cover.png",
+            fileServer: "https://images.bika.test"
+        )
+        let url = try XCTUnwrap(media.imageURL)
+        let cache = ImageCache(countLimit: 10, totalCostLimit: 1_024 * 1_024)
+        let image = try XCTUnwrap(
+            UIImage(data: try makePNGData(size: CGSize(width: 400, height: 100)))
+        )
+        cache.setAsset(
+            DecodedImageAsset(image: image, displaySize: image.size),
+            for: url,
+            target: .fill(targetSize)
+        )
+        let host = UIHostingController(
+            rootView: MediaImageView(
+                media: media,
+                cornerRadius: 6,
+                targetSize: targetSize,
+                imageLoader: SizedImageLoader(dataByURL: [:]),
+                imageCache: cache
+            )
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_000, height: 1_000))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+
+        await Task.yield()
+        try await Task.sleep(for: .milliseconds(50))
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+
+        let fittedSize = host.sizeThatFits(
+            in: CGSize(width: 1_000, height: 1_000)
+        )
+        let fittedContentHeight = fittedSize.height
+            - host.view.safeAreaInsets.top
+            - host.view.safeAreaInsets.bottom
+        XCTAssertEqual(fittedSize.width, targetSize.width, accuracy: 0.01)
+        XCTAssertEqual(fittedContentHeight, targetSize.height, accuracy: 0.01)
     }
 
     private func load(

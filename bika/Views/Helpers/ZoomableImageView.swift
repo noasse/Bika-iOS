@@ -14,6 +14,8 @@ final class ZoomingImageScrollView: UIScrollView {
     private let spinner = UIActivityIndicatorView(style: .medium)
     private var needsBaseImageLayout = true
     private var lastBaseLayoutBoundsSize = CGSize.zero
+    private var layoutAspectRatio: CGFloat?
+    private var waitsForFitWidthBounds = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -26,6 +28,22 @@ final class ZoomingImageScrollView: UIScrollView {
     }
 
     func setImage(_ image: UIImage?) {
+        let imageSize = image?.size ?? .zero
+        let aspectRatio = imageSize.width > 0 && imageSize.height > 0
+            ? imageSize.height / imageSize.width
+            : 1
+        setImage(
+            image,
+            layoutAspectRatio: aspectRatio,
+            waitsForFitWidthBounds: false
+        )
+    }
+
+    func setImage(
+        _ image: UIImage?,
+        layoutAspectRatio: CGFloat,
+        waitsForFitWidthBounds: Bool
+    ) {
         if readerImageView.image == nil, image == nil {
             return
         }
@@ -33,6 +51,9 @@ final class ZoomingImageScrollView: UIScrollView {
             setZoomScale(minimumZoomScale, animated: false)
         }
         readerImageView.image = image
+        self.layoutAspectRatio = Self.validatedAspectRatio(layoutAspectRatio, image: image)
+        self.waitsForFitWidthBounds = waitsForFitWidthBounds
+        readerImageView.isHidden = image != nil && waitsForFitWidthBounds
         readerImageView.frame = .zero
         contentSize = .zero
         needsBaseImageLayout = true
@@ -82,7 +103,7 @@ final class ZoomingImageScrollView: UIScrollView {
     }
 
     private func layoutImageForCurrentBounds() {
-        guard let image = readerImageView.image else { return }
+        guard readerImageView.image != nil else { return }
         let boundsSize = bounds.size
         guard boundsSize.width > 0, boundsSize.height > 0 else { return }
 
@@ -101,14 +122,33 @@ final class ZoomingImageScrollView: UIScrollView {
             return
         }
 
-        let imageSize = image.size
-        guard imageSize.width > 0, imageSize.height > 0 else { return }
-        let fitHeight = imageSize.height * (boundsSize.width / imageSize.width)
+        guard let layoutAspectRatio else { return }
+        let fitHeight = boundsSize.width * layoutAspectRatio
         readerImageView.frame = CGRect(x: 0, y: 0, width: boundsSize.width, height: fitHeight)
         contentSize = readerImageView.frame.size
         lastBaseLayoutBoundsSize = boundsSize
         needsBaseImageLayout = false
+        readerImageView.isHidden = waitsForFitWidthBounds
+            && abs(boundsSize.height - fitHeight) >= 1
         centerImage()
+    }
+
+    private static func validatedAspectRatio(
+        _ aspectRatio: CGFloat,
+        image: UIImage?
+    ) -> CGFloat? {
+        if aspectRatio.isFinite, aspectRatio > 0 {
+            return aspectRatio
+        }
+
+        let imageSize = image?.size ?? .zero
+        guard imageSize.width.isFinite,
+              imageSize.height.isFinite,
+              imageSize.width > 0,
+              imageSize.height > 0 else {
+            return nil
+        }
+        return imageSize.height / imageSize.width
     }
 }
 
@@ -117,7 +157,8 @@ struct ZoomableImageView: UIViewRepresentable {
     let imageLoader: any ImageDataLoading
     let imageCache: ImageCache
     var sizing: ZoomableImageSizing = .viewport
-    var onImageSize: ((CGSize) -> Void)?
+    var pageID: ReaderPageID? = nil
+    var onImageAspectRatio: ((CGFloat) -> Void)?
     var onSingleTap: ((CGPoint) -> Void)?
 
     func makeCoordinator() -> Coordinator {
@@ -168,9 +209,14 @@ struct ZoomableImageView: UIViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, UIScrollViewDelegate {
+        private struct DisplayIdentity: Equatable {
+            let cacheIdentity: String
+            let pageID: ReaderPageID?
+        }
+
         var parent: ZoomableImageView
-        private var loadedIdentity: String?
-        private var loadingIdentity: String?
+        private var loadedIdentity: DisplayIdentity?
+        private var loadingIdentity: DisplayIdentity?
         private var loadTask: Task<Void, Never>?
 
         init(parent: ZoomableImageView) {
@@ -200,10 +246,13 @@ struct ZoomableImageView: UIViewRepresentable {
 
             let target = decodeTarget(in: scrollView)
             guard target.isUsable else { return }
-            let identity = ImageCache.cacheIdentity(
-                for: url,
-                target: target,
-                overscan: 2
+            let identity = DisplayIdentity(
+                cacheIdentity: ImageCache.cacheIdentity(
+                    for: url,
+                    target: target,
+                    overscan: 2
+                ),
+                pageID: parent.pageID
             )
             guard identity != loadedIdentity, identity != loadingIdentity else { return }
 
@@ -247,15 +296,19 @@ struct ZoomableImageView: UIViewRepresentable {
 
         private func display(
             _ asset: DecodedImageAsset,
-            identity: String,
+            identity: DisplayIdentity,
             in scrollView: ZoomingImageScrollView
         ) {
             loadTask = nil
             loadingIdentity = nil
             loadedIdentity = identity
             scrollView.setLoading(false)
-            scrollView.setImage(asset.image)
-            parent.onImageSize?(asset.displaySize)
+            scrollView.setImage(
+                asset.image,
+                layoutAspectRatio: asset.layoutAspectRatio,
+                waitsForFitWidthBounds: parent.sizing.isFitWidth
+            )
+            parent.onImageAspectRatio?(asset.layoutAspectRatio)
         }
 
         private func decodeTarget(in scrollView: ZoomingImageScrollView) -> ImageDecodeTarget {
@@ -304,5 +357,14 @@ private extension ImageDecodeTarget {
         case .fitWidth(let width):
             return width.isFinite && width > 0
         }
+    }
+}
+
+private extension ZoomableImageSizing {
+    var isFitWidth: Bool {
+        if case .fitWidth = self {
+            return true
+        }
+        return false
     }
 }

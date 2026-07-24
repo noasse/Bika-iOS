@@ -378,10 +378,10 @@ final class ReaderViewModelTests: XCTestCase {
         )
     }
 
-    func testVerticalReaderPageHeightUsesLoadedImageSizeBeforeEstimate() {
+    func testVerticalReaderPageHeightUsesExactAspectRatioBeforeEstimate() {
         let height = ReaderVerticalImageLayout.pageHeight(
             viewportWidth: 320,
-            imageSize: CGSize(width: 200, height: 600),
+            exactAspectRatio: 3,
             estimatedAspectRatio: 1.25
         )
 
@@ -391,27 +391,27 @@ final class ReaderViewModelTests: XCTestCase {
     func testVerticalReaderPageHeightUsesEstimatedRatioBeforeFallback() {
         let height = ReaderVerticalImageLayout.pageHeight(
             viewportWidth: 320,
-            imageSize: nil,
+            exactAspectRatio: nil,
             estimatedAspectRatio: 1.5
         )
 
         XCTAssertEqual(height, 480, accuracy: 0.01)
     }
 
-    func testVerticalReaderPageHeightUsesFallbackWithoutSizeOrEstimate() {
+    func testVerticalReaderPageHeightUsesDefaultRatioWithoutExactOrEstimate() {
         let height = ReaderVerticalImageLayout.pageHeight(
             viewportWidth: 320,
-            imageSize: nil,
+            exactAspectRatio: nil,
             estimatedAspectRatio: nil
         )
 
-        XCTAssertEqual(height, 500, accuracy: 0.01)
+        XCTAssertEqual(height, 480, accuracy: 0.01)
     }
 
-    func testVerticalReaderPageHeightIgnoresInvalidImageSize() {
+    func testVerticalReaderPageHeightIgnoresInvalidExactAspectRatio() {
         let height = ReaderVerticalImageLayout.pageHeight(
             viewportWidth: 320,
-            imageSize: CGSize(width: 0, height: 600),
+            exactAspectRatio: 0,
             estimatedAspectRatio: 1.5
         )
 

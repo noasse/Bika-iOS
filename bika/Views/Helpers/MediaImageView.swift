@@ -23,6 +23,7 @@ struct MediaImageView: View {
                         .foregroundStyle(.gray)
                 }
         }
+        .frame(width: targetSize?.width, height: targetSize?.height)
         .clipped()
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
     }

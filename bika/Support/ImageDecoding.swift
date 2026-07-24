@@ -30,6 +30,17 @@ nonisolated enum ImageDecodeTarget: Sendable, Equatable {
 nonisolated struct DecodedImageAsset: @unchecked Sendable {
     let image: UIImage
     let displaySize: CGSize
+
+    var layoutAspectRatio: CGFloat {
+        let imageSize = image.size
+        guard imageSize.width.isFinite,
+              imageSize.height.isFinite,
+              imageSize.width > 0,
+              imageSize.height > 0 else {
+            return 1
+        }
+        return imageSize.height / imageSize.width
+    }
 }
 
 nonisolated enum ImageDecoding {

@@ -41,11 +41,12 @@ var layoutAspectRatio: CGFloat {
 ```swift
 struct ReaderPageID: Hashable {
     let episodeID: String
-    let pageID: String
+    let backendPageID: String?
+    let imageURL: URL
 }
 ```
 
-布局缓存只保存 `layoutAspectRatio`，图片继续由 `ImageCache` 管理。
+页面 ID 同时纳入章节、后端页面 ID 和图片 URL；即使同一 URL 被不同章节复用，或同一页面位置在刷新后换图，也不会承接旧回调。布局缓存只保存 `layoutAspectRatio`，图片继续由 `ImageCache` 管理。
 
 ## 图片显示流程
 
