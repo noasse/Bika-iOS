@@ -24,6 +24,35 @@
 
 ---
 
+## Releases
+
+Current versions:
+
+| Platform | Version | Package |
+| --- | --- | --- |
+| iOS | `v1.2.1` | Unsigned IPA |
+| macOS | `v1.0` | DMG |
+
+Download both platforms from [GitHub Releases](https://github.com/noasse/Bika-iOS/releases).
+
+### iOS Installation
+
+Download the `Bika-iOS-*-unsigned.ipa` asset from the matching iOS release. The IPA is not signed, so it must be signed with your own Apple certificate or installed with a compatible sideloading solution.
+
+### macOS Installation
+
+1. Download and open the macOS DMG.
+2. Drag `BikaMacos.app` into `/Applications`.
+3. Open the app from `/Applications`.
+
+If Gatekeeper prevents the app from opening, first use **System Settings > Privacy & Security > Open Anyway**. For a package downloaded from this repository that you trust, you can alternatively remove its quarantine attribute:
+
+```bash
+sudo xattr -r -d com.apple.quarantine /Applications/BikaMacos.app
+```
+
+The macOS app currently uses manual updates. Download a newer DMG from GitHub Releases when a new macOS version is published.
+
 ## Why Bika
 
 Bika is built around real reading workflows instead of isolated UI demos. It covers the full path from content discovery to long-session reading, then keeps the iOS and macOS experiences aligned where the workflows overlap.
@@ -37,7 +66,7 @@ Bika is built around real reading workflows instead of isolated UI demos. It cov
 | Area | What It Does |
 | --- | --- |
 | Discovery | Browse categories, rankings, recommendations, tags, authors, and sorted search results with pagination and restoration. |
-| Reading | Read with horizontal paging or vertical scrolling, persist chapter/page position, and continue where you left off. |
+| Reading | Read with horizontal paging or vertical scrolling, stable image sizing and caching, persisted chapter/page position, and continue where you left off. |
 | Community | Browse comments and child comments, with like and reply actions wired into the app flow. |
 | Library | Manage favourites, reading history, theme mode, image quality, and content filtering settings. |
 | Cloud Sync | Optionally sync history between iOS and macOS through a private self-hosted HTTPS endpoint. |
@@ -87,9 +116,12 @@ Cloud history sync is disabled by default and stores no server details in the re
 
 ### macOS Target
 
-The macOS app lives in `BikaMacos/` and shares the existing models, networking, dependency setup, and image loading infrastructure with the iOS target. The desktop layer adds stores and views for split navigation, detail panes, settings, history, blocked categories, comments, and independent reader windows.
+The macOS app lives in `BikaMacos/` and shares the existing models, networking, dependency setup, and image loading infrastructure with the iOS target. The desktop layer uses dedicated authentication, library, detail, comments, reading-history, and reader stores for split navigation, detail panes, settings, history, blocked categories, comments, and independent reader windows.
 
 - [BikaMacosApp.swift](BikaMacos/BikaMacosApp.swift)
+- [MacAuthenticationStore.swift](BikaMacos/Stores/MacAuthenticationStore.swift)
+- [MacLibraryListStore.swift](BikaMacos/Stores/MacLibraryListStore.swift)
+- [MacComicDetailStore.swift](BikaMacos/Stores/MacComicDetailStore.swift)
 - [MacLibraryModel.swift](BikaMacos/Stores/MacLibraryModel.swift)
 - [MacReaderWindowView.swift](BikaMacos/Views/MacReaderWindowView.swift)
 - [MacComicDetailPane.swift](BikaMacos/Views/MacComicDetailPane.swift)

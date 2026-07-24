@@ -24,6 +24,35 @@
 
 ---
 
+## 下载与安装
+
+当前版本：
+
+| 平台 | 版本 | 安装包 |
+| --- | --- | --- |
+| iOS | `v1.2.1` | 未签名 IPA |
+| macOS | `v1.0` | DMG |
+
+两个平台的安装包均可在 [GitHub Releases](https://github.com/noasse/Bika-iOS/releases) 下载。
+
+### iOS 安装
+
+从对应的 iOS Release 下载 `Bika-iOS-*-unsigned.ipa`。该 IPA 未签名，需要使用自己的 Apple 证书签名，或通过兼容的侧载方案安装。
+
+### macOS 安装
+
+1. 下载并打开 macOS DMG。
+2. 将 `BikaMacos.app` 拖入 `/Applications`。
+3. 从 `/Applications` 打开应用。
+
+如果 Gatekeeper 阻止应用运行，请先前往 **系统设置 > 隐私与安全性 > 仍要打开**。对于从本仓库下载且确认可信的安装包，也可以移除隔离属性：
+
+```bash
+sudo xattr -r -d com.apple.quarantine /Applications/BikaMacos.app
+```
+
+macOS 版本目前采用手动更新。发布新版本后，请前往 GitHub Releases 下载新的 DMG。
+
 ## 为什么是 Bika
 
 Bika 不是只展示几个独立页面的 Demo，而是围绕真实阅读流程搭建的完整客户端。它覆盖从发现内容到长时间阅读的核心体验，同时让 iOS 与 macOS 在重叠用户流程上保持一致。
@@ -37,7 +66,7 @@ Bika 不是只展示几个独立页面的 Demo，而是围绕真实阅读流程�
 | 模块 | 能力 |
 | --- | --- |
 | 内容发现 | 分类、排行榜、推荐、标签、作者，以及支持排序、分页和恢复的搜索结果。 |
-| 阅读器 | 横向翻页与纵向滚动两种阅读模式，持久化章节和页码，支持继续阅读。 |
+| 阅读器 | 横向翻页与纵向滚动两种阅读模式，稳定的图片尺寸与缓存，持久化章节和页码，并支持继续阅读。 |
 | 社区 | 评论与子评论浏览，串联点赞和回复动作。 |
 | 书架 | 收藏、历史记录、主题模式、图片质量和内容过滤设置。 |
 | 云端同步 | 可选的私人云端历史同步，让 iOS 与 macOS 共用自建 HTTPS 服务端。 |
@@ -87,9 +116,12 @@ flowchart LR
 
 ### macOS Target
 
-macOS 应用代码位于 `BikaMacos/`，复用现有模型、网络层、依赖装配和图片加载基础设施。桌面层增加了 macOS 专用的 store 与 view，用于 split navigation、详情页、设置、阅读历史、屏蔽分类、评论以及独立阅读器窗口。
+macOS 应用代码位于 `BikaMacos/`，复用现有模型、网络层、依赖装配和图片加载基础设施。桌面层使用独立的认证、书架列表、漫画详情、评论、阅读历史和阅读器 Store，用于 split navigation、详情页、设置、阅读历史、屏蔽分类、评论以及独立阅读器窗口。
 
 - [BikaMacosApp.swift](BikaMacos/BikaMacosApp.swift)
+- [MacAuthenticationStore.swift](BikaMacos/Stores/MacAuthenticationStore.swift)
+- [MacLibraryListStore.swift](BikaMacos/Stores/MacLibraryListStore.swift)
+- [MacComicDetailStore.swift](BikaMacos/Stores/MacComicDetailStore.swift)
 - [MacLibraryModel.swift](BikaMacos/Stores/MacLibraryModel.swift)
 - [MacReaderWindowView.swift](BikaMacos/Views/MacReaderWindowView.swift)
 - [MacComicDetailPane.swift](BikaMacos/Views/MacComicDetailPane.swift)
