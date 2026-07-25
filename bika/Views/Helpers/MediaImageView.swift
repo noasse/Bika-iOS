@@ -14,7 +14,8 @@ struct MediaImageView: View {
             targetSize: targetSize,
             contentMode: contentMode,
             imageLoader: imageLoader,
-            imageCache: imageCache
+            imageCache: imageCache,
+            purpose: .cover
         ) {
             RoundedRectangle(cornerRadius: cornerRadius)
                 .fill(Color.gray.opacity(0.3))

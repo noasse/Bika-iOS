@@ -402,7 +402,16 @@ struct ComicReaderView: View {
         }
 
         guard let target = imagePrefetchTarget() else { return nil }
-        return ReaderImagePrefetchRequest(pageID: pageID, url: url, target: target)
+        return ReaderImagePrefetchRequest(
+            pageID: pageID,
+            url: url,
+            target: target,
+            diagnosticContext: ImageDiagnosticContext(
+                purpose: .readerPrefetch,
+                url: url,
+                pageStableID: pageID.backendPageID ?? pageID.imageURL.absoluteString
+            )
+        )
     }
 
     private func imagePrefetchTarget() -> ImageDecodeTarget? {
@@ -576,6 +585,16 @@ nonisolated struct ReaderImagePrefetchRequest: Equatable, Sendable {
     let pageID: ReaderPageID
     let url: URL
     let target: ImageDecodeTarget
+    let diagnosticContext: ImageDiagnosticContext
+
+    static func == (
+        lhs: ReaderImagePrefetchRequest,
+        rhs: ReaderImagePrefetchRequest
+    ) -> Bool {
+        lhs.pageID == rhs.pageID
+            && lhs.url == rhs.url
+            && lhs.target == rhs.target
+    }
 }
 
 nonisolated private struct ReaderImagePrefetchResult: Sendable {
@@ -632,16 +651,6 @@ nonisolated enum ReaderImagePrefetcher {
         imageCache: ImageCache
     ) async -> ReaderImagePrefetchResult? {
         guard !Task.isCancelled else { return nil }
-        if let cached = imageCache.asset(
-            for: request.url,
-            target: request.target,
-            overscan: 2
-        ) {
-            return ReaderImagePrefetchResult(
-                pageID: request.pageID,
-                layoutAspectRatio: cached.layoutAspectRatio
-            )
-        }
 
         do {
             let asset = try await imageCache.loadAsset(
@@ -649,7 +658,8 @@ nonisolated enum ReaderImagePrefetcher {
                 target: request.target,
                 overscan: 2,
                 priority: .utility,
-                imageLoader: imageLoader
+                imageLoader: imageLoader,
+                diagnosticContext: request.diagnosticContext
             )
             guard !Task.isCancelled else { return nil }
             return ReaderImagePrefetchResult(

@@ -146,6 +146,7 @@ final class ImagePipelineTests: XCTestCase {
 
     @MainActor
     func testZoomableCoordinatorRepublishesAspectRatioWhenPageIdentityChangesForSameURL() async throws {
+        let diagnostics = RecordingImageDiagnostics()
         let url = try XCTUnwrap(URL(string: "https://images.bika.test/reused.jpg"))
         let target = ImageDecodeTarget.fitWidth(320)
         let cache = ImageCache(countLimit: 10, totalCostLimit: 1_024 * 1_024)
@@ -178,6 +179,7 @@ final class ImagePipelineTests: XCTestCase {
             imageCache: cache,
             sizing: .fitWidth(320),
             pageID: firstPageID,
+            diagnostics: diagnostics,
             onImageAspectRatio: { publishedRatios.append($0) }
         ).makeCoordinator()
 
@@ -190,12 +192,18 @@ final class ImagePipelineTests: XCTestCase {
             imageCache: cache,
             sizing: .fitWidth(320),
             pageID: secondPageID,
+            diagnostics: diagnostics,
             onImageAspectRatio: { publishedRatios.append($0) }
         )
         coordinator.loadImageIfNeeded(in: scrollView)
         await waitUntilAsync { publishedRatios.count == 2 }
 
         XCTAssertEqual(publishedRatios, [2.5, 2.5])
+        XCTAssertEqual(diagnostics.events.filter {
+            $0.purpose == .readerVisible
+                && $0.stage == .display
+                && $0.action == .succeeded
+        }.count, 2)
     }
 
     func testReaderImagePrefetcherReturnsRatiosByStablePageIdentity() async throws {
@@ -232,17 +240,75 @@ final class ImagePipelineTests: XCTestCase {
             overscan: 2
         )
 
+        let requests = [
+            ReaderImagePrefetchRequest(
+                pageID: firstPageID,
+                url: firstURL,
+                target: target,
+                diagnosticContext: ImageDiagnosticContext(
+                    purpose: .readerPrefetch,
+                    url: firstURL,
+                    pageStableID: firstPageID.backendPageID
+                )
+            ),
+            ReaderImagePrefetchRequest(
+                pageID: secondPageID,
+                url: secondURL,
+                target: target,
+                diagnosticContext: ImageDiagnosticContext(
+                    purpose: .readerPrefetch,
+                    url: secondURL,
+                    pageStableID: secondPageID.backendPageID
+                )
+            ),
+        ]
         let ratios = await ReaderImagePrefetcher.prefetch(
-            requests: [
-                ReaderImagePrefetchRequest(pageID: firstPageID, url: firstURL, target: target),
-                ReaderImagePrefetchRequest(pageID: secondPageID, url: secondURL, target: target),
-            ],
+            requests: requests,
             imageLoader: CountingImageDataLoader(data: Data()),
             imageCache: cache
         )
 
         XCTAssertEqual(try XCTUnwrap(ratios[firstPageID]), 2, accuracy: 0.001)
         XCTAssertEqual(try XCTUnwrap(ratios[secondPageID]), 3, accuracy: 0.001)
+        XCTAssertEqual(
+            requests.map(\.diagnosticContext.purpose),
+            Array(repeating: .readerPrefetch, count: requests.count)
+        )
+    }
+
+    func testPrefetchRequestEqualityIgnoresDiagnosticRequestID() throws {
+        let url = try XCTUnwrap(URL(string: "https://images.bika.test/prefetch-key.jpg"))
+        let pageID = ReaderPageID(
+            episodeID: "episode",
+            backendPageID: "page",
+            imageURL: url
+        )
+        let first = ReaderImagePrefetchRequest(
+            pageID: pageID,
+            url: url,
+            target: .fitWidth(320),
+            diagnosticContext: ImageDiagnosticContext(
+                purpose: .readerPrefetch,
+                url: url,
+                pageStableID: "page"
+            )
+        )
+        let second = ReaderImagePrefetchRequest(
+            pageID: pageID,
+            url: url,
+            target: .fitWidth(320),
+            diagnosticContext: ImageDiagnosticContext(
+                purpose: .readerPrefetch,
+                url: url,
+                pageStableID: "page"
+            )
+        )
+
+        XCTAssertNotEqual(
+            first.diagnosticContext.requestID,
+            second.diagnosticContext.requestID
+        )
+        XCTAssertEqual(first, second)
     }
 
     func testImageLoaderCoalescesConcurrentRequestsForTheSameURL() async throws {
