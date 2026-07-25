@@ -248,6 +248,10 @@ final class ImagePipelineTests: XCTestCase {
     func testImageLoaderCoalescesConcurrentRequestsForTheSameURL() async throws {
         let requestCount = LockedValue(0)
         let url = try XCTUnwrap(URL(string: "https://images.bika.test/coalesced.jpg"))
+        let validImageData = try makeJPEGData(
+            size: CGSize(width: 40, height: 80),
+            orientation: .up
+        )
         let responseCache = URLCache(memoryCapacity: 1_024 * 1_024, diskCapacity: 0)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
@@ -258,7 +262,7 @@ final class ImagePipelineTests: XCTestCase {
             return MockHTTPResponse(
                 statusCode: 200,
                 headers: ["Content-Type": "image/jpeg"],
-                data: Data(repeating: 7, count: 128)
+                data: validImageData
             )
         }
         let loader = URLSessionImageDataLoader(
@@ -272,6 +276,87 @@ final class ImagePipelineTests: XCTestCase {
 
         XCTAssertEqual(values[0], values[1])
         XCTAssertEqual(requestCount.value, 1)
+    }
+
+    func testImageLoaderDiscardsUndecodableCachedResponseAndReloads() async throws {
+        let requestCount = LockedValue(0)
+        let url = try XCTUnwrap(URL(string: "https://images.bika.test/poisoned-cache.jpg"))
+        let validImageData = try makeJPEGData(
+            size: CGSize(width: 40, height: 80),
+            orientation: .up
+        )
+        let responseCache = URLCache(memoryCapacity: 1_024 * 1_024, diskCapacity: 0)
+        let cachedResponse = try XCTUnwrap(HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "text/html"]
+        ))
+        responseCache.storeCachedResponse(
+            CachedURLResponse(
+                response: cachedResponse,
+                data: Data("<html>temporary error</html>".utf8)
+            ),
+            for: URLRequest(url: url)
+        )
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        configuration.urlCache = responseCache
+        MockURLProtocol.requestHandler = { _ in
+            requestCount.value += 1
+            return MockHTTPResponse(
+                statusCode: 200,
+                headers: ["Content-Type": "image/jpeg"],
+                data: validImageData
+            )
+        }
+        let loader = URLSessionImageDataLoader(
+            session: URLSession(configuration: configuration),
+            responseCache: responseCache
+        )
+
+        let loadedData = try await loader.data(from: url)
+
+        XCTAssertEqual(loadedData, validImageData)
+        XCTAssertEqual(requestCount.value, 1)
+    }
+
+    func testImageLoaderRetriesTemporaryServerFailure() async throws {
+        let requestCount = LockedValue(0)
+        let url = try XCTUnwrap(URL(string: "https://images.bika.test/transient-failure.jpg"))
+        let validImageData = try makeJPEGData(
+            size: CGSize(width: 40, height: 80),
+            orientation: .up
+        )
+        let responseCache = URLCache(memoryCapacity: 1_024 * 1_024, diskCapacity: 0)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        configuration.urlCache = responseCache
+        MockURLProtocol.requestHandler = { _ in
+            requestCount.value += 1
+            if requestCount.value == 1 {
+                return MockHTTPResponse(
+                    statusCode: 503,
+                    headers: ["Content-Type": "text/plain"],
+                    data: Data("try again".utf8)
+                )
+            }
+            return MockHTTPResponse(
+                statusCode: 200,
+                headers: ["Content-Type": "image/jpeg"],
+                data: validImageData
+            )
+        }
+        let loader = URLSessionImageDataLoader(
+            session: URLSession(configuration: configuration),
+            responseCache: responseCache
+        )
+
+        let loadedData = try await loader.data(from: url)
+
+        XCTAssertEqual(loadedData, validImageData)
+        XCTAssertEqual(requestCount.value, 2)
     }
 
     func testCoalescingRegistryCancellingOneWaiterKeepsSharedOperationAlive() async throws {
@@ -424,6 +509,53 @@ final class ImagePipelineTests: XCTestCase {
         XCTAssertEqual(assets[0].displaySize, assets[1].displaySize)
         let loadCount = await loader.loadCount
         XCTAssertEqual(loadCount, 1)
+    }
+
+    func testImageCacheEvictsHeaderOnlyCachedImageAndReloadsDecodablePixels() async throws {
+        let requestCount = LockedValue(0)
+        let url = try XCTUnwrap(URL(string: "https://images.bika.test/truncated-cache.jpg"))
+        let validImageData = try makeJPEGData(
+            size: CGSize(width: 40, height: 80),
+            orientation: .up
+        )
+        let headerOnlyData = try makeHeaderOnlyImageData(from: validImageData)
+        let responseCache = URLCache(memoryCapacity: 1_024 * 1_024, diskCapacity: 0)
+        let cachedResponse = try XCTUnwrap(HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "image/jpeg"]
+        ))
+        responseCache.storeCachedResponse(
+            CachedURLResponse(response: cachedResponse, data: headerOnlyData),
+            for: URLRequest(url: url)
+        )
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        configuration.urlCache = responseCache
+        MockURLProtocol.requestHandler = { _ in
+            requestCount.value += 1
+            return MockHTTPResponse(
+                statusCode: 200,
+                headers: ["Content-Type": "image/jpeg"],
+                data: validImageData
+            )
+        }
+        let loader = URLSessionImageDataLoader(
+            session: URLSession(configuration: configuration),
+            responseCache: responseCache
+        )
+        let cache = ImageCache(countLimit: 10, totalCostLimit: 1_024 * 1_024)
+
+        let asset = try await cache.loadAsset(
+            for: url,
+            target: .fitWidth(100),
+            imageLoader: loader
+        )
+
+        XCTAssertEqual(asset.displaySize, CGSize(width: 40, height: 80))
+        XCTAssertEqual(requestCount.value, 1)
     }
 
     func testImageCacheKeepsZoomableAndThumbnailVariantsSeparate() throws {
@@ -615,6 +747,28 @@ final class ImagePipelineTests: XCTestCase {
         )
         XCTAssertTrue(CGImageDestinationFinalize(destination))
         return data as Data
+    }
+
+    private func makeHeaderOnlyImageData(from validImageData: Data) throws -> Data {
+        for length in 1..<validImageData.count {
+            let candidate = Data(validImageData.prefix(length))
+            guard let source = CGImageSourceCreateWithData(candidate as CFData, nil),
+                  CGImageSourceGetCount(source) > 0,
+                  CGImageSourceGetType(source) != nil,
+                  CGImageSourceCopyPropertiesAtIndex(source, 0, nil) != nil else {
+                continue
+            }
+
+            if ImageDecoding.decodeAsset(from: candidate, target: .fitWidth(100)) == nil {
+                return candidate
+            }
+        }
+
+        throw NSError(
+            domain: "ImagePipelineTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "未能构造只含图片头、无法解码像素的测试数据"]
+        )
     }
 }
 

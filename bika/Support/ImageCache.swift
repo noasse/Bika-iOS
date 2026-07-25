@@ -148,37 +148,47 @@ nonisolated final class ImageCache: @unchecked Sendable {
                 return cached
             }
 
-            let data = try await imageLoader.data(from: url)
-            try Task.checkCancellation()
-            let decodeTask = Task.detached(priority: priority) { () throws -> DecodedImageAsset in
+            var decodeAttempt = 0
+            while true {
+                let data = try await imageLoader.data(from: url)
                 try Task.checkCancellation()
-                guard let decoded = ImageDecoding.decodeAsset(
-                    from: data,
-                    target: target,
-                    overscan: overscan
-                ) else {
-                    throw URLError(.cannotDecodeContentData)
-                }
-                try Task.checkCancellation()
-                return decoded
-            }
-            let decoded = try await withTaskCancellationHandler {
-                try await decodeTask.value
-            } onCancel: {
-                decodeTask.cancel()
-            }
 
-            try Task.checkCancellation()
-            guard storeAsset(
-                decoded,
-                for: url,
-                target: target,
-                overscan: overscan,
-                expectedGeneration: expectedGeneration
-            ) else {
-                throw CancellationError()
+                do {
+                    let decodeTask = Task.detached(priority: priority) { () throws -> DecodedImageAsset in
+                        try Task.checkCancellation()
+                        guard let decoded = ImageDecoding.decodeAsset(
+                            from: data,
+                            target: target,
+                            overscan: overscan
+                        ) else {
+                            throw URLError(.cannotDecodeContentData)
+                        }
+                        try Task.checkCancellation()
+                        return decoded
+                    }
+                    let decoded = try await withTaskCancellationHandler {
+                        try await decodeTask.value
+                    } onCancel: {
+                        decodeTask.cancel()
+                    }
+
+                    try Task.checkCancellation()
+                    guard storeAsset(
+                        decoded,
+                        for: url,
+                        target: target,
+                        overscan: overscan,
+                        expectedGeneration: expectedGeneration
+                    ) else {
+                        throw CancellationError()
+                    }
+                    return decoded
+                } catch let error as URLError
+                    where error.code == .cannotDecodeContentData && decodeAttempt == 0 {
+                    decodeAttempt += 1
+                    imageLoader.invalidateCachedData(for: url)
+                }
             }
-            return decoded
         }
     }
 

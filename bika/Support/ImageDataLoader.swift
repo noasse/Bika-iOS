@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
@@ -179,21 +180,33 @@ actor CoalescingTaskRegistry<Key: Hashable & Sendable, Value: Sendable> {
 
 nonisolated protocol ImageDataLoading: Sendable {
     func data(from url: URL) async throws -> Data
+    func invalidateCachedData(for url: URL)
+}
+
+extension ImageDataLoading {
+    nonisolated func invalidateCachedData(for url: URL) {}
 }
 
 final nonisolated class URLSessionImageDataLoader: @unchecked Sendable, ImageDataLoading {
+    private struct HTTPStatusError: Error {
+        let statusCode: Int
+    }
+
     private let session: URLSession
     private let responseCache: URLCache
     private let requestRegistry: CoalescingTaskRegistry<URL, Data>
+    private let retryDelays: [Duration]
 
     init(
         session: URLSession,
         responseCache: URLCache,
-        requestRegistry: CoalescingTaskRegistry<URL, Data> = .init()
+        requestRegistry: CoalescingTaskRegistry<URL, Data> = .init(),
+        retryDelays: [Duration] = [.milliseconds(200), .milliseconds(600)]
     ) {
         self.session = session
         self.responseCache = responseCache
         self.requestRegistry = requestRegistry
+        self.retryDelays = retryDelays
     }
 
     convenience init(session: URLSession) {
@@ -230,6 +243,7 @@ final nonisolated class URLSessionImageDataLoader: @unchecked Sendable, ImageDat
     func data(from url: URL) async throws -> Data {
         let session = session
         let responseCache = responseCache
+        let retryDelays = retryDelays
         return try await requestRegistry.value(for: url) {
             var request = URLRequest(
                 url: url,
@@ -238,26 +252,96 @@ final nonisolated class URLSessionImageDataLoader: @unchecked Sendable, ImageDat
             )
             request.httpMethod = "GET"
 
-            if let cached = responseCache.cachedResponse(for: request), !cached.data.isEmpty {
-                return cached.data
+            if let cached = responseCache.cachedResponse(for: request) {
+                if Self.isUsableImageResponse(cached.response, data: cached.data) {
+                    return cached.data
+                }
+                responseCache.removeCachedResponse(for: request)
             }
 
-            let (data, response) = try await session.data(for: request)
-            try Task.checkCancellation()
-            if let httpResponse = response as? HTTPURLResponse,
-               !(200...299).contains(httpResponse.statusCode) {
-                throw URLError(.badServerResponse)
-            }
-            guard !data.isEmpty else {
-                throw URLError(.zeroByteResource)
-            }
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            var attempt = 0
+            while true {
+                do {
+                    let (data, response) = try await session.data(for: request)
+                    try Task.checkCancellation()
+                    if let httpResponse = response as? HTTPURLResponse,
+                       !(200...299).contains(httpResponse.statusCode) {
+                        throw HTTPStatusError(statusCode: httpResponse.statusCode)
+                    }
+                    guard !data.isEmpty else {
+                        throw URLError(.zeroByteResource)
+                    }
+                    guard Self.isDecodableImageData(data) else {
+                        throw URLError(.cannotDecodeContentData)
+                    }
 
-            try Task.checkCancellation()
-            responseCache.storeCachedResponse(
-                CachedURLResponse(response: response, data: data, storagePolicy: .allowed),
-                for: request
-            )
-            return data
+                    try Task.checkCancellation()
+                    responseCache.storeCachedResponse(
+                        CachedURLResponse(response: response, data: data, storagePolicy: .allowed),
+                        for: request
+                    )
+                    return data
+                } catch {
+                    try Task.checkCancellation()
+                    guard attempt < retryDelays.count,
+                          Self.shouldRetry(error) else {
+                        throw error
+                    }
+                    let delay = retryDelays[attempt]
+                    attempt += 1
+                    try await Task.sleep(for: delay)
+                }
+            }
+        }
+    }
+
+    func invalidateCachedData(for url: URL) {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        responseCache.removeCachedResponse(for: request)
+    }
+
+    private static func isUsableImageResponse(_ response: URLResponse, data: Data) -> Bool {
+        if let httpResponse = response as? HTTPURLResponse,
+           !(200...299).contains(httpResponse.statusCode) {
+            return false
+        }
+        return isDecodableImageData(data)
+    }
+
+    private static func isDecodableImageData(_ data: Data) -> Bool {
+        guard !data.isEmpty,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) > 0,
+              CGImageSourceGetType(source) != nil else {
+            return false
+        }
+        return CGImageSourceCopyPropertiesAtIndex(source, 0, nil) != nil
+    }
+
+    private static func shouldRetry(_ error: Error) -> Bool {
+        if let statusError = error as? HTTPStatusError {
+            return statusError.statusCode == 408
+                || statusError.statusCode == 425
+                || statusError.statusCode == 429
+                || (500...599).contains(statusError.statusCode)
+        }
+
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .timedOut,
+             .cannotFindHost,
+             .cannotConnectToHost,
+             .networkConnectionLost,
+             .dnsLookupFailed,
+             .notConnectedToInternet,
+             .zeroByteResource,
+             .cannotDecodeContentData,
+             .badServerResponse:
+            return true
+        default:
+            return false
         }
     }
 }
