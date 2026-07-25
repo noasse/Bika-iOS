@@ -1,4 +1,33 @@
+import Darwin
 import SwiftUI
+
+nonisolated struct ImageDiagnosticsDeviceInfo: Equatable, Sendable {
+    let model: String
+    let systemName: String
+    let systemVersion: String
+
+    static var current: ImageDiagnosticsDeviceInfo {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let mirror = Mirror(reflecting: systemInfo.machine)
+        let identifier = mirror.children.reduce(into: "") { value, element in
+            guard let byte = element.value as? Int8, byte != 0 else { return }
+            value.append(Character(UnicodeScalar(UInt8(byte))))
+        }
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        return ImageDiagnosticsDeviceInfo(
+            model: identifier.isEmpty ? "unknown" : identifier,
+            systemName: "iOS",
+            systemVersion: [
+                version.majorVersion,
+                version.minorVersion,
+                version.patchVersion,
+            ]
+            .map(String.init)
+            .joined(separator: ".")
+        )
+    }
+}
 
 @Observable
 final class SettingsViewModel {
@@ -18,25 +47,46 @@ final class SettingsViewModel {
     var imageCacheMessage: String?
     var isRefreshingImageCache = false
     var isClearingImageCache = false
+    var imageDiagnosticsCountDescription = "计算中..."
+    var imageDiagnosticsLastErrorDescription = "暂无错误"
+    var imageDiagnosticsMessage: String?
+    var isRefreshingImageDiagnostics = false
+    var isClearingImageDiagnostics = false
+    var isExportingImageDiagnostics = false
 
     private let blockedCategoriesManager: BlockedCategoriesManager
     private let keyValueStore: any KeyValueStore
     private let imageCacheManager: any ImageCacheManaging
+    private let imageDiagnostics: any ImageDiagnosticsManaging
+    private let buildNumber: String
+    private let deviceInfo: ImageDiagnosticsDeviceInfo
+    private let imageDiagnosticsDateFormatter: DateFormatter
 
     init(
         themeManager: ThemeManager = .shared,
         blockedCategoriesManager: BlockedCategoriesManager = .shared,
         keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore,
         imageCacheManager: any ImageCacheManaging = ImageCacheController.shared,
+        imageDiagnostics: any ImageDiagnosticsManaging = ImageDiagnosticsService.shared,
         isUITesting: Bool = AppDependencies.shared.isUITesting,
-        appVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知版本"
+        appVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知版本",
+        buildNumber: String = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "未知",
+        deviceInfo: ImageDiagnosticsDeviceInfo = .current
     ) {
         self.themeManager = themeManager
         self.blockedCategoriesManager = blockedCategoriesManager
         self.keyValueStore = keyValueStore
         self.imageCacheManager = imageCacheManager
+        self.imageDiagnostics = imageDiagnostics
         self.isUITesting = isUITesting
         self.appVersion = appVersion
+        self.buildNumber = buildNumber
+        self.deviceInfo = deviceInfo
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = .current
+        dateFormatter.dateStyle = .short
+        dateFormatter.timeStyle = .short
+        imageDiagnosticsDateFormatter = dateFormatter
         let savedImageQuality = keyValueStore.string(forKey: APIConfig.imageQualityKey) ?? APIConfig.imageQualityDefault
         imageQuality = ImageQuality(rawValue: savedImageQuality) ?? .original
         loadCloudHistorySettings()
@@ -78,6 +128,55 @@ final class SettingsViewModel {
         let usage = await imageCacheManager.usage()
         imageCacheSizeDescription = Self.formatByteCount(usage.totalBytes)
         imageCacheMessage = "图片缓存已清理"
+    }
+
+    func refreshImageDiagnostics() async {
+        guard !isRefreshingImageDiagnostics else { return }
+        isRefreshingImageDiagnostics = true
+        defer { isRefreshingImageDiagnostics = false }
+
+        let status = await imageDiagnostics.status()
+        applyImageDiagnosticsStatus(status)
+    }
+
+    func clearImageDiagnostics() async {
+        guard !isClearingImageDiagnostics else { return }
+        isClearingImageDiagnostics = true
+        imageDiagnosticsMessage = nil
+        defer { isClearingImageDiagnostics = false }
+
+        do {
+            try await imageDiagnostics.clear()
+            let status = await imageDiagnostics.status()
+            applyImageDiagnosticsStatus(status)
+            imageDiagnosticsMessage = "图片诊断日志已清空"
+        } catch {
+            imageDiagnosticsMessage = "清空图片诊断日志失败：\(error.localizedDescription)"
+        }
+    }
+
+    func exportImageDiagnostics() async -> URL? {
+        guard !isExportingImageDiagnostics else { return nil }
+        isExportingImageDiagnostics = true
+        imageDiagnosticsMessage = nil
+        defer { isExportingImageDiagnostics = false }
+
+        do {
+            return try await imageDiagnostics.export(
+                metadata: ImageDiagnosticsMetadata(
+                    exportedAt: Date(),
+                    appVersion: appVersion,
+                    buildNumber: buildNumber,
+                    deviceModel: deviceInfo.model,
+                    systemName: deviceInfo.systemName,
+                    systemVersion: deviceInfo.systemVersion,
+                    imageQuality: imageQuality.rawValue
+                )
+            )
+        } catch {
+            imageDiagnosticsMessage = "导出图片诊断日志失败：\(error.localizedDescription)"
+            return nil
+        }
     }
 
     func saveCloudHistorySettings() {
@@ -180,6 +279,13 @@ final class SettingsViewModel {
             return description
         }
         return error.localizedDescription
+    }
+
+    private func applyImageDiagnosticsStatus(_ status: ImageDiagnosticsStatus) {
+        imageDiagnosticsCountDescription = "\(status.eventCount) 条"
+        imageDiagnosticsLastErrorDescription = status.lastErrorAt.map {
+            imageDiagnosticsDateFormatter.string(from: $0)
+        } ?? "暂无错误"
     }
 
     private static func formatByteCount(_ bytes: Int) -> String {
