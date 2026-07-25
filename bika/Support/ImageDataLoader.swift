@@ -31,6 +31,11 @@ nonisolated private final class CoalescingWaiterCancellationState: @unchecked Se
     }
 }
 
+nonisolated struct CoalescingTaskRegistration: Equatable, Sendable {
+    let operationID: UUID
+    let joinedExistingOperation: Bool
+}
+
 actor CoalescingTaskRegistry<Key: Hashable & Sendable, Value: Sendable> {
     private struct Entry {
         let id: UUID
@@ -46,6 +51,18 @@ actor CoalescingTaskRegistry<Key: Hashable & Sendable, Value: Sendable> {
         for key: Key,
         operation: @escaping @Sendable () async throws -> Value
     ) async throws -> Value {
+        try await value(
+            for: key,
+            onRegistration: { _ in },
+            operation: { _ in try await operation() }
+        )
+    }
+
+    nonisolated func value(
+        for key: Key,
+        onRegistration: @escaping @Sendable (CoalescingTaskRegistration) -> Void,
+        operation: @escaping @Sendable (UUID) async throws -> Value
+    ) async throws -> Value {
         let generation = epoch.current
         let waiterID = UUID()
         let cancellationState = CoalescingWaiterCancellationState()
@@ -57,6 +74,7 @@ actor CoalescingTaskRegistry<Key: Hashable & Sendable, Value: Sendable> {
                 generation: generation,
                 waiterID: waiterID,
                 cancellationState: cancellationState,
+                onRegistration: onRegistration,
                 operation: operation
             )
         } onCancel: {
@@ -77,7 +95,8 @@ actor CoalescingTaskRegistry<Key: Hashable & Sendable, Value: Sendable> {
         generation: Int,
         waiterID: UUID,
         cancellationState: CoalescingWaiterCancellationState,
-        operation: @escaping @Sendable () async throws -> Value
+        onRegistration: @escaping @Sendable (CoalescingTaskRegistration) -> Void,
+        operation: @escaping @Sendable (UUID) async throws -> Value
     ) async throws -> Value {
         guard generation == epoch.current, !cancellationState.cancelled else {
             throw CancellationError()
@@ -93,6 +112,7 @@ actor CoalescingTaskRegistry<Key: Hashable & Sendable, Value: Sendable> {
                 waiterID: waiterID,
                 for: key,
                 generation: generation,
+                onRegistration: onRegistration,
                 operation: operation,
                 continuation: continuation
             )
@@ -103,13 +123,20 @@ actor CoalescingTaskRegistry<Key: Hashable & Sendable, Value: Sendable> {
         waiterID: UUID,
         for key: Key,
         generation: Int,
-        operation: @escaping @Sendable () async throws -> Value,
+        onRegistration: @escaping @Sendable (CoalescingTaskRegistration) -> Void,
+        operation: @escaping @Sendable (UUID) async throws -> Value,
         continuation: CheckedContinuation<Value, Error>
     ) {
         if var entry = entries[key] {
             if entry.generation == generation {
                 entry.waiters[waiterID] = continuation
                 entries[key] = entry
+                onRegistration(
+                    CoalescingTaskRegistration(
+                        operationID: entry.id,
+                        joinedExistingOperation: true
+                    )
+                )
                 return
             }
 
@@ -118,8 +145,14 @@ actor CoalescingTaskRegistry<Key: Hashable & Sendable, Value: Sendable> {
         }
 
         let entryID = UUID()
+        onRegistration(
+            CoalescingTaskRegistration(
+                operationID: entryID,
+                joinedExistingOperation: false
+            )
+        )
         let task = Task {
-            try await operation()
+            try await operation(entryID)
         }
         entries[key] = Entry(
             id: entryID,
@@ -178,34 +211,82 @@ actor CoalescingTaskRegistry<Key: Hashable & Sendable, Value: Sendable> {
     }
 }
 
+nonisolated struct ImageDataLoadResult: Sendable {
+    let data: Data
+    let networkRequestID: UUID?
+}
+
 nonisolated protocol ImageDataLoading: Sendable {
     func data(from url: URL) async throws -> Data
+    func loadResult(
+        from url: URL,
+        diagnosticContext: ImageDiagnosticContext
+    ) async throws -> ImageDataLoadResult
     func invalidateCachedData(for url: URL)
+    func invalidateCachedData(
+        for url: URL,
+        diagnosticContext: ImageDiagnosticContext
+    )
 }
 
 extension ImageDataLoading {
+    nonisolated func loadResult(
+        from url: URL,
+        diagnosticContext: ImageDiagnosticContext
+    ) async throws -> ImageDataLoadResult {
+        ImageDataLoadResult(
+            data: try await data(from: url),
+            networkRequestID: nil
+        )
+    }
+
     nonisolated func invalidateCachedData(for url: URL) {}
+
+    nonisolated func invalidateCachedData(
+        for url: URL,
+        diagnosticContext: ImageDiagnosticContext
+    ) {
+        invalidateCachedData(for: url)
+    }
+}
+
+nonisolated private final class CoalescingRegistrationState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: CoalescingTaskRegistration?
+
+    var value: CoalescingTaskRegistration? {
+        lock.withLock { storage }
+    }
+
+    func set(_ value: CoalescingTaskRegistration) {
+        lock.withLock { storage = value }
+    }
 }
 
 final nonisolated class URLSessionImageDataLoader: @unchecked Sendable, ImageDataLoading {
-    private struct HTTPStatusError: Error {
+    private struct HTTPStatusError: Error, CustomNSError {
+        static let errorDomain = "ImageHTTPStatus"
         let statusCode: Int
+        var errorCode: Int { statusCode }
     }
 
     private let session: URLSession
     private let responseCache: URLCache
     private let requestRegistry: CoalescingTaskRegistry<URL, Data>
+    private let diagnostics: any ImageDiagnosticsRecording
     private let retryDelays: [Duration]
 
     init(
         session: URLSession,
         responseCache: URLCache,
         requestRegistry: CoalescingTaskRegistry<URL, Data> = .init(),
+        diagnostics: any ImageDiagnosticsRecording = URLSessionImageDataLoader.defaultDiagnostics,
         retryDelays: [Duration] = [.milliseconds(200), .milliseconds(600)]
     ) {
         self.session = session
         self.responseCache = responseCache
         self.requestRegistry = requestRegistry
+        self.diagnostics = diagnostics
         self.retryDelays = retryDelays
     }
 
@@ -241,65 +322,345 @@ final nonisolated class URLSessionImageDataLoader: @unchecked Sendable, ImageDat
 #endif
 
     func data(from url: URL) async throws -> Data {
-        let session = session
-        let responseCache = responseCache
-        let retryDelays = retryDelays
-        return try await requestRegistry.value(for: url) {
-            var request = URLRequest(
-                url: url,
-                cachePolicy: .returnCacheDataElseLoad,
-                timeoutInterval: 60
+        try await loadResult(
+            from: url,
+            diagnosticContext: ImageDiagnosticContext(
+                purpose: .unspecified,
+                url: url
             )
-            request.httpMethod = "GET"
+        ).data
+    }
 
-            if let cached = responseCache.cachedResponse(for: request) {
-                if Self.isUsableImageResponse(cached.response, data: cached.data) {
-                    return cached.data
-                }
-                responseCache.removeCachedResponse(for: request)
-            }
-
-            request.cachePolicy = .reloadIgnoringLocalCacheData
-            var attempt = 0
-            while true {
-                do {
-                    let (data, response) = try await session.data(for: request)
-                    try Task.checkCancellation()
-                    if let httpResponse = response as? HTTPURLResponse,
-                       !(200...299).contains(httpResponse.statusCode) {
-                        throw HTTPStatusError(statusCode: httpResponse.statusCode)
-                    }
-                    guard !data.isEmpty else {
-                        throw URLError(.zeroByteResource)
-                    }
-                    guard Self.isDecodableImageData(data) else {
-                        throw URLError(.cannotDecodeContentData)
-                    }
-
-                    try Task.checkCancellation()
-                    responseCache.storeCachedResponse(
-                        CachedURLResponse(response: response, data: data, storagePolicy: .allowed),
-                        for: request
+    func loadResult(
+        from url: URL,
+        diagnosticContext: ImageDiagnosticContext
+    ) async throws -> ImageDataLoadResult {
+        let registrationState = CoalescingRegistrationState()
+        do {
+            let data = try await requestRegistry.value(
+                for: url,
+                onRegistration: { [diagnostics] registration in
+                    registrationState.set(registration)
+                    diagnostics.record(
+                        Self.makeEvent(
+                            context: diagnosticContext,
+                            networkRequestID: registration.operationID,
+                            stage: .coalescing,
+                            action: registration.joinedExistingOperation ? .joined : .started
+                        )
                     )
-                    return data
-                } catch {
-                    try Task.checkCancellation()
-                    guard attempt < retryDelays.count,
-                          Self.shouldRetry(error) else {
-                        throw error
-                    }
-                    let delay = retryDelays[attempt]
-                    attempt += 1
+                },
+                operation: { [session, responseCache, retryDelays, diagnostics] networkRequestID in
+                    try await Self.performLoad(
+                        url: url,
+                        context: diagnosticContext,
+                        networkRequestID: networkRequestID,
+                        session: session,
+                        responseCache: responseCache,
+                        retryDelays: retryDelays,
+                        diagnostics: diagnostics
+                    )
+                }
+            )
+            return ImageDataLoadResult(
+                data: data,
+                networkRequestID: registrationState.value?.operationID
+            )
+        } catch {
+            let action: ImageDiagnosticAction = Self.isCancellation(error)
+                ? .cancelled
+                : .failed
+            diagnostics.record(
+                Self.makeEvent(
+                    context: diagnosticContext,
+                    networkRequestID: registrationState.value?.operationID,
+                    stage: .coalescing,
+                    action: action,
+                    error: error
+                )
+            )
+            throw error
+        }
+    }
+
+    func invalidateCachedData(for url: URL) {
+        invalidateCachedData(
+            for: url,
+            diagnosticContext: ImageDiagnosticContext(
+                purpose: .unspecified,
+                url: url
+            )
+        )
+    }
+
+    func invalidateCachedData(
+        for url: URL,
+        diagnosticContext: ImageDiagnosticContext
+    ) {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        let cached = responseCache.cachedResponse(for: request)
+        responseCache.removeCachedResponse(for: request)
+        diagnostics.record(
+            Self.makeEvent(
+                context: diagnosticContext,
+                stage: .responseCache,
+                action: .evicted,
+                responseBytes: cached?.data.count,
+                contentType: cached?.response.mimeType,
+                wasCachedResponse: true
+            )
+        )
+    }
+
+    private static func performLoad(
+        url: URL,
+        context: ImageDiagnosticContext,
+        networkRequestID: UUID,
+        session: URLSession,
+        responseCache: URLCache,
+        retryDelays: [Duration],
+        diagnostics: any ImageDiagnosticsRecording
+    ) async throws -> Data {
+        var request = URLRequest(
+            url: url,
+            cachePolicy: .returnCacheDataElseLoad,
+            timeoutInterval: 60
+        )
+        request.httpMethod = "GET"
+
+        if let cached = responseCache.cachedResponse(for: request) {
+            if isUsableImageResponse(cached.response, data: cached.data) {
+                diagnostics.record(
+                    makeEvent(
+                        context: context,
+                        networkRequestID: networkRequestID,
+                        stage: .responseCache,
+                        action: .hit,
+                        httpStatus: (cached.response as? HTTPURLResponse)?.statusCode,
+                        responseBytes: cached.data.count,
+                        contentType: cached.response.mimeType,
+                        wasCachedResponse: true
+                    )
+                )
+                return cached.data
+            }
+            responseCache.removeCachedResponse(for: request)
+            diagnostics.record(
+                makeEvent(
+                    context: context,
+                    networkRequestID: networkRequestID,
+                    stage: .responseCache,
+                    action: .evicted,
+                    httpStatus: (cached.response as? HTTPURLResponse)?.statusCode,
+                    responseBytes: cached.data.count,
+                    contentType: cached.response.mimeType,
+                    wasCachedResponse: true
+                )
+            )
+        } else {
+            diagnostics.record(
+                makeEvent(
+                    context: context,
+                    networkRequestID: networkRequestID,
+                    stage: .responseCache,
+                    action: .missed,
+                    wasCachedResponse: false
+                )
+            )
+        }
+
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        var attempt = 0
+        let clock = ContinuousClock()
+        while true {
+            let startedAt = clock.now
+            diagnostics.record(
+                makeEvent(
+                    context: context,
+                    networkRequestID: networkRequestID,
+                    stage: .network,
+                    action: .started,
+                    retryAttempt: attempt
+                )
+            )
+            do {
+                let (data, response) = try await session.data(for: request)
+                try Task.checkCancellation()
+                let statusCode = (response as? HTTPURLResponse)?.statusCode
+                let duration = milliseconds(startedAt.duration(to: clock.now))
+                diagnostics.record(
+                    makeEvent(
+                        context: context,
+                        networkRequestID: networkRequestID,
+                        stage: .network,
+                        action: .response,
+                        httpStatus: statusCode,
+                        responseBytes: data.count,
+                        durationMilliseconds: duration,
+                        retryAttempt: attempt,
+                        contentType: response.mimeType,
+                        wasCachedResponse: false
+                    )
+                )
+                if let statusCode, !(200...299).contains(statusCode) {
+                    throw HTTPStatusError(statusCode: statusCode)
+                }
+                guard !data.isEmpty else {
+                    throw URLError(.zeroByteResource)
+                }
+                guard isDecodableImageData(data) else {
+                    throw URLError(.cannotDecodeContentData)
+                }
+
+                try Task.checkCancellation()
+                responseCache.storeCachedResponse(
+                    CachedURLResponse(
+                        response: response,
+                        data: data,
+                        storagePolicy: .allowed
+                    ),
+                    for: request
+                )
+                diagnostics.record(
+                    makeEvent(
+                        context: context,
+                        networkRequestID: networkRequestID,
+                        stage: .network,
+                        action: .succeeded,
+                        httpStatus: statusCode,
+                        responseBytes: data.count,
+                        durationMilliseconds: milliseconds(
+                            startedAt.duration(to: clock.now)
+                        ),
+                        retryAttempt: attempt,
+                        contentType: response.mimeType,
+                        wasCachedResponse: false
+                    )
+                )
+                return data
+            } catch {
+                if isCancellation(error) || Task.isCancelled {
+                    diagnostics.record(
+                        makeEvent(
+                            context: context,
+                            networkRequestID: networkRequestID,
+                            stage: .network,
+                            action: .cancelled,
+                            durationMilliseconds: milliseconds(
+                                startedAt.duration(to: clock.now)
+                            ),
+                            retryAttempt: attempt,
+                            error: error
+                        )
+                    )
+                    throw error
+                }
+                guard attempt < retryDelays.count, shouldRetry(error) else {
+                    diagnostics.record(
+                        makeEvent(
+                            context: context,
+                            networkRequestID: networkRequestID,
+                            stage: .network,
+                            action: .failed,
+                            durationMilliseconds: milliseconds(
+                                startedAt.duration(to: clock.now)
+                            ),
+                            retryAttempt: attempt,
+                            error: error
+                        )
+                    )
+                    throw error
+                }
+                let delay = retryDelays[attempt]
+                attempt += 1
+                diagnostics.record(
+                    makeEvent(
+                        context: context,
+                        networkRequestID: networkRequestID,
+                        stage: .network,
+                        action: .retrying,
+                        durationMilliseconds: milliseconds(
+                            startedAt.duration(to: clock.now)
+                        ),
+                        retryAttempt: attempt,
+                        error: error
+                    )
+                )
+                do {
                     try await Task.sleep(for: delay)
+                } catch {
+                    diagnostics.record(
+                        makeEvent(
+                            context: context,
+                            networkRequestID: networkRequestID,
+                            stage: .network,
+                            action: .cancelled,
+                            retryAttempt: attempt,
+                            error: error
+                        )
+                    )
+                    throw error
                 }
             }
         }
     }
 
-    func invalidateCachedData(for url: URL) {
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        responseCache.removeCachedResponse(for: request)
+    private static func makeEvent(
+        context: ImageDiagnosticContext,
+        networkRequestID: UUID? = nil,
+        stage: ImageDiagnosticStage,
+        action: ImageDiagnosticAction,
+        httpStatus: Int? = nil,
+        responseBytes: Int? = nil,
+        durationMilliseconds: Double? = nil,
+        retryAttempt: Int = 0,
+        error: Error? = nil,
+        contentType: String? = nil,
+        wasCachedResponse: Bool? = nil
+    ) -> ImageDiagnosticEvent {
+        ImageDiagnosticEvent(
+            sequence: 0,
+            timestamp: Date(),
+            requestID: context.requestID,
+            networkRequestID: networkRequestID,
+            purpose: context.purpose,
+            stage: stage,
+            action: action,
+            url: context.url,
+            cacheIdentity: nil,
+            httpStatus: httpStatus,
+            responseBytes: responseBytes,
+            durationMilliseconds: durationMilliseconds,
+            retryAttempt: retryAttempt,
+            decodeTarget: nil,
+            sourcePixelSize: nil,
+            decodedPixelSize: nil,
+            error: error,
+            metadata: ImageDiagnosticEventMetadata(
+                pageStableID: context.pageStableID,
+                contentType: contentType,
+                wasCachedResponse: wasCachedResponse
+            )
+        )
+    }
+
+    private static var defaultDiagnostics: any ImageDiagnosticsRecording {
+#if os(iOS)
+        ImageDiagnosticsService.shared
+#else
+        ImageDiagnosticsNoopRecorder.shared
+#endif
+    }
+
+    private static func milliseconds(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) * 1_000
+            + Double(duration.components.attoseconds) / 1_000_000_000_000_000
+    }
+
+    private static func isCancellation(_ error: Error) -> Bool {
+        error is CancellationError
+            || (error as? URLError)?.code == .cancelled
     }
 
     private static func isUsableImageResponse(_ response: URLResponse, data: Data) -> Bool {

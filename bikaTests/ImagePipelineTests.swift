@@ -280,11 +280,14 @@ final class ImagePipelineTests: XCTestCase {
 
     func testImageLoaderDiscardsUndecodableCachedResponseAndReloads() async throws {
         let requestCount = LockedValue(0)
+        let diagnostics = RecordingImageDiagnostics()
         let url = try XCTUnwrap(URL(string: "https://images.bika.test/poisoned-cache.jpg"))
+        let context = ImageDiagnosticContext(purpose: .cover, url: url)
         let validImageData = try makeJPEGData(
             size: CGSize(width: 40, height: 80),
             orientation: .up
         )
+        let poisonedData = Data("<html>temporary error</html>".utf8)
         let responseCache = URLCache(memoryCapacity: 1_024 * 1_024, diskCapacity: 0)
         let cachedResponse = try XCTUnwrap(HTTPURLResponse(
             url: url,
@@ -295,7 +298,7 @@ final class ImagePipelineTests: XCTestCase {
         responseCache.storeCachedResponse(
             CachedURLResponse(
                 response: cachedResponse,
-                data: Data("<html>temporary error</html>".utf8)
+                data: poisonedData
             ),
             for: URLRequest(url: url)
         )
@@ -313,13 +316,24 @@ final class ImagePipelineTests: XCTestCase {
         }
         let loader = URLSessionImageDataLoader(
             session: URLSession(configuration: configuration),
-            responseCache: responseCache
+            responseCache: responseCache,
+            diagnostics: diagnostics
         )
 
-        let loadedData = try await loader.data(from: url)
+        let loaded = try await loader.loadResult(
+            from: url,
+            diagnosticContext: context
+        )
 
-        XCTAssertEqual(loadedData, validImageData)
+        XCTAssertEqual(loaded.data, validImageData)
         XCTAssertEqual(requestCount.value, 1)
+        let eviction = try XCTUnwrap(diagnostics.events.first {
+            $0.requestID == context.requestID
+                && $0.stage == .responseCache
+                && $0.action == .evicted
+        })
+        XCTAssertEqual(eviction.responseBytes, poisonedData.count)
+        XCTAssertEqual(eviction.metadata.contentType, "text/html")
     }
 
     func testImageLoaderRetriesTemporaryServerFailure() async throws {
@@ -357,6 +371,279 @@ final class ImagePipelineTests: XCTestCase {
 
         XCTAssertEqual(loadedData, validImageData)
         XCTAssertEqual(requestCount.value, 2)
+    }
+
+    func testImageLoaderRecords429RetryBeforeSuccess() async throws {
+        let diagnostics = RecordingImageDiagnostics()
+        let requestCount = LockedValue(0)
+        let url = try XCTUnwrap(URL(string: "https://images.bika.test/rate-limited.jpg"))
+        let context = ImageDiagnosticContext(purpose: .readerVisible, url: url)
+        let validImageData = try makeJPEGData(
+            size: CGSize(width: 40, height: 80),
+            orientation: .up
+        )
+        let responseCache = URLCache(memoryCapacity: 1_024 * 1_024, diskCapacity: 0)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        configuration.urlCache = responseCache
+        MockURLProtocol.requestHandler = { _ in
+            requestCount.value += 1
+            if requestCount.value == 1 {
+                return MockHTTPResponse(
+                    statusCode: 429,
+                    headers: ["Content-Type": "text/plain"],
+                    data: Data("slow down".utf8)
+                )
+            }
+            return MockHTTPResponse(
+                statusCode: 200,
+                headers: ["Content-Type": "image/jpeg"],
+                data: validImageData
+            )
+        }
+        let loader = URLSessionImageDataLoader(
+            session: URLSession(configuration: configuration),
+            responseCache: responseCache,
+            diagnostics: diagnostics,
+            retryDelays: [.zero]
+        )
+
+        _ = try await loader.loadResult(
+            from: url,
+            diagnosticContext: context
+        )
+
+        let events = diagnostics.events.filter { $0.requestID == context.requestID }
+        XCTAssertTrue(events.contains {
+            $0.stage == .network && $0.action == .response && $0.httpStatus == 429
+        })
+        XCTAssertTrue(events.contains {
+            $0.stage == .network && $0.action == .retrying && $0.retryAttempt == 1
+        })
+        XCTAssertTrue(events.contains {
+            $0.stage == .network && $0.action == .succeeded
+        })
+    }
+
+    func testImageLoaderRecordsTimeoutRetryExhaustion() async throws {
+        let diagnostics = RecordingImageDiagnostics()
+        let requestCount = LockedValue(0)
+        let url = try XCTUnwrap(URL(string: "https://images.bika.test/timeout.jpg"))
+        let context = ImageDiagnosticContext(purpose: .readerVisible, url: url)
+        let responseCache = URLCache(memoryCapacity: 1_024 * 1_024, diskCapacity: 0)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        configuration.urlCache = responseCache
+        MockURLProtocol.requestHandler = { _ in
+            requestCount.value += 1
+            throw URLError(.timedOut)
+        }
+        let loader = URLSessionImageDataLoader(
+            session: URLSession(configuration: configuration),
+            responseCache: responseCache,
+            diagnostics: diagnostics,
+            retryDelays: [.zero, .zero]
+        )
+
+        do {
+            _ = try await loader.loadResult(
+                from: url,
+                diagnosticContext: context
+            )
+            XCTFail("重试耗尽后不应成功")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .timedOut)
+        }
+
+        let events = diagnostics.events.filter { $0.requestID == context.requestID }
+        XCTAssertEqual(requestCount.value, 3)
+        XCTAssertEqual(events.filter {
+            $0.stage == .network && $0.action == .retrying
+        }.count, 2)
+        XCTAssertTrue(events.contains {
+            $0.stage == .network
+                && $0.action == .failed
+                && $0.errorCode == URLError.timedOut.rawValue
+        })
+        XCTAssertFalse(events.contains {
+            $0.stage == .network && $0.action == .succeeded
+        })
+    }
+
+    func testCoalescingRegistryReportsSharedOperationIDToBothWaiters() async throws {
+        let registry = CoalescingTaskRegistry<String, Int>()
+        let registrations = LockedValue<[CoalescingTaskRegistration]>([])
+        let operationStarts = LockedValue(0)
+        let gate = TestAsyncGate()
+
+        async let first = registry.value(
+            for: "same",
+            onRegistration: { registration in
+                registrations.value.append(registration)
+            },
+            operation: { operationID in
+                operationStarts.value += 1
+                await gate.wait()
+                return operationID.hashValue
+            }
+        )
+        async let second = registry.value(
+            for: "same",
+            onRegistration: { registration in
+                registrations.value.append(registration)
+            },
+            operation: { operationID in
+                operationStarts.value += 1
+                await gate.wait()
+                return operationID.hashValue
+            }
+        )
+
+        await waitUntilAsync { registrations.value.count == 2 }
+        await gate.open()
+        _ = try await [first, second]
+
+        XCTAssertEqual(Set(registrations.value.map(\.operationID)).count, 1)
+        XCTAssertEqual(registrations.value.filter(\.joinedExistingOperation).count, 1)
+        XCTAssertEqual(operationStarts.value, 1)
+    }
+
+    func testImagePipelineRecordsCacheNetworkRetryDecodeAndSuccessTimeline() async throws {
+        let diagnostics = RecordingImageDiagnostics()
+        let validImageData = try makeJPEGData(
+            size: CGSize(width: 40, height: 80),
+            orientation: .up
+        )
+        let requestCount = LockedValue(0)
+        let responseCache = URLCache(memoryCapacity: 1_024 * 1_024, diskCapacity: 0)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        configuration.urlCache = responseCache
+        MockURLProtocol.requestHandler = { _ in
+            requestCount.value += 1
+            if requestCount.value == 1 {
+                return MockHTTPResponse(
+                    statusCode: 503,
+                    headers: ["Content-Type": "text/plain"],
+                    data: Data("retry".utf8)
+                )
+            }
+            return MockHTTPResponse(
+                statusCode: 200,
+                headers: ["Content-Type": "image/jpeg"],
+                data: validImageData
+            )
+        }
+        let loader = URLSessionImageDataLoader(
+            session: URLSession(configuration: configuration),
+            responseCache: responseCache,
+            diagnostics: diagnostics,
+            retryDelays: [.zero]
+        )
+        let cache = ImageCache(
+            countLimit: 10,
+            totalCostLimit: 1_024 * 1_024,
+            diagnostics: diagnostics
+        )
+        let url = try XCTUnwrap(URL(string: "https://images.bika.test/timeline.jpg"))
+        let context = ImageDiagnosticContext(purpose: .readerVisible, url: url)
+
+        _ = try await cache.loadAsset(
+            for: url,
+            target: .fitWidth(100),
+            imageLoader: loader,
+            diagnosticContext: context
+        )
+
+        let events = diagnostics.events
+        XCTAssertTrue(events.contains { $0.stage == .decodedCache && $0.action == .missed })
+        XCTAssertTrue(events.contains { $0.stage == .network && $0.httpStatus == 503 })
+        XCTAssertTrue(events.contains { $0.stage == .network && $0.action == .retrying })
+        XCTAssertTrue(events.contains { $0.stage == .decode && $0.action == .succeeded })
+        XCTAssertEqual(Set(events.map(\.requestID)), [context.requestID])
+    }
+
+    func testCoalescedImageCacheCallersReceiveSameActualNetworkRequestID() async throws {
+        let diagnostics = RecordingImageDiagnostics()
+        let data = try makeJPEGData(
+            size: CGSize(width: 40, height: 80),
+            orientation: .up
+        )
+        let url = try XCTUnwrap(
+            URL(string: "https://images.bika.test/shared-network-id.jpg")
+        )
+        let firstContext = ImageDiagnosticContext(purpose: .readerVisible, url: url)
+        let secondContext = ImageDiagnosticContext(purpose: .readerPrefetch, url: url)
+        let gate = TestAsyncGate()
+        let loader = GatedImageDataLoader(data: data, gate: gate)
+        let cache = ImageCache(
+            countLimit: 10,
+            totalCostLimit: 1_024 * 1_024,
+            diagnostics: diagnostics
+        )
+
+        async let first = cache.loadAsset(
+            for: url,
+            target: .fitWidth(100),
+            imageLoader: loader,
+            diagnosticContext: firstContext
+        )
+        async let second = cache.loadAsset(
+            for: url,
+            target: .fitWidth(100),
+            imageLoader: loader,
+            diagnosticContext: secondContext
+        )
+        await waitUntilAsync {
+            diagnostics.events.contains {
+                $0.stage == .coalescing && $0.action == .joined
+            }
+        }
+        await gate.open()
+        _ = try await [first, second]
+
+        let callerIDs = [firstContext.requestID, secondContext.requestID]
+        let completions = diagnostics.events.filter {
+            callerIDs.contains($0.requestID)
+                && $0.stage == .load
+                && $0.action == .succeeded
+        }
+        XCTAssertEqual(Set(completions.map(\.requestID)), Set(callerIDs))
+        XCTAssertEqual(Set(completions.compactMap(\.networkRequestID)).count, 1)
+    }
+
+    func testDiagnosticsPersistenceFailureDoesNotChangeImagePipelineResult() async throws {
+        let diagnostics = ImageDiagnosticsService(
+            fileURL: URL(fileURLWithPath: "/dev/null/not-writable.json"),
+            maximumEventCount: 2_000,
+            exportDirectory: FileManager.default.temporaryDirectory
+        )
+        let data = try makeJPEGData(
+            size: CGSize(width: 40, height: 80),
+            orientation: .up
+        )
+        let url = try XCTUnwrap(
+            URL(string: "https://images.bika.test/persistence-failure.jpg")
+        )
+        let loader = CountingImageDataLoader(data: data)
+        let cache = ImageCache(
+            countLimit: 10,
+            totalCostLimit: 1_024 * 1_024,
+            diagnostics: diagnostics
+        )
+
+        let asset = try await cache.loadAsset(
+            for: url,
+            target: .fitWidth(100),
+            imageLoader: loader,
+            diagnosticContext: ImageDiagnosticContext(
+                purpose: .readerVisible,
+                url: url
+            )
+        )
+        await diagnostics.flush()
+
+        XCTAssertEqual(asset.displaySize, CGSize(width: 40, height: 80))
     }
 
     func testCoalescingRegistryCancellingOneWaiterKeepsSharedOperationAlive() async throws {
@@ -512,8 +799,10 @@ final class ImagePipelineTests: XCTestCase {
     }
 
     func testImageCacheEvictsHeaderOnlyCachedImageAndReloadsDecodablePixels() async throws {
+        let diagnostics = RecordingImageDiagnostics()
         let requestCount = LockedValue(0)
         let url = try XCTUnwrap(URL(string: "https://images.bika.test/truncated-cache.jpg"))
+        let context = ImageDiagnosticContext(purpose: .readerVisible, url: url)
         let validImageData = try makeJPEGData(
             size: CGSize(width: 40, height: 80),
             orientation: .up
@@ -544,18 +833,41 @@ final class ImagePipelineTests: XCTestCase {
         }
         let loader = URLSessionImageDataLoader(
             session: URLSession(configuration: configuration),
-            responseCache: responseCache
+            responseCache: responseCache,
+            diagnostics: diagnostics
         )
-        let cache = ImageCache(countLimit: 10, totalCostLimit: 1_024 * 1_024)
+        let cache = ImageCache(
+            countLimit: 10,
+            totalCostLimit: 1_024 * 1_024,
+            diagnostics: diagnostics
+        )
 
         let asset = try await cache.loadAsset(
             for: url,
             target: .fitWidth(100),
-            imageLoader: loader
+            imageLoader: loader,
+            diagnosticContext: context
         )
 
         XCTAssertEqual(asset.displaySize, CGSize(width: 40, height: 80))
         XCTAssertEqual(requestCount.value, 1)
+        let events = diagnostics.events.filter {
+            $0.requestID == context.requestID
+        }
+        let decodeFailureIndex = try XCTUnwrap(events.firstIndex {
+            $0.stage == .decode && $0.action == .failed
+        })
+        XCTAssertEqual(events.filter {
+            $0.stage == .decode && $0.action == .failed
+        }.count, 1)
+        let responseEvictionIndex = try XCTUnwrap(events.firstIndex {
+            $0.stage == .responseCache && $0.action == .evicted
+        })
+        let loadSuccessIndex = try XCTUnwrap(events.firstIndex {
+            $0.stage == .load && $0.action == .succeeded
+        })
+        XCTAssertLessThan(decodeFailureIndex, responseEvictionIndex)
+        XCTAssertLessThan(responseEvictionIndex, loadSuccessIndex)
     }
 
     func testImageCacheKeepsZoomableAndThumbnailVariantsSeparate() throws {
@@ -573,8 +885,13 @@ final class ImagePipelineTests: XCTestCase {
         XCTAssertNil(cache.asset(for: url, target: target, overscan: 2))
     }
 
-    func testDecodedCacheTracksActualCostAndEviction() throws {
-        let cache = ImageCache(countLimit: 1, totalCostLimit: 1_024 * 1_024)
+    func testDecodedCacheTracksActualCostAndEviction() async throws {
+        let diagnostics = RecordingImageDiagnostics()
+        let cache = ImageCache(
+            countLimit: 1,
+            totalCostLimit: 1_024 * 1_024,
+            diagnostics: diagnostics
+        )
         let firstURL = try XCTUnwrap(URL(string: "https://images.bika.test/cost-1.jpg"))
         let secondURL = try XCTUnwrap(URL(string: "https://images.bika.test/cost-2.jpg"))
         let firstImage = makeImage(size: CGSize(width: 20, height: 30))
@@ -592,21 +909,47 @@ final class ImagePipelineTests: XCTestCase {
                 ?? cachedSecond.map(ImageDecoding.cacheCost(for:))
         )
         XCTAssertEqual(cache.currentMemoryUsage, retainedCost)
+
+        let firstIdentity = ImageCache.cacheIdentity(
+            for: firstURL,
+            target: .full
+        )
+        await waitUntilAsync {
+            diagnostics.events.contains {
+                $0.stage == .decodedCache
+                    && $0.action == .evicted
+                    && $0.cacheIdentity == firstIdentity
+            }
+        }
+        let eviction = try XCTUnwrap(diagnostics.events.first {
+            $0.stage == .decodedCache
+                && $0.action == .evicted
+                && $0.cacheIdentity == firstIdentity
+        })
+        XCTAssertEqual(eviction.url, firstURL)
+        XCTAssertNil(eviction.responseBytes)
     }
 
     func testClearingDecodedCacheCancelsInflightLoadAndPreventsRefill() async throws {
+        let diagnostics = RecordingImageDiagnostics()
         let data = try makeJPEGData(
             size: CGSize(width: 40, height: 80),
             orientation: .up
         )
         let loader = ControlledImageDataLoader()
-        let cache = ImageCache(countLimit: 10, totalCostLimit: 1_024 * 1_024)
+        let cache = ImageCache(
+            countLimit: 10,
+            totalCostLimit: 1_024 * 1_024,
+            diagnostics: diagnostics
+        )
         let url = try XCTUnwrap(URL(string: "https://images.bika.test/clear-inflight.jpg"))
+        let context = ImageDiagnosticContext(purpose: .readerVisible, url: url)
         let load = Task {
             try await cache.loadAsset(
                 for: url,
                 target: .fitWidth(100),
-                imageLoader: loader
+                imageLoader: loader,
+                diagnosticContext: context
             )
         }
 
@@ -624,6 +967,11 @@ final class ImagePipelineTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertNil(cache.asset(for: url, target: .fitWidth(100)))
         XCTAssertEqual(cache.currentMemoryUsage, 0)
+        let events = diagnostics.events.filter {
+            $0.requestID == context.requestID
+        }
+        XCTAssertTrue(events.contains { $0.action == .cancelled })
+        XCTAssertFalse(events.contains { $0.action == .failed })
     }
 
     func testCacheControllerReportsAndClearsResponseAndDecodedCaches() async throws {
@@ -678,6 +1026,7 @@ final class ImagePipelineTests: XCTestCase {
     }
 
     func testCacheControllerClearCancelsInflightDataAndPreventsResponseRefill() async throws {
+        let diagnostics = RecordingImageDiagnostics()
         let responseCache = URLCache(memoryCapacity: 1_024 * 1_024, diskCapacity: 0)
         let controller = ImageCacheController(
             responseCache: responseCache,
@@ -699,10 +1048,17 @@ final class ImagePipelineTests: XCTestCase {
         let loader = URLSessionImageDataLoader(
             session: URLSession(configuration: configuration),
             responseCache: responseCache,
-            requestRegistry: controller.dataRequestRegistry
+            requestRegistry: controller.dataRequestRegistry,
+            diagnostics: diagnostics
         )
         let url = try XCTUnwrap(URL(string: "https://images.bika.test/clear-response.jpg"))
-        let load = Task { try await loader.data(from: url) }
+        let context = ImageDiagnosticContext(purpose: .readerPrefetch, url: url)
+        let load = Task {
+            try await loader.loadResult(
+                from: url,
+                diagnosticContext: context
+            )
+        }
 
         await waitUntilAsync { didStart.value }
         await controller.clear()
@@ -716,6 +1072,11 @@ final class ImagePipelineTests: XCTestCase {
             // URLSession may surface its cancellation as URLError.cancelled.
         }
         XCTAssertNil(responseCache.cachedResponse(for: URLRequest(url: url)))
+        let events = diagnostics.events.filter {
+            $0.requestID == context.requestID
+        }
+        XCTAssertTrue(events.contains { $0.action == .cancelled })
+        XCTAssertFalse(events.contains { $0.action == .failed })
     }
 
     private func makeImage(size: CGSize) -> UIImage {
@@ -801,6 +1162,49 @@ private actor ControlledImageDataLoader: ImageDataLoading {
     func resume(with data: Data) {
         continuation?.resume(returning: data)
         continuation = nil
+    }
+}
+
+private actor GatedImageDataLoader: ImageDataLoading {
+    private let data: Data
+    private let gate: TestAsyncGate
+    private let networkRequestID = UUID()
+
+    init(data: Data, gate: TestAsyncGate) {
+        self.data = data
+        self.gate = gate
+    }
+
+    func data(from url: URL) async throws -> Data {
+        await gate.wait()
+        return data
+    }
+
+    func loadResult(
+        from url: URL,
+        diagnosticContext: ImageDiagnosticContext
+    ) async throws -> ImageDataLoadResult {
+        await gate.wait()
+        return ImageDataLoadResult(
+            data: data,
+            networkRequestID: networkRequestID
+        )
+    }
+}
+
+private final class RecordingImageDiagnostics:
+    @unchecked Sendable,
+    ImageDiagnosticsRecording
+{
+    private let lock = NSLock()
+    private var storage: [ImageDiagnosticEvent] = []
+
+    var events: [ImageDiagnosticEvent] {
+        lock.withLock { storage }
+    }
+
+    func record(_ event: ImageDiagnosticEvent) {
+        lock.withLock { storage.append(event) }
     }
 }
 
