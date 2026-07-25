@@ -74,8 +74,8 @@ nonisolated struct ImageDiagnosticEvent: Codable, Equatable, Sendable {
     let purpose: ImageDiagnosticPurpose
     let stage: ImageDiagnosticStage
     let action: ImageDiagnosticAction
-    let url: URL
-    let cacheIdentity: String?
+    var url: URL
+    var cacheIdentity: String?
     let httpStatus: Int?
     let responseBytes: Int?
     let durationMilliseconds: Double?
@@ -83,10 +83,10 @@ nonisolated struct ImageDiagnosticEvent: Codable, Equatable, Sendable {
     let decodeTarget: String?
     let sourcePixelSize: ImageDiagnosticSize?
     let decodedPixelSize: ImageDiagnosticSize?
-    let errorDomain: String?
+    var errorDomain: String?
     let errorCode: Int?
-    let errorDescription: String?
-    let metadata: ImageDiagnosticEventMetadata
+    var errorDescription: String?
+    var metadata: ImageDiagnosticEventMetadata
 
     init(
         sequence: UInt64,
@@ -115,8 +115,8 @@ nonisolated struct ImageDiagnosticEvent: Codable, Equatable, Sendable {
         self.purpose = purpose
         self.stage = stage
         self.action = action
-        self.url = url
-        self.cacheIdentity = cacheIdentity
+        self.url = Self.sanitizedURL(url)
+        self.cacheIdentity = cacheIdentity.map(Self.sanitizedDiagnosticText)
         self.httpStatus = httpStatus
         self.responseBytes = responseBytes
         self.durationMilliseconds = durationMilliseconds
@@ -128,25 +128,137 @@ nonisolated struct ImageDiagnosticEvent: Codable, Equatable, Sendable {
         errorDomain = safeError?.domain
         errorCode = safeError?.code
         errorDescription = safeError?.description
-        self.metadata = metadata
+        self.metadata = ImageDiagnosticEventMetadata(
+            pageStableID: metadata.pageStableID.map(Self.sanitizedDiagnosticText),
+            contentType: metadata.contentType,
+            wasCachedResponse: metadata.wasCachedResponse
+        )
+    }
+
+    func sanitizedForPersistence() -> Self {
+        var copy = self
+        copy.url = Self.sanitizedURL(url)
+        copy.cacheIdentity = cacheIdentity.map(Self.sanitizedDiagnosticText)
+        copy.metadata = ImageDiagnosticEventMetadata(
+            pageStableID: metadata.pageStableID.map(Self.sanitizedDiagnosticText),
+            contentType: metadata.contentType,
+            wasCachedResponse: metadata.wasCachedResponse
+        )
+        if let errorCode {
+            let safeError = Self.safeErrorFields(
+                NSError(
+                    domain: errorDomain ?? "OtherError",
+                    code: errorCode
+                )
+            )
+            copy.errorDomain = safeError.domain
+            copy.errorDescription = safeError.description
+        } else {
+            copy.errorDomain = nil
+            copy.errorDescription = nil
+        }
+        return copy
     }
 
     private static func safeErrorFields(
         _ error: Error
     ) -> (domain: String, code: Int, description: String) {
         let nsError = error as NSError
-        let description = nsError.localizedDescription
+        let domain: String
+        let description: String
+
+        switch nsError.domain {
+        case NSURLErrorDomain:
+            domain = NSURLErrorDomain
+            description = "URL loading failed (code \(nsError.code))"
+        case NSCocoaErrorDomain:
+            domain = NSCocoaErrorDomain
+            description = "Cocoa operation failed (code \(nsError.code))"
+        case NSPOSIXErrorDomain:
+            domain = NSPOSIXErrorDomain
+            description = "POSIX operation failed (code \(nsError.code))"
+        case NSOSStatusErrorDomain:
+            domain = NSOSStatusErrorDomain
+            description = "OS operation failed (code \(nsError.code))"
+        case "ImageHTTPStatus":
+            domain = "ImageHTTPStatus"
+            description = "HTTP image request failed (status \(nsError.code))"
+        default:
+            domain = "OtherError"
+            description = "Image operation failed (code \(nsError.code))"
+        }
+        return (domain, nsError.code, description)
+    }
+
+    private static func sanitizedURL(_ url: URL) -> URL {
+        guard var components = URLComponents(
+            url: url,
+            resolvingAgainstBaseURL: false
+        ) else {
+            return URL(string: "about:invalid-image-url")!
+        }
+        components.user = nil
+        components.password = nil
+        components.queryItems = components.queryItems?.map { item in
+            guard isSensitiveFieldName(item.name) else { return item }
+            return URLQueryItem(name: item.name, value: "<redacted>")
+        }
+        return components.url ?? URL(string: "about:invalid-image-url")!
+    }
+
+    private static func sanitizedDiagnosticText(_ value: String) -> String {
+        return value
             .replacingOccurrences(
-                of: #"(?i)\b(authorization|cookie|password)\b\s*[:=]\s*(?:bearer\s+)?[^,;\s]+"#,
-                with: "$1=<redacted>",
+                of: #"(?i)(https?://)[^/@\s]+@"#,
+                with: "$1<redacted>@",
                 options: .regularExpression
             )
             .replacingOccurrences(
-                of: #"(?i)\bbearer\s+[A-Za-z0-9._~+/\-=]+"#,
-                with: "Bearer <redacted>",
+                of:
+                    #"(?i)\b([a-z0-9_-]*(?:token|secret|password|passwd|credential|signature|api[_-]?key|access[_-]?key[_-]?id)|authorization|cookie|session(?:[_-]?id)?|sig|key)\b(\s*[:=]\s*)(?:basic\s+|bearer\s+)?[^&#,;\s]+"#,
+                with: "$1$2<redacted>",
                 options: .regularExpression
             )
-        return (nsError.domain, nsError.code, description)
+            .replacingOccurrences(
+                of: #"(?i)\b(?:basic|bearer)\s+[A-Za-z0-9._~+/\-=]+"#,
+                with: "<redacted>",
+                options: .regularExpression
+            )
+    }
+
+    private static func isSensitiveFieldName(_ name: String) -> Bool {
+        let normalized = name
+            .lowercased()
+            .filter(\.isLetter)
+        if [
+            "authorization",
+            "auth",
+            "authentication",
+            "cookie",
+            "password",
+            "passwd",
+            "token",
+            "accesstoken",
+            "refreshtoken",
+            "apikey",
+            "session",
+            "sessionid",
+            "secret",
+            "signature",
+            "sig",
+            "key",
+        ].contains(normalized) {
+            return true
+        }
+        return normalized.hasSuffix("token")
+            || normalized.hasSuffix("secret")
+            || normalized.hasSuffix("password")
+            || normalized.hasSuffix("passwd")
+            || normalized.hasSuffix("credential")
+            || normalized.hasSuffix("credentials")
+            || normalized.hasSuffix("signature")
+            || normalized.hasSuffix("apikey")
+            || normalized.hasSuffix("accesskeyid")
     }
 }
 

@@ -39,6 +39,7 @@ private actor ImageDiagnosticsPersistence {
     private var persistenceGeneration: UInt64 = 0
     private var persistedGeneration: UInt64 = 0
     private var scheduledWriteTask: Task<Void, Never>?
+    private var persistenceRetryAttempt = 0
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "com.noasse.bika",
         category: "ImageDiagnosticsPersistence"
@@ -63,6 +64,7 @@ private actor ImageDiagnosticsPersistence {
             events.removeFirst(events.count - maximumEventCount)
         }
         persistenceGeneration &+= 1
+        persistenceRetryAttempt = 0
         receivedSequences.insert(event.sequence)
         while receivedSequences.remove(nextUnreceivedSequence) != nil {
             nextUnreceivedSequence &+= 1
@@ -100,10 +102,10 @@ private actor ImageDiagnosticsPersistence {
         persistPending()
     }
 
-    private func schedulePersistence() {
+    private func schedulePersistence(after delay: Duration = .milliseconds(250)) {
         guard scheduledWriteTask == nil else { return }
         scheduledWriteTask = Task {
-            try? await Task.sleep(for: .milliseconds(250))
+            try? await Task.sleep(for: delay)
             guard !Task.isCancelled else { return }
             self.persistPending()
         }
@@ -115,12 +117,20 @@ private actor ImageDiagnosticsPersistence {
         guard persistedGeneration != persistenceGeneration else { return }
         do {
             try persistThrowing(events)
+            persistedGeneration = persistenceGeneration
+            persistenceRetryAttempt = 0
         } catch {
             logger.error(
-                "image diagnostics persistence failed: \(error.localizedDescription, privacy: .public)"
+                "image diagnostics persistence failed code=\((error as NSError).code, privacy: .public)"
             )
+            guard persistenceRetryAttempt < 5 else { return }
+            let retryDelay = min(
+                4_000,
+                250 * (1 << persistenceRetryAttempt)
+            )
+            persistenceRetryAttempt += 1
+            schedulePersistence(after: .milliseconds(retryDelay))
         }
-        persistedGeneration = persistenceGeneration
     }
 
     private func persistThrowing(_ value: [ImageDiagnosticEvent]) throws {
@@ -143,6 +153,57 @@ private actor ImageDiagnosticsPersistence {
     }
 }
 
+private actor ImageDiagnosticsExporter {
+    private let directory: URL
+    private let maximumExportCount = 5
+
+    init(directory: URL) {
+        self.directory = directory
+    }
+
+    func write(
+        _ value: ImageDiagnosticsExport,
+        timestamp: String
+    ) throws -> URL {
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let name =
+            "bika-image-diagnostics-\(timestamp)-\(UUID().uuidString).json"
+        let url = directory.appendingPathComponent(name)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(value).write(to: url, options: .atomic)
+        try removeExcessExports()
+        return url
+    }
+
+    private func removeExcessExports() throws {
+        let files = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        )
+        let exports = files
+            .filter {
+                $0.lastPathComponent.hasPrefix("bika-image-diagnostics-")
+            }
+            .sorted {
+                let lhs = try? $0.resourceValues(
+                    forKeys: [.contentModificationDateKey]
+                ).contentModificationDate
+                let rhs = try? $1.resourceValues(
+                    forKeys: [.contentModificationDateKey]
+                ).contentModificationDate
+                return (lhs ?? .distantPast) > (rhs ?? .distantPast)
+            }
+        for file in exports.dropFirst(maximumExportCount) {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+}
+
 nonisolated final class ImageDiagnosticsService:
     @unchecked Sendable,
     ImageDiagnosticsManaging
@@ -151,7 +212,7 @@ nonisolated final class ImageDiagnosticsService:
 
     private let persistence: ImageDiagnosticsPersistence
     private let sequence: ImageDiagnosticSequence
-    private let exportDirectory: URL
+    private let exporter: ImageDiagnosticsExporter
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "com.noasse.bika",
         category: "ImageDiagnostics"
@@ -182,7 +243,7 @@ nonisolated final class ImageDiagnosticsService:
             firstLiveSequence: firstLiveSequence
         )
         sequence = ImageDiagnosticSequence(startingAt: firstLiveSequence)
-        self.exportDirectory = exportDirectory
+        exporter = ImageDiagnosticsExporter(directory: exportDirectory)
     }
 
     func record(_ event: ImageDiagnosticEvent) {
@@ -190,7 +251,7 @@ nonisolated final class ImageDiagnosticsService:
         sequenced.sequence = sequence.take()
         if sequenced.action == .failed {
             logger.error(
-                "image failure request=\(sequenced.requestID.uuidString, privacy: .public) network=\(sequenced.networkRequestID?.uuidString ?? "none", privacy: .public) stage=\(sequenced.stage.rawValue, privacy: .public) url=\(sequenced.url.absoluteString, privacy: .public) code=\(sequenced.errorCode ?? 0, privacy: .public)"
+                "image failure request=\(sequenced.requestID.uuidString, privacy: .public) network=\(sequenced.networkRequestID?.uuidString ?? "none", privacy: .public) stage=\(sequenced.stage.rawValue, privacy: .public) domain=\(sequenced.errorDomain ?? "none", privacy: .public) code=\(sequenced.errorCode ?? 0, privacy: .public)"
             )
         }
         Task(priority: .utility) {
@@ -250,48 +311,59 @@ nonisolated final class ImageDiagnosticsService:
             ),
             events: events
         )
-        try FileManager.default.createDirectory(
-            at: exportDirectory,
-            withIntermediateDirectories: true
+        return try await exporter.write(
+            value,
+            timestamp: Self.fileTimestamp(metadata.exportedAt)
         )
-        try Self.removeOldExports(in: exportDirectory)
-        let name = "bika-image-diagnostics-\(Self.fileTimestamp(metadata.exportedAt)).json"
-        let url = exportDirectory.appendingPathComponent(name)
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(value).write(to: url, options: .atomic)
-        return url
     }
 
     private static func loadAndRecover(fileURL: URL) -> [ImageDiagnosticEvent] {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
+        let maximumCorruptBackupBytes = 5 * 1_024 * 1_024
+        let attributes = try? FileManager.default.attributesOfItem(
+            atPath: fileURL.path
+        )
+        let fileSize = (attributes?[.size] as? NSNumber)?.intValue
+        guard (fileSize ?? 0) <= maximumCorruptBackupBytes else {
+            discardCorruptStore(fileURL: fileURL)
+            return []
+        }
         do {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             return try decoder.decode(
                 [ImageDiagnosticEvent].self,
                 from: Data(contentsOf: fileURL)
-            )
+            ).map { $0.sanitizedForPersistence() }
         } catch {
-            let backup = fileURL
-                .deletingPathExtension()
-                .appendingPathExtension("corrupt-\(fileTimestamp(Date())).json")
-            try? FileManager.default.moveItem(at: fileURL, to: backup)
+            preserveCorruptStore(fileURL: fileURL)
             return []
         }
     }
 
-    private static func removeOldExports(in directory: URL) throws {
-        let files = try FileManager.default.contentsOfDirectory(
+    private static func preserveCorruptStore(fileURL: URL) {
+        let directory = fileURL.deletingLastPathComponent()
+        let backupPrefix =
+            "\(fileURL.deletingPathExtension().lastPathComponent).corrupt-"
+        let files = (try? FileManager.default.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: nil
-        )
-        for file in files where file.lastPathComponent.hasPrefix(
-            "bika-image-diagnostics-"
-        ) {
+        )) ?? []
+        for file in files where file.lastPathComponent.hasPrefix(backupPrefix) {
             try? FileManager.default.removeItem(at: file)
         }
+        let backup = fileURL
+            .deletingPathExtension()
+            .appendingPathExtension("corrupt-latest.json")
+        do {
+            try FileManager.default.moveItem(at: fileURL, to: backup)
+        } catch {
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+    }
+
+    private static func discardCorruptStore(fileURL: URL) {
+        try? FileManager.default.removeItem(at: fileURL)
     }
 
     private static func fileTimestamp(_ date: Date) -> String {
