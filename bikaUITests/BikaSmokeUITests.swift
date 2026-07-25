@@ -77,6 +77,26 @@ final class BikaSmokeUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["settings.imageCacheMessage"].label, "图片缓存已清理")
     }
 
+    func testSettingsShowsImageDiagnosticsAndPrivacyWarningBeforeExport() {
+        let app = launchApp(resetState: true)
+        openSettings(in: app)
+
+        let count = app.staticTexts["settings.imageDiagnostics.count"]
+        for _ in 0..<6 where !count.exists {
+            app.swipeUp()
+        }
+        XCTAssertTrue(count.waitForExistence(timeout: 5))
+
+        app.buttons["settings.imageDiagnostics.export"].tap()
+
+        XCTAssertTrue(
+            app.staticTexts["导出文件包含完整图片 URL，请只发送给可信对象。"]
+                .waitForExistence(timeout: 3)
+        )
+        XCTAssertTrue(app.buttons["继续导出"].exists)
+        app.buttons["取消"].tap()
+    }
+
     func testReaderProgressRestoresAfterRelaunch() throws {
         var app = launchApp(resetState: true)
 
