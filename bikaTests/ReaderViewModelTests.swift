@@ -378,6 +378,44 @@ final class ReaderViewModelTests: XCTestCase {
         )
     }
 
+    func testViewportUpdateAcceptsFirstValidMeasurementWhenCallbackValuesMatch() {
+        let measuredSize = CGSize(width: 390, height: 844)
+
+        XCTAssertTrue(
+            ReaderViewportUpdate.shouldApply(
+                currentSize: .zero,
+                newSize: measuredSize
+            )
+        )
+    }
+
+    func testViewportUpdateAcceptsAnyPositiveInitialMeasurement() {
+        XCTAssertTrue(
+            ReaderViewportUpdate.shouldApply(
+                currentSize: .zero,
+                newSize: CGSize(width: 0.5, height: 0.5)
+            )
+        )
+    }
+
+    func testViewportUpdateIgnoresNearlyEqualStoredMeasurement() {
+        XCTAssertFalse(
+            ReaderViewportUpdate.shouldApply(
+                currentSize: CGSize(width: 390, height: 844),
+                newSize: CGSize(width: 390.5, height: 844.5)
+            )
+        )
+    }
+
+    func testViewportUpdateRejectsInvalidMeasurement() {
+        XCTAssertFalse(
+            ReaderViewportUpdate.shouldApply(
+                currentSize: .zero,
+                newSize: CGSize(width: 0, height: 844)
+            )
+        )
+    }
+
     func testVerticalReaderPageHeightUsesExactAspectRatioBeforeEstimate() {
         let height = ReaderVerticalImageLayout.pageHeight(
             viewportWidth: 320,

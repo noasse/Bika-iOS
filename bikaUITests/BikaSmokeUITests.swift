@@ -109,6 +109,29 @@ final class BikaSmokeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["第2话"].waitForExistence(timeout: 5))
     }
 
+    func testReaderCenterTapHidesAndShowsToolbar() throws {
+        let app = launchApp(resetState: true)
+
+        openComicDetail(in: app)
+
+        let episodeButton = app.buttons["comicDetail.episode.1"]
+        XCTAssertTrue(episodeButton.waitForExistence(timeout: 5))
+        episodeButton.tap()
+
+        let closeButton = app.buttons["reader.close"]
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["1/2"].waitForExistence(timeout: 5))
+
+        let readerCenter = app.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
+        )
+        readerCenter.tap()
+        XCTAssertTrue(closeButton.waitForNonExistence(timeout: 2))
+
+        readerCenter.tap()
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 2))
+    }
+
     func testImageQualityPersistsAndRecordedByMockRequests() throws {
         var app = launchApp(resetState: true)
 

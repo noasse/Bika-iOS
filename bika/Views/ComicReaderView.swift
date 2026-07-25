@@ -102,9 +102,13 @@ struct ComicReaderView: View {
         .statusBar(hidden: !viewModel.showToolbar)
         .onGeometryChange(for: CGSize.self) { geometry in
             geometry.size
-        } action: { oldSize, newSize in
-            guard newSize.width > 0, newSize.height > 0 else { return }
-            guard !isNearlyEqual(oldSize, newSize) else { return }
+        } action: { _, newSize in
+            guard ReaderViewportUpdate.shouldApply(
+                currentSize: viewportSize,
+                newSize: newSize
+            ) else {
+                return
+            }
             viewportSize = newSize
             imagePrefetchKey = nil
             scheduleImagePrefetch(around: currentPage)
@@ -341,10 +345,6 @@ struct ComicReaderView: View {
             backendPageID: backendID.flatMap { $0.isEmpty ? nil : $0 },
             imageURL: imageURL
         )
-    }
-
-    private func isNearlyEqual(_ lhs: CGSize, _ rhs: CGSize) -> Bool {
-        abs(lhs.width - rhs.width) < 1 && abs(lhs.height - rhs.height) < 1
     }
 
     // MARK: - Image Prefetch
