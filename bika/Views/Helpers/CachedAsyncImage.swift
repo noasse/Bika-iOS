@@ -21,8 +21,10 @@ final class CachedAsyncImageLoadingState {
         url: URL?,
         targetSize: CGSize?,
         contentMode: ContentMode = .fit,
+        purpose: ImageDiagnosticPurpose,
         imageLoader: any ImageDataLoading,
         imageCache: ImageCache,
+        diagnostics: any ImageDiagnosticsRecording,
         onImageSize: ((CGSize) -> Void)?
     ) async {
         let identity = Self.cacheIdentity(
@@ -42,12 +44,10 @@ final class CachedAsyncImageLoadingState {
             targetSize: targetSize,
             contentMode: contentMode
         )
-        if let cached = imageCache.asset(for: url, target: target) {
-            image = cached.image
-            onImageSize?(cached.displaySize)
-            loadingIdentity = nil
-            return
-        }
+        let diagnosticContext = ImageDiagnosticContext(
+            purpose: purpose,
+            url: url
+        )
 
         image = nil
 
@@ -55,18 +55,78 @@ final class CachedAsyncImageLoadingState {
             let loaded = try await imageCache.loadAsset(
                 for: url,
                 target: target,
-                imageLoader: imageLoader
+                imageLoader: imageLoader,
+                diagnosticContext: diagnosticContext
             )
-            guard loadingIdentity == identity else { return }
+            try Task.checkCancellation()
+            guard loadingIdentity == identity else {
+                diagnostics.record(
+                    Self.displayEvent(
+                        context: diagnosticContext,
+                        action: .cancelled,
+                        error: CancellationError()
+                    )
+                )
+                return
+            }
             image = loaded.image
             onImageSize?(loaded.displaySize)
             loadingIdentity = nil
+            diagnostics.record(
+                Self.displayEvent(
+                    context: diagnosticContext,
+                    action: .succeeded
+                )
+            )
         } catch {
+            diagnostics.record(
+                Self.displayEvent(
+                    context: diagnosticContext,
+                    action: Self.isCancellation(error) ? .cancelled : .failed,
+                    error: error
+                )
+            )
             guard loadingIdentity == identity else { return }
             image = nil
             loadingIdentity = nil
             // Auxiliary image requests can degrade to the placeholder without blocking the screen.
         }
+    }
+
+    private static func displayEvent(
+        context: ImageDiagnosticContext,
+        action: ImageDiagnosticAction,
+        error: Error? = nil
+    ) -> ImageDiagnosticEvent {
+        ImageDiagnosticEvent(
+            sequence: 0,
+            timestamp: Date(),
+            requestID: context.requestID,
+            networkRequestID: nil,
+            purpose: context.purpose,
+            stage: .display,
+            action: action,
+            url: context.url,
+            cacheIdentity: nil,
+            httpStatus: nil,
+            responseBytes: nil,
+            durationMilliseconds: nil,
+            retryAttempt: 0,
+            decodeTarget: nil,
+            sourcePixelSize: nil,
+            decodedPixelSize: nil,
+            error: error,
+            metadata: ImageDiagnosticEventMetadata(
+                pageStableID: context.pageStableID,
+                contentType: nil,
+                wasCachedResponse: nil
+            )
+        )
+    }
+
+    private static func isCancellation(_ error: Error) -> Bool {
+        error is CancellationError
+            || (error as? URLError)?.code == .cancelled
     }
 
     private static func decodeTarget(
@@ -91,6 +151,8 @@ struct CachedAsyncImage<Placeholder: View>: View {
     var contentMode: ContentMode = .fit
     var imageLoader: any ImageDataLoading = AppDependencies.shared.imageDataLoader
     var imageCache: ImageCache = .shared
+    var purpose: ImageDiagnosticPurpose = .unspecified
+    var diagnostics: any ImageDiagnosticsRecording = ImageDiagnosticsService.shared
     var onImageSize: ((CGSize) -> Void)? = nil
     @ViewBuilder let placeholder: () -> Placeholder
 
@@ -122,8 +184,10 @@ struct CachedAsyncImage<Placeholder: View>: View {
             url: url,
             targetSize: targetSize,
             contentMode: contentMode,
+            purpose: purpose,
             imageLoader: imageLoader,
             imageCache: imageCache,
+            diagnostics: diagnostics,
             onImageSize: onImageSize
         )
     }

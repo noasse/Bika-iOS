@@ -79,7 +79,7 @@ struct ImagePreviewOverlay: ViewModifier {
                         .onTapGesture { dismiss() }
 
                     // Image — scales up from center
-                    CachedAsyncImage(url: url) {
+                    CachedAsyncImage(url: url, purpose: .cover) {
                         ProgressView()
                     }
                     .aspectRatio(contentMode: .fit)

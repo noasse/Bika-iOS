@@ -27,6 +27,7 @@
 		EC88D0112FEA4000004AFB7B /* ComicModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0112FEA4000004AFB7B /* ComicModels.swift */; };
 		EC88D0122FEA4000004AFB7B /* CommentModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0122FEA4000004AFB7B /* CommentModels.swift */; };
 		EC88D0132FEA4000004AFB7B /* CloudHistorySync.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0132FEA4000004AFB7B /* CloudHistorySync.swift */; };
+		EC88D0142FEA4000004AFB7B /* ImageDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88C0142FEA4000004AFB7B /* ImageDiagnostics.swift */; };
 		F10000062F694FA800F6AB0F /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000032F694FA800F6AB0F /* XCTest.framework */; };
 		F10000072F694FA800F6AB0F /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000032F694FA800F6AB0F /* XCTest.framework */; };
 /* End PBXBuildFile section */
@@ -78,6 +79,7 @@
 		EC88C0112FEA4000004AFB7B /* ComicModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComicModels.swift; path = bika/Models/ComicModels.swift; sourceTree = "<group>"; };
 		EC88C0122FEA4000004AFB7B /* CommentModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CommentModels.swift; path = bika/Models/CommentModels.swift; sourceTree = "<group>"; };
 		EC88C0132FEA4000004AFB7B /* CloudHistorySync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CloudHistorySync.swift; path = bika/Support/CloudHistorySync.swift; sourceTree = "<group>"; };
+		EC88C0142FEA4000004AFB7B /* ImageDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ImageDiagnostics.swift; path = bika/Support/ImageDiagnostics.swift; sourceTree = "<group>"; };
 		ECC781FD2F694FA800F6AB0F /* bika.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = bika.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F10000012F694FA800F6AB0F /* bikaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = bikaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F10000022F694FA800F6AB0F /* bikaUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = bikaUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -174,6 +176,7 @@
 				EC88C0052FEA4000004AFB7B /* SmokeFixtureRouter.swift */,
 				EC88C0062FEA4000004AFB7B /* AppDependencies.swift */,
 				EC88C0132FEA4000004AFB7B /* CloudHistorySync.swift */,
+				EC88C0142FEA4000004AFB7B /* ImageDiagnostics.swift */,
 				EC88C0072FEA4000004AFB7B /* APIConfig.swift */,
 				EC88C0082FEA4000004AFB7B /* APISignature.swift */,
 				EC88C0092FEA4000004AFB7B /* APIError.swift */,
@@ -436,6 +439,7 @@
 				EC88D0052FEA4000004AFB7B /* SmokeFixtureRouter.swift in Sources */,
 				EC88D0062FEA4000004AFB7B /* AppDependencies.swift in Sources */,
 				EC88D0132FEA4000004AFB7B /* CloudHistorySync.swift in Sources */,
+				EC88D0142FEA4000004AFB7B /* ImageDiagnostics.swift in Sources */,
 				EC88D0072FEA4000004AFB7B /* APIConfig.swift in Sources */,
 				EC88D0082FEA4000004AFB7B /* APISignature.swift in Sources */,
 				EC88D0092FEA4000004AFB7B /* APIError.swift in Sources */,

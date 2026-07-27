@@ -34,7 +34,7 @@ nonisolated enum SmokeFixtureRouter {
             let sort = queryItems.first(where: { $0.name == "s" })?.value ?? SortMode.defaultSort.rawValue
             return jsonResponse(data: ["comics": favouriteResults(page: page, sort: sort)])
 
-        case ("GET", let detailPath) where detailPath.hasPrefix("/comics/") && !detailPath.contains("/eps") && !detailPath.contains("/comments") && !detailPath.contains("/recommendation"):
+        case ("GET", let detailPath) where detailPath.hasPrefix("/comics/") && !detailPath.contains("/eps") && !detailPath.contains("/pages") && !detailPath.contains("/comments") && !detailPath.contains("/recommendation"):
             return jsonResponse(data: ["comic": comicDetail(id: comicIdentifier(from: detailPath))])
 
         case ("GET", let episodesPath) where episodesPath.hasSuffix("/eps"):

@@ -4,6 +4,9 @@ struct SettingsView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var viewModel: SettingsViewModel
     @State private var showClearImageCacheConfirmation = false
+    @State private var showImageDiagnosticsExportConfirmation = false
+    @State private var showClearImageDiagnosticsConfirmation = false
+    @State private var diagnosticsExportItem: DiagnosticsExportItem?
 
     init(viewModel: SettingsViewModel = SettingsViewModel()) {
         _viewModel = State(initialValue: viewModel)
@@ -106,6 +109,62 @@ struct SettingsView: View {
             }
 
             Section {
+                HStack {
+                    Label("已记录事件", systemImage: "waveform.path.ecg")
+                    Spacer()
+                    if viewModel.isRefreshingImageDiagnostics {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text(viewModel.imageDiagnosticsCountDescription)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier(
+                                "settings.imageDiagnostics.count"
+                            )
+                    }
+                }
+
+                HStack {
+                    Text("最近错误")
+                    Spacer()
+                    Text(viewModel.imageDiagnosticsLastErrorDescription)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier(
+                            "settings.imageDiagnostics.lastError"
+                        )
+                }
+
+                Button {
+                    showImageDiagnosticsExportConfirmation = true
+                } label: {
+                    Label("导出图片诊断日志", systemImage: "square.and.arrow.up")
+                }
+                .disabled(viewModel.isExportingImageDiagnostics)
+                .accessibilityIdentifier("settings.imageDiagnostics.export")
+
+                Button(role: .destructive) {
+                    showClearImageDiagnosticsConfirmation = true
+                } label: {
+                    Label("清空图片诊断日志", systemImage: "trash")
+                }
+                .disabled(viewModel.isClearingImageDiagnostics)
+                .accessibilityIdentifier("settings.imageDiagnostics.clear")
+
+                if let message = viewModel.imageDiagnosticsMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(Color.secondaryText(for: colorScheme))
+                        .accessibilityIdentifier(
+                            "settings.imageDiagnostics.message"
+                        )
+                }
+            } header: {
+                Text("图片诊断")
+            } footer: {
+                Text("用于定位封面或阅读页空白。导出文件包含完整图片 URL，请只发送给可信对象。")
+            }
+
+            Section {
                 Toggle("启用云端历史同步", isOn: cloudHistoryBinding(\.cloudHistoryEnabled))
 
                 if viewModel.cloudHistoryEnabled {
@@ -177,7 +236,9 @@ struct SettingsView: View {
             viewModel.refreshDiagnostics()
         }
         .task {
-            await viewModel.refreshImageCacheUsage()
+            async let imageCacheRefresh: Void = viewModel.refreshImageCacheUsage()
+            async let imageDiagnosticsRefresh: Void = viewModel.refreshImageDiagnostics()
+            _ = await (imageCacheRefresh, imageDiagnosticsRefresh)
         }
         .confirmationDialog(
             "清理图片缓存？",
@@ -190,6 +251,36 @@ struct SettingsView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("已缓存的图片会被删除，之后浏览时需要重新下载。")
+        }
+        .confirmationDialog(
+            "清空图片诊断日志？",
+            isPresented: $showClearImageDiagnosticsConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("清空", role: .destructive) {
+                Task { await viewModel.clearImageDiagnostics() }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("已记录的图片加载诊断事件会被删除，且无法恢复。")
+        }
+        .alert(
+            "导出图片诊断日志？",
+            isPresented: $showImageDiagnosticsExportConfirmation
+        ) {
+            Button("取消", role: .cancel) {}
+            Button("继续导出") {
+                Task {
+                    if let url = await viewModel.exportImageDiagnostics() {
+                        diagnosticsExportItem = DiagnosticsExportItem(url: url)
+                    }
+                }
+            }
+        } message: {
+            Text("导出文件包含完整图片 URL，请只发送给可信对象。")
+        }
+        .sheet(item: $diagnosticsExportItem) { item in
+            ActivityShareSheet(fileURL: item.url)
         }
     }
 

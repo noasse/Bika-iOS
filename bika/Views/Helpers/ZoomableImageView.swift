@@ -158,6 +158,8 @@ struct ZoomableImageView: UIViewRepresentable {
     let imageCache: ImageCache
     var sizing: ZoomableImageSizing = .viewport
     var pageID: ReaderPageID? = nil
+    var diagnosticPurpose: ImageDiagnosticPurpose = .readerVisible
+    var diagnostics: any ImageDiagnosticsRecording = ImageDiagnosticsService.shared
     var onImageAspectRatio: ((CGFloat) -> Void)?
     var onSingleTap: ((CGPoint) -> Void)?
 
@@ -264,6 +266,14 @@ struct ZoomableImageView: UIViewRepresentable {
 
             let imageLoader = parent.imageLoader
             let imageCache = parent.imageCache
+            let diagnostics = parent.diagnostics
+            let diagnosticContext = ImageDiagnosticContext(
+                purpose: parent.diagnosticPurpose,
+                url: url,
+                pageStableID: parent.pageID.map {
+                    $0.backendPageID ?? $0.imageURL.absoluteString
+                }
+            )
             loadTask = Task { [weak self, weak scrollView] in
                 do {
                     let asset = try await imageCache.loadAsset(
@@ -271,16 +281,39 @@ struct ZoomableImageView: UIViewRepresentable {
                         target: target,
                         overscan: 2,
                         priority: .userInitiated,
-                        imageLoader: imageLoader
+                        imageLoader: imageLoader,
+                        diagnosticContext: diagnosticContext
                     )
-                    guard !Task.isCancelled else { return }
+                    try Task.checkCancellation()
                     guard let self,
                           let scrollView,
-                          self.loadingIdentity == identity else { return }
+                          self.loadingIdentity == identity else {
+                        diagnostics.record(
+                            Self.displayEvent(
+                                context: diagnosticContext,
+                                action: .cancelled,
+                                error: CancellationError()
+                            )
+                        )
+                        return
+                    }
                     self.display(asset, identity: identity, in: scrollView)
-                } catch is CancellationError {
-                    return
+                    diagnostics.record(
+                        Self.displayEvent(
+                            context: diagnosticContext,
+                            action: .succeeded
+                        )
+                    )
                 } catch {
+                    diagnostics.record(
+                        Self.displayEvent(
+                            context: diagnosticContext,
+                            action: Self.isCancellation(error)
+                                ? .cancelled
+                                : .failed,
+                            error: error
+                        )
+                    )
                     guard self?.loadingIdentity == identity else { return }
                     self?.loadingIdentity = nil
                     scrollView?.setLoading(false)
@@ -309,6 +342,42 @@ struct ZoomableImageView: UIViewRepresentable {
                 waitsForFitWidthBounds: parent.sizing.isFitWidth
             )
             parent.onImageAspectRatio?(asset.layoutAspectRatio)
+        }
+
+        private static func displayEvent(
+            context: ImageDiagnosticContext,
+            action: ImageDiagnosticAction,
+            error: Error? = nil
+        ) -> ImageDiagnosticEvent {
+            ImageDiagnosticEvent(
+                sequence: 0,
+                timestamp: Date(),
+                requestID: context.requestID,
+                networkRequestID: nil,
+                purpose: context.purpose,
+                stage: .display,
+                action: action,
+                url: context.url,
+                cacheIdentity: nil,
+                httpStatus: nil,
+                responseBytes: nil,
+                durationMilliseconds: nil,
+                retryAttempt: 0,
+                decodeTarget: nil,
+                sourcePixelSize: nil,
+                decodedPixelSize: nil,
+                error: error,
+                metadata: ImageDiagnosticEventMetadata(
+                    pageStableID: context.pageStableID,
+                    contentType: nil,
+                    wasCachedResponse: nil
+                )
+            )
+        }
+
+        private static func isCancellation(_ error: Error) -> Bool {
+            error is CancellationError
+                || (error as? URLError)?.code == .cancelled
         }
 
         private func decodeTarget(in scrollView: ZoomingImageScrollView) -> ImageDecodeTarget {

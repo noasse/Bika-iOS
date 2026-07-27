@@ -96,6 +96,33 @@ final class CachedAsyncImageTests: XCTestCase {
         XCTAssertEqual(fittedContentHeight, targetSize.height, accuracy: 0.01)
     }
 
+    func testSuccessfulCoverLoadRecordsCoverDisplayEvent() async throws {
+        let diagnostics = CachedImageDiagnosticsRecorder()
+        let data = try makePNGData(size: CGSize(width: 40, height: 80))
+        let state = CachedAsyncImageLoadingState()
+        let url = try XCTUnwrap(URL(string: "https://images.bika.test/cover.jpg"))
+
+        await state.load(
+            url: url,
+            targetSize: CGSize(width: 100, height: 150),
+            contentMode: .fill,
+            purpose: .cover,
+            imageLoader: SizedImageLoader(dataByURL: [url: data]),
+            imageCache: ImageCache(
+                countLimit: 10,
+                totalCostLimit: 1_024 * 1_024
+            ),
+            diagnostics: diagnostics,
+            onImageSize: nil
+        )
+
+        XCTAssertTrue(diagnostics.events.contains {
+            $0.purpose == .cover
+                && $0.stage == .display
+                && $0.action == .succeeded
+        })
+    }
+
     private func load(
         state loadingState: CachedAsyncImageLoadingState,
         url: URL,
@@ -105,8 +132,10 @@ final class CachedAsyncImageTests: XCTestCase {
         await loadingState.load(
             url: url,
             targetSize: nil,
+            purpose: .unspecified,
             imageLoader: loader,
             imageCache: .shared,
+            diagnostics: ImageDiagnosticsNoopRecorder.shared,
             onImageSize: { size in
                 observedWidths.value.append(Int(size.width))
             }
@@ -123,6 +152,22 @@ final class CachedAsyncImageTests: XCTestCase {
         }
 
         return try XCTUnwrap(image.pngData())
+    }
+}
+
+private final class CachedImageDiagnosticsRecorder:
+    @unchecked Sendable,
+    ImageDiagnosticsRecording
+{
+    private let lock = NSLock()
+    private var storage: [ImageDiagnosticEvent] = []
+
+    var events: [ImageDiagnosticEvent] {
+        lock.withLock { storage }
+    }
+
+    func record(_ event: ImageDiagnosticEvent) {
+        lock.withLock { storage.append(event) }
     }
 }
 

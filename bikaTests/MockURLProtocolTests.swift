@@ -95,6 +95,25 @@ final class MockURLProtocolTests: XCTestCase {
 
         XCTAssertEqual(callbackCount.value, 1)
     }
+
+    func testSmokeFixtureRoutesComicPagesBeforeGenericComicDetail() throws {
+        let url = try XCTUnwrap(
+            URL(
+                string: "https://mock.bika.test/comics/comic-search-1/order/1/pages?page=1"
+            )
+        )
+
+        let response = try SmokeFixtureRouter.response(
+            for: URLRequest(url: url)
+        )
+        let decoded = try JSONDecoder().decode(
+            APIResponse<ComicPagesData>.self,
+            from: response.data
+        )
+
+        XCTAssertEqual(decoded.data?.pages.docs.count, 2)
+        XCTAssertEqual(decoded.data?.pages.docs.first?.id, "page-comic-search-1-1-1")
+    }
 }
 
 private final class ContinuationGate: @unchecked Sendable {
