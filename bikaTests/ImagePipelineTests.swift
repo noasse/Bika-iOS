@@ -97,24 +97,25 @@ final class ImagePipelineTests: XCTestCase {
     }
 
     @MainActor
-    func testFitWidthZoomingScrollViewWaitsForMatchingBoundsBeforeShowingImage() throws {
+    func testPageStaysVisibleWhileItsRowHeightIsStillAnEstimate() throws {
+        // A row sized from the estimated aspect ratio does not yet match the image's real one.
+        // The page must still be drawn: hiding it until the two agreed is what turned a height
+        // that never converged into a permanently blank page.
         let scrollView = ZoomingImageScrollView(
             frame: CGRect(x: 0, y: 0, width: 320, height: 500)
         )
         let image = makeImage(size: CGSize(width: 200, height: 500))
 
-        scrollView.setImage(
-            image,
-            layoutAspectRatio: 2.5,
-            waitsForFitWidthBounds: true
-        )
+        scrollView.setImage(image, layoutAspectRatio: 2.5)
         scrollView.layoutIfNeeded()
 
         let imageView = try XCTUnwrap(
             scrollView.subviews.compactMap { $0 as? UIImageView }.first
         )
-        XCTAssertTrue(imageView.isHidden)
+        XCTAssertFalse(imageView.isHidden)
+        XCTAssertEqual(imageView.frame.width, 320, accuracy: 0.01)
 
+        // Once the real ratio lands the row settles on an exact fit, still visible.
         scrollView.frame.size.height = 800
         scrollView.setNeedsLayout()
         scrollView.layoutIfNeeded()
@@ -124,17 +125,13 @@ final class ImagePipelineTests: XCTestCase {
     }
 
     @MainActor
-    func testViewportZoomingScrollViewShowsImageWithoutMatchingImageHeight() throws {
+    func testShortPageIsCenteredAcrossTheFullWidth() throws {
         let scrollView = ZoomingImageScrollView(
             frame: CGRect(x: 0, y: 0, width: 320, height: 500)
         )
         let image = makeImage(size: CGSize(width: 200, height: 100))
 
-        scrollView.setImage(
-            image,
-            layoutAspectRatio: 0.5,
-            waitsForFitWidthBounds: false
-        )
+        scrollView.setImage(image, layoutAspectRatio: 0.5)
         scrollView.layoutIfNeeded()
 
         let imageView = try XCTUnwrap(

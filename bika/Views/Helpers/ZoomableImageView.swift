@@ -10,7 +10,6 @@ final class ZoomingImageScrollView: UIScrollView {
     private var needsBaseImageLayout = true
     private var lastBaseLayoutBoundsSize = CGSize.zero
     private var layoutAspectRatio: CGFloat?
-    private var waitsForFitWidthBounds = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -27,17 +26,12 @@ final class ZoomingImageScrollView: UIScrollView {
         let aspectRatio = imageSize.width > 0 && imageSize.height > 0
             ? imageSize.height / imageSize.width
             : 1
-        setImage(
-            image,
-            layoutAspectRatio: aspectRatio,
-            waitsForFitWidthBounds: false
-        )
+        setImage(image, layoutAspectRatio: aspectRatio)
     }
 
     func setImage(
         _ image: UIImage?,
-        layoutAspectRatio: CGFloat,
-        waitsForFitWidthBounds: Bool
+        layoutAspectRatio: CGFloat
     ) {
         if readerImageView.image == nil, image == nil {
             return
@@ -47,8 +41,6 @@ final class ZoomingImageScrollView: UIScrollView {
         }
         readerImageView.image = image
         self.layoutAspectRatio = Self.validatedAspectRatio(layoutAspectRatio, image: image)
-        self.waitsForFitWidthBounds = waitsForFitWidthBounds
-        readerImageView.isHidden = image != nil && waitsForFitWidthBounds
         readerImageView.frame = .zero
         contentSize = .zero
         needsBaseImageLayout = true
@@ -123,8 +115,10 @@ final class ZoomingImageScrollView: UIScrollView {
         contentSize = readerImageView.frame.size
         lastBaseLayoutBoundsSize = boundsSize
         needsBaseImageLayout = false
-        readerImageView.isHidden = waitsForFitWidthBounds
-            && abs(boundsSize.height - fitHeight) >= 1
+        // The page is always drawn at its natural ratio across the full width. While the row
+        // height is still an estimate the image simply sits letterboxed or clipped inside it,
+        // and settles when the real ratio lands. Hiding it until the two agreed — which is what
+        // this used to do — turned any height that never converged into a permanently blank page.
         centerImage()
     }
 
@@ -335,8 +329,7 @@ struct ZoomableImageView: UIViewRepresentable {
             scrollView.setLoading(false)
             scrollView.setImage(
                 asset.image,
-                layoutAspectRatio: asset.layoutAspectRatio,
-                waitsForFitWidthBounds: parent.decodeTarget?.isFitWidth == true
+                layoutAspectRatio: asset.layoutAspectRatio
             )
             parent.onImageAspectRatio?(asset.layoutAspectRatio)
         }
@@ -414,12 +407,5 @@ private extension ImageDecodeTarget {
         case .fitWidth(let width):
             return width.isFinite && width > 0
         }
-    }
-
-    var isFitWidth: Bool {
-        if case .fitWidth = self {
-            return true
-        }
-        return false
     }
 }

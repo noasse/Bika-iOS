@@ -1,12 +1,6 @@
 import SwiftUI
 import UIKit
 
-nonisolated struct ReaderPageID: Hashable, Sendable {
-    let episodeID: String
-    let backendPageID: String?
-    let imageURL: URL
-}
-
 // MARK: - Comic Reader View
 
 struct ComicReaderView: View {
@@ -14,10 +8,7 @@ struct ComicReaderView: View {
     @State private var currentPage = 0
     @State private var scrollPosition: Int?
     @State private var hasJumpedToStart = false
-    @State private var imageAspectRatios: [ReaderPageID: CGFloat] = [:]
-    @State private var sampledPageIDs: [ReaderPageID] = []
-    @State private var sampledAspectRatios: [ReaderPageID: CGFloat] = [:]
-    @State private var estimatedAspectRatio: CGFloat?
+    @State private var pageLayout = ReaderPageLayoutStore()
     @State private var imagePrefetchTask: Task<Void, Never>?
     @State private var imagePrefetchKey: [ReaderImagePrefetchRequest]?
     /// Size of the box pages are actually rendered into, measured after safe-area expansion.
@@ -146,7 +137,7 @@ struct ComicReaderView: View {
             scheduleImagePrefetch(around: currentPage)
         }
         .onChange(of: viewModel.currentEpisodeIndex) { _, _ in
-            resetImageLayoutState()
+            pageLayout.reset()
             cancelImagePrefetch()
         }
         .onChange(of: viewModel.readerMode) { _, _ in
@@ -277,13 +268,13 @@ struct ComicReaderView: View {
                             pageID: pageID,
                             onImageAspectRatio: { aspectRatio in
                                 guard let pageID else { return }
-                                updateImageAspectRatio(aspectRatio, for: pageID)
+                                pageLayout.record(aspectRatio, for: pageID)
                             },
                             onSingleTap: handleTap
                         )
                         .onAppear {
                             guard let pageID else { return }
-                            registerSamplePageIfNeeded(pageID)
+                            pageLayout.registerSample(pageID)
                         }
                         .frame(
                             width: viewportWidth,
@@ -301,58 +292,10 @@ struct ComicReaderView: View {
     }
 
     private func pageHeight(for index: Int, viewportWidth: CGFloat) -> CGFloat {
-        ReaderVerticalImageLayout.pageHeight(
-            viewportWidth: viewportWidth,
-            exactAspectRatio: readerPageID(for: index).flatMap { imageAspectRatios[$0] },
-            estimatedAspectRatio: estimatedAspectRatio
+        pageLayout.pageHeight(
+            for: readerPageID(for: index),
+            viewportWidth: viewportWidth
         )
-    }
-
-    private func registerSamplePageIfNeeded(_ pageID: ReaderPageID) {
-        guard sampledPageIDs.count < 3,
-              !sampledPageIDs.contains(pageID) else {
-            return
-        }
-        sampledPageIDs.append(pageID)
-        if let aspectRatio = imageAspectRatios[pageID] {
-            sampledAspectRatios[pageID] = aspectRatio
-            estimatedAspectRatio = sampledMedianAspectRatio()
-        }
-    }
-
-    private func updateImageAspectRatio(_ aspectRatio: CGFloat, for pageID: ReaderPageID) {
-        guard aspectRatio.isFinite,
-              aspectRatio > 0 else {
-            return
-        }
-
-        if let previous = imageAspectRatios[pageID],
-           abs(previous - aspectRatio) < 0.0001 {
-            return
-        }
-
-        imageAspectRatios[pageID] = aspectRatio
-
-        guard sampledPageIDs.contains(pageID) else { return }
-        sampledAspectRatios[pageID] = aspectRatio
-        estimatedAspectRatio = sampledMedianAspectRatio()
-    }
-
-    private func sampledMedianAspectRatio() -> CGFloat? {
-        let ratios = sampledPageIDs.compactMap { sampledAspectRatios[$0] }.sorted()
-        guard !ratios.isEmpty else { return nil }
-        let mid = ratios.count / 2
-        if ratios.count.isMultiple(of: 2) {
-            return (ratios[mid - 1] + ratios[mid]) / 2
-        }
-        return ratios[mid]
-    }
-
-    private func resetImageLayoutState() {
-        imageAspectRatios = [:]
-        sampledPageIDs = []
-        sampledAspectRatios = [:]
-        estimatedAspectRatio = nil
     }
 
     private func readerPageID(for index: Int) -> ReaderPageID? {
@@ -406,9 +349,7 @@ struct ComicReaderView: View {
                 imageCache: imageCache
             )
             guard !Task.isCancelled, imagePrefetchKey == prefetchKey else { return }
-            for (pageID, aspectRatio) in prefetchedAspectRatios {
-                updateImageAspectRatio(aspectRatio, for: pageID)
-            }
+            pageLayout.record(prefetchedAspectRatios)
         }
     }
 
@@ -533,37 +474,6 @@ struct ComicReaderView: View {
             )
         }
         .foregroundStyle(.white)
-    }
-}
-
-nonisolated enum ReaderVerticalImageLayout {
-    static let fallbackPageHeight: CGFloat = 500
-    static let fallbackAspectRatio: CGFloat = 1.5
-
-    static func pageHeight(
-        viewportWidth: CGFloat,
-        exactAspectRatio: CGFloat?,
-        estimatedAspectRatio: CGFloat?,
-        fallbackAspectRatio: CGFloat = fallbackAspectRatio
-    ) -> CGFloat {
-        guard viewportWidth.isFinite, viewportWidth > 0 else { return fallbackPageHeight }
-
-        if let exactAspectRatio,
-           exactAspectRatio.isFinite,
-           exactAspectRatio > 0 {
-            return viewportWidth * exactAspectRatio
-        }
-
-        if let estimatedAspectRatio,
-           estimatedAspectRatio.isFinite,
-           estimatedAspectRatio > 0 {
-            return viewportWidth * estimatedAspectRatio
-        }
-
-        let resolvedFallback = fallbackAspectRatio.isFinite && fallbackAspectRatio > 0
-            ? fallbackAspectRatio
-            : Self.fallbackAspectRatio
-        return viewportWidth * resolvedFallback
     }
 }
 
