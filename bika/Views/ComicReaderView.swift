@@ -20,7 +20,10 @@ struct ComicReaderView: View {
     @State private var estimatedAspectRatio: CGFloat?
     @State private var imagePrefetchTask: Task<Void, Never>?
     @State private var imagePrefetchKey: [ReaderImagePrefetchRequest]?
-    @State private var viewportSize = CGSize.zero
+    /// Size of the box pages are actually rendered into, measured after safe-area expansion.
+    /// Both readers lay out inside `.ignoresSafeArea()`, so this — not the safe-area-inset
+    /// container — is the size images must be decoded for.
+    @State private var contentSize = CGSize.zero
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     private let startPageIndex: Int
@@ -99,20 +102,8 @@ struct ComicReaderView: View {
                 toolbarOverlay
             }
         }
+        .background(contentGeometryProbe)
         .statusBar(hidden: !viewModel.showToolbar)
-        .onGeometryChange(for: CGSize.self) { geometry in
-            geometry.size
-        } action: { _, newSize in
-            guard ReaderViewportUpdate.shouldApply(
-                currentSize: viewportSize,
-                newSize: newSize
-            ) else {
-                return
-            }
-            viewportSize = newSize
-            imagePrefetchKey = nil
-            scheduleImagePrefetch(around: currentPage)
-        }
         .task {
             viewModel.startLoadingPages()
             if isUITesting {
@@ -164,6 +155,35 @@ struct ComicReaderView: View {
         }
     }
 
+    /// Measures the same `.ignoresSafeArea()` box the two readers lay out in, so the decode
+    /// target the prefetcher uses is the one the visible page will ask for.
+    private var contentGeometryProbe: some View {
+        Color.clear
+            .ignoresSafeArea()
+            .onGeometryChange(for: CGSize.self) { geometry in
+                geometry.size
+            } action: { _, newSize in
+                guard ReaderViewportUpdate.shouldApply(
+                    currentSize: contentSize,
+                    newSize: newSize
+                ) else {
+                    return
+                }
+                contentSize = newSize
+                imagePrefetchKey = nil
+                scheduleImagePrefetch(around: currentPage)
+            }
+    }
+
+    /// The one decode target every page in the reader is loaded at, whether it is being
+    /// prefetched or displayed.
+    private func readerDecodeTarget() -> ImageDecodeTarget? {
+        ReaderDecodeTargetResolver.target(
+            mode: viewModel.readerMode,
+            contentSize: contentSize
+        )
+    }
+
     private func paginationErrorBanner(_ errorMessage: String) -> some View {
         VStack {
             Spacer()
@@ -201,7 +221,10 @@ struct ComicReaderView: View {
     // MARK: - Tap to Toggle Toolbar
 
     private func handleTap(_ location: CGPoint) {
-        let screenWidth = max(viewportSize.width, 1)
+        // No usable width yet means no meaningful centre band. Bail out instead of clamping to
+        // 1pt, which used to silently produce a tap zone nothing could ever hit.
+        guard contentSize.width.isFinite, contentSize.width > 0 else { return }
+        let screenWidth = contentSize.width
         let center = screenWidth / 2
         let margin = screenWidth * 0.3
         if location.x > center - margin && location.x < center + margin {
@@ -221,6 +244,7 @@ struct ComicReaderView: View {
                         url: page.media.imageURL,
                         imageLoader: imageDataLoader,
                         imageCache: imageCache,
+                        decodeTarget: readerDecodeTarget(),
                         pageID: readerPageID(for: index),
                         onSingleTap: handleTap
                     )
@@ -249,7 +273,7 @@ struct ComicReaderView: View {
                             url: page.media.imageURL,
                             imageLoader: imageDataLoader,
                             imageCache: imageCache,
-                            sizing: .fitWidth(viewportWidth),
+                            decodeTarget: readerDecodeTarget(),
                             pageID: pageID,
                             onImageAspectRatio: { aspectRatio in
                                 guard let pageID else { return }
@@ -401,7 +425,7 @@ struct ComicReaderView: View {
             return nil
         }
 
-        guard let target = imagePrefetchTarget() else { return nil }
+        guard let target = readerDecodeTarget() else { return nil }
         return ReaderImagePrefetchRequest(
             pageID: pageID,
             url: url,
@@ -412,19 +436,6 @@ struct ComicReaderView: View {
                 pageStableID: pageID.backendPageID ?? pageID.imageURL.absoluteString
             )
         )
-    }
-
-    private func imagePrefetchTarget() -> ImageDecodeTarget? {
-        guard viewportSize.width.isFinite, viewportSize.width > 0 else { return nil }
-
-        switch viewModel.readerMode {
-        case .horizontal:
-            guard viewportSize.height.isFinite, viewportSize.height > 0 else { return nil }
-            return .fit(viewportSize)
-
-        case .vertical:
-            return .fitWidth(viewportSize.width)
-        }
     }
 
     // MARK: - Save Progress

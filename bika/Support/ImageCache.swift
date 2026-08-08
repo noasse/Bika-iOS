@@ -206,6 +206,10 @@ nonisolated final class ImageCache: @unchecked Sendable {
         imageLoader: any ImageDataLoading,
         diagnosticContext: ImageDiagnosticContext
     ) async throws -> DecodedImageAsset {
+        // Snap once, up front, so the cache key, the decoded pixel size and the diagnostics
+        // all describe the same target. Callers measuring the same area through different
+        // geometry sources must land on one cache entry, not two.
+        let target = target.bucketed
         let identity = Self.cacheIdentity(
             for: url,
             target: target,

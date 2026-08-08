@@ -8,8 +8,17 @@ nonisolated enum ImageDecodeTarget: Sendable, Equatable {
     case fill(CGSize)
     case fitWidth(CGFloat)
 
+    /// Point size that decode targets are snapped to before they become cache keys.
+    ///
+    /// Viewport measurements wobble by fractions of a point between layout passes, and the
+    /// reader derives its target from more than one geometry source. Without snapping, a
+    /// sub-point difference produces a different cache key and the same image is fetched and
+    /// decoded twice. Targets round *up* so a bucketed decode is never smaller than the area
+    /// it has to fill.
+    static let cacheBucketSize: CGFloat = 8
+
     var cacheKey: String {
-        switch self {
+        switch bucketed {
         case .full:
             return "full"
         case .fit(let size):
@@ -19,6 +28,30 @@ nonisolated enum ImageDecodeTarget: Sendable, Equatable {
         case .fitWidth(let width):
             return "width-\(Self.rounded(width))"
         }
+    }
+
+    /// The target snapped to `cacheBucketSize`, so that near-identical requests share one
+    /// cache entry *and* one decoded pixel size.
+    var bucketed: ImageDecodeTarget {
+        switch self {
+        case .full:
+            return .full
+        case .fit(let size):
+            return .fit(Self.bucketed(size))
+        case .fill(let size):
+            return .fill(Self.bucketed(size))
+        case .fitWidth(let width):
+            return .fitWidth(Self.bucketed(width))
+        }
+    }
+
+    private static func bucketed(_ value: CGFloat) -> CGFloat {
+        guard value.isFinite, value > 0 else { return value }
+        return (value / cacheBucketSize).rounded(.up) * cacheBucketSize
+    }
+
+    private static func bucketed(_ size: CGSize) -> CGSize {
+        CGSize(width: bucketed(size.width), height: bucketed(size.height))
     }
 
     private static func rounded(_ value: CGFloat) -> Int {

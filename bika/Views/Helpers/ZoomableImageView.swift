@@ -1,11 +1,6 @@
 import SwiftUI
 import UIKit
 
-nonisolated enum ZoomableImageSizing: Equatable, Sendable {
-    case viewport
-    case fitWidth(CGFloat)
-}
-
 @MainActor
 final class ZoomingImageScrollView: UIScrollView {
     let readerImageView = UIImageView()
@@ -156,7 +151,10 @@ struct ZoomableImageView: UIViewRepresentable {
     let url: URL?
     let imageLoader: any ImageDataLoading
     let imageCache: ImageCache
-    var sizing: ZoomableImageSizing = .viewport
+    /// Supplied by the caller rather than derived from this view's bounds, so the prefetcher
+    /// and the visible page decode — and cache — against exactly the same target.
+    /// `nil` means the layout has not produced a usable size yet; nothing is loaded until it does.
+    var decodeTarget: ImageDecodeTarget?
     var pageID: ReaderPageID? = nil
     var diagnosticPurpose: ImageDiagnosticPurpose = .readerVisible
     var diagnostics: any ImageDiagnosticsRecording = ImageDiagnosticsService.shared
@@ -246,8 +244,7 @@ struct ZoomableImageView: UIViewRepresentable {
                 return
             }
 
-            let target = decodeTarget(in: scrollView)
-            guard target.isUsable else { return }
+            guard let target = parent.decodeTarget, target.isUsable else { return }
             let identity = DisplayIdentity(
                 cacheIdentity: ImageCache.cacheIdentity(
                     for: url,
@@ -339,7 +336,7 @@ struct ZoomableImageView: UIViewRepresentable {
             scrollView.setImage(
                 asset.image,
                 layoutAspectRatio: asset.layoutAspectRatio,
-                waitsForFitWidthBounds: parent.sizing.isFitWidth
+                waitsForFitWidthBounds: parent.decodeTarget?.isFitWidth == true
             )
             parent.onImageAspectRatio?(asset.layoutAspectRatio)
         }
@@ -380,15 +377,6 @@ struct ZoomableImageView: UIViewRepresentable {
                 || (error as? URLError)?.code == .cancelled
         }
 
-        private func decodeTarget(in scrollView: ZoomingImageScrollView) -> ImageDecodeTarget {
-            switch parent.sizing {
-            case .viewport:
-                return .fit(scrollView.bounds.size)
-            case .fitWidth(let width):
-                return .fitWidth(width)
-            }
-        }
-
         @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
             guard let scrollView = gesture.view as? ZoomingImageScrollView else { return }
             if scrollView.zoomScale > scrollView.minimumZoomScale {
@@ -427,9 +415,7 @@ private extension ImageDecodeTarget {
             return width.isFinite && width > 0
         }
     }
-}
 
-private extension ZoomableImageSizing {
     var isFitWidth: Bool {
         if case .fitWidth = self {
             return true

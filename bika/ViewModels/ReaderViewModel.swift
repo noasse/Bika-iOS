@@ -38,7 +38,7 @@ final class ReaderViewModel {
         }
     }
 
-    enum ReaderMode: String {
+    nonisolated enum ReaderMode: String, Sendable {
         case horizontal, vertical
     }
 
