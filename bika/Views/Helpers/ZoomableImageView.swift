@@ -58,7 +58,28 @@ final class ZoomingImageScrollView: UIScrollView {
     override func layoutSubviews() {
         super.layoutSubviews()
         layoutImageForCurrentBounds()
+        refreshPanInterception()
         onBoundsSizeChange?(bounds.size)
+    }
+
+    /// Take pan gestures only when this page actually has somewhere to scroll.
+    ///
+    /// Every page sits in its own scroll view nested inside the reader's. While a page fits its
+    /// row exactly — the normal state in the vertical reader — an enabled pan recognizer would
+    /// swallow drags that belong to the chapter, so zooming one page used to strand the reader
+    /// on it until the page was zoomed back out. Only the pan recognizer is touched: pinch and
+    /// double-tap stay live, so a page can still be zoomed from rest, and panning comes back as
+    /// soon as there is something to pan across.
+    private func refreshPanInterception() {
+        let scrollableWidth = contentSize.width - bounds.width
+        let scrollableHeight = contentSize.height - bounds.height
+        let hasSomewhereToScroll = scrollableWidth > 0.5 || scrollableHeight > 0.5
+        panGestureRecognizer.isEnabled = hasSomewhereToScroll || zoomScale > minimumZoomScale
+    }
+
+    /// Called while zooming, when `contentSize` grows past the bounds and panning must come back.
+    func refreshPanInterceptionAfterZoom() {
+        refreshPanInterception()
     }
 
     func centerImage() {
@@ -75,6 +96,16 @@ final class ZoomingImageScrollView: UIScrollView {
     }
 
     private func configureSubviews() {
+        // Owned here rather than by the SwiftUI wrapper: pan interception is derived from the
+        // zoom scale, so a scroll view that had not been configured yet would reason about
+        // gestures from the wrong bounds.
+        minimumZoomScale = 1
+        maximumZoomScale = 4
+        bouncesZoom = true
+        showsHorizontalScrollIndicator = false
+        showsVerticalScrollIndicator = false
+        backgroundColor = UIColor(white: 0.1, alpha: 1)
+
         readerImageView.contentMode = .scaleAspectFit
         readerImageView.clipsToBounds = true
         addSubview(readerImageView)
@@ -162,12 +193,6 @@ struct ZoomableImageView: UIViewRepresentable {
     func makeUIView(context: Context) -> ZoomingImageScrollView {
         let scrollView = ZoomingImageScrollView()
         scrollView.delegate = context.coordinator
-        scrollView.minimumZoomScale = 1
-        scrollView.maximumZoomScale = 4
-        scrollView.bouncesZoom = true
-        scrollView.showsHorizontalScrollIndicator = false
-        scrollView.showsVerticalScrollIndicator = false
-        scrollView.backgroundColor = UIColor(white: 0.1, alpha: 1)
 
         let doubleTap = UITapGestureRecognizer(
             target: context.coordinator,
@@ -226,7 +251,9 @@ struct ZoomableImageView: UIViewRepresentable {
         }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
-            (scrollView as? ZoomingImageScrollView)?.centerImage()
+            guard let scrollView = scrollView as? ZoomingImageScrollView else { return }
+            scrollView.centerImage()
+            scrollView.refreshPanInterceptionAfterZoom()
         }
 
         func loadImageIfNeeded(in scrollView: ZoomingImageScrollView) {

@@ -125,6 +125,63 @@ final class ImagePipelineTests: XCTestCase {
     }
 
     @MainActor
+    func testPageThatFitsItsRowLetsTheChapterScrollThrough() throws {
+        // The vertical reader's normal state: the row is exactly as tall as the page. The page's
+        // own scroll view must not take the drag, or the chapter cannot be scrolled.
+        let scrollView = ZoomingImageScrollView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 800)
+        )
+        scrollView.setImage(makeImage(size: CGSize(width: 200, height: 500)), layoutAspectRatio: 2.5)
+        scrollView.layoutIfNeeded()
+
+        XCTAssertEqual(scrollView.contentSize, CGSize(width: 320, height: 800))
+        XCTAssertFalse(scrollView.panGestureRecognizer.isEnabled)
+        // Zooming must still be reachable from rest — the capability is kept, not removed.
+        XCTAssertEqual(scrollView.maximumZoomScale, 4)
+        XCTAssertTrue(scrollView.pinchGestureRecognizer?.isEnabled ?? false)
+    }
+
+    @MainActor
+    func testPanComesBackOnceThePageIsZoomed() throws {
+        let scrollView = ZoomingImageScrollView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 800)
+        )
+        // Zooming needs the coordinator's viewForZooming, so drive the real delegate.
+        let coordinator = ZoomableImageView(
+            url: nil,
+            imageLoader: CountingImageDataLoader(data: Data()),
+            imageCache: ImageCache(countLimit: 1, totalCostLimit: 1_024)
+        ).makeCoordinator()
+        scrollView.delegate = coordinator
+
+        scrollView.setImage(makeImage(size: CGSize(width: 200, height: 500)), layoutAspectRatio: 2.5)
+        scrollView.layoutIfNeeded()
+        XCTAssertFalse(scrollView.panGestureRecognizer.isEnabled)
+
+        scrollView.setZoomScale(2, animated: false)
+        scrollView.layoutIfNeeded()
+
+        XCTAssertGreaterThan(scrollView.zoomScale, scrollView.minimumZoomScale)
+        XCTAssertTrue(
+            scrollView.panGestureRecognizer.isEnabled,
+            "a zoomed page must be pannable"
+        )
+    }
+
+    @MainActor
+    func testTallPageKeepsItsOwnScrollingInTheHorizontalReader() throws {
+        // A page taller than the viewport has somewhere to scroll, so it keeps the drag.
+        let scrollView = ZoomingImageScrollView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 500)
+        )
+        scrollView.setImage(makeImage(size: CGSize(width: 200, height: 500)), layoutAspectRatio: 2.5)
+        scrollView.layoutIfNeeded()
+
+        XCTAssertEqual(scrollView.contentSize.height, 800, accuracy: 0.01)
+        XCTAssertTrue(scrollView.panGestureRecognizer.isEnabled)
+    }
+
+    @MainActor
     func testShortPageIsCenteredAcrossTheFullWidth() throws {
         let scrollView = ZoomingImageScrollView(
             frame: CGRect(x: 0, y: 0, width: 320, height: 500)

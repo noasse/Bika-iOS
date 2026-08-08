@@ -6,7 +6,6 @@ import UIKit
 struct ComicReaderView: View {
     @State private var viewModel: ReaderViewModel
     @State private var currentPage = 0
-    @State private var scrollPosition: Int?
     @State private var hasJumpedToStart = false
     @State private var pageLayout = ReaderPageLayoutStore()
     @State private var imagePrefetchTask: Task<Void, Never>?
@@ -111,11 +110,8 @@ struct ComicReaderView: View {
                 saveProgress()
             }
         }
-        .onChange(of: scrollPosition) { _, newPos in
-            if let newPos {
-                currentPage = newPos
-                scheduleImagePrefetch(around: newPos)
-            }
+        .onChange(of: currentPage) { _, newPage in
+            scheduleImagePrefetch(around: newPage)
         }
         .onChange(of: viewModel.pages.count) { _, count in
             guard count > 0 else {
@@ -126,12 +122,7 @@ struct ComicReaderView: View {
             if !hasJumpedToStart {
                 let restoredPage = min(startPageIndex, count - 1)
                 hasJumpedToStart = true
-                if restoredPage > 0 {
-                    scrollPosition = restoredPage
-                    currentPage = restoredPage
-                } else {
-                    currentPage = 0
-                }
+                currentPage = restoredPage
             }
 
             scheduleImagePrefetch(around: currentPage)
@@ -144,6 +135,19 @@ struct ComicReaderView: View {
             imagePrefetchKey = nil
             scheduleImagePrefetch(around: currentPage)
         }
+    }
+
+    /// `scrollPosition(id:)` reports `nil` whenever the scroll view is between items. Dropping
+    /// those keeps `currentPage` — the one place the reader records where the reader is — always
+    /// answerable, which is what progress saving and the page counter need.
+    private var scrollPositionBinding: Binding<Int?> {
+        Binding(
+            get: { currentPage },
+            set: { newPosition in
+                guard let newPosition else { return }
+                currentPage = newPosition
+            }
+        )
     }
 
     /// Measures the same `.ignoresSafeArea()` box the two readers lay out in, so the decode
@@ -245,7 +249,7 @@ struct ComicReaderView: View {
             }
             .scrollTargetLayout()
         }
-        .scrollPosition(id: $scrollPosition)
+        .scrollPosition(id: scrollPositionBinding)
         .scrollTargetBehavior(.paging)
         .scrollIndicators(.automatic)
         .ignoresSafeArea()
@@ -285,7 +289,7 @@ struct ComicReaderView: View {
                 }
                 .scrollTargetLayout()
             }
-            .scrollPosition(id: $scrollPosition)
+            .scrollPosition(id: scrollPositionBinding)
             .scrollIndicators(.automatic)
         }
         .ignoresSafeArea()
@@ -430,7 +434,6 @@ struct ComicReaderView: View {
             // 底部栏：背景延伸到底部安全区
             HStack(spacing: 20) {
                 Button {
-                    scrollPosition = 0
                     currentPage = 0
                     viewModel.previousEpisode()
                 } label: {
@@ -445,7 +448,6 @@ struct ComicReaderView: View {
                 Button {
                     let newMode: ReaderViewModel.ReaderMode = viewModel.readerMode == .horizontal ? .vertical : .horizontal
                     viewModel.setReaderMode(newMode)
-                    scrollPosition = currentPage
                 } label: {
                     Image(systemName: viewModel.readerMode == .horizontal ? "arrow.up.arrow.down" : "arrow.left.arrow.right")
                     Text(viewModel.readerMode == .horizontal ? "滚动" : "翻页")
@@ -455,7 +457,6 @@ struct ComicReaderView: View {
                 Spacer()
 
                 Button {
-                    scrollPosition = 0
                     currentPage = 0
                     viewModel.nextEpisode()
                 } label: {

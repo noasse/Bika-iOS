@@ -5,7 +5,6 @@ final class ReaderViewModel {
     var pages: [ComicPage] = []
     var isLoading = false
     var errorMessage: String?
-    var currentPageIndex = 0
     var showToolbar = false
     var readerMode: ReaderMode
 
@@ -17,8 +16,6 @@ final class ReaderViewModel {
     private let keyValueStore: any KeyValueStore
     private var loadTask: Task<Void, Never>?
     private var activeLoadSequence = 0
-    private var paginationPage = 0
-    private var paginationTotalPages = 1
     private var displayedEpisodeID: String?
 
     private enum PageLoadError: LocalizedError {
@@ -76,8 +73,6 @@ final class ReaderViewModel {
         guard let episode = currentEpisode else {
             pages = []
             displayedEpisodeID = nil
-            paginationPage = 0
-            paginationTotalPages = 1
             isLoading = false
             loadTask = nil
             return
@@ -93,8 +88,6 @@ final class ReaderViewModel {
         }
 
         isLoading = true
-        paginationPage = 0
-        paginationTotalPages = 1
 
         loadTask = Task { [weak self] in
             await self?.loadPages(
@@ -126,7 +119,6 @@ final class ReaderViewModel {
 
         var loadedPages: [ComicPage] = []
         var nextPage = 1
-        var resolvedPaginationPage = 0
         var resolvedTotalPages = 1
 
         while nextPage <= resolvedTotalPages {
@@ -142,9 +134,7 @@ final class ReaderViewModel {
                         PageLoadError.missingData,
                         attemptedPages: loadedPages,
                         retainedPages: retainedPages,
-                        episodeID: episode.id,
-                        paginationPage: resolvedPaginationPage,
-                        paginationTotalPages: resolvedTotalPages
+                        episodeID: episode.id
                     )
                     return
                 }
@@ -157,9 +147,7 @@ final class ReaderViewModel {
                         PageLoadError.pageDidNotAdvance(requested: nextPage, returned: resolvedPage),
                         attemptedPages: loadedPages,
                         retainedPages: retainedPages,
-                        episodeID: episode.id,
-                        paginationPage: resolvedPaginationPage,
-                        paginationTotalPages: resolvedTotalPages
+                        episodeID: episode.id
                     )
                     return
                 }
@@ -170,20 +158,16 @@ final class ReaderViewModel {
                             PageLoadError.emptyPageWithMorePages(page: resolvedPage),
                             attemptedPages: loadedPages,
                             retainedPages: retainedPages,
-                            episodeID: episode.id,
-                            paginationPage: resolvedPaginationPage,
-                            paginationTotalPages: resolvedTotalPages
+                            episodeID: episode.id
                         )
                         return
                     }
 
-                    resolvedPaginationPage = resolvedPage
                     resolvedTotalPages = resolvedPages
                     break
                 }
 
                 loadedPages.append(contentsOf: data.pages.docs)
-                resolvedPaginationPage = resolvedPage
                 resolvedTotalPages = resolvedPages
 
                 let upcomingPage = resolvedPage + 1
@@ -198,9 +182,7 @@ final class ReaderViewModel {
                     error,
                     attemptedPages: loadedPages,
                     retainedPages: retainedPages,
-                    episodeID: episode.id,
-                    paginationPage: resolvedPaginationPage,
-                    paginationTotalPages: resolvedTotalPages
+                    episodeID: episode.id
                 )
                 return
             }
@@ -209,8 +191,6 @@ final class ReaderViewModel {
         guard !Task.isCancelled, activeLoadSequence == loadSequence else { return }
         pages = loadedPages
         displayedEpisodeID = episode.id
-        paginationPage = resolvedPaginationPage
-        paginationTotalPages = resolvedTotalPages
         errorMessage = nil
     }
 
@@ -218,16 +198,12 @@ final class ReaderViewModel {
         _ error: Error,
         attemptedPages: [ComicPage],
         retainedPages: [ComicPage],
-        episodeID: String,
-        paginationPage: Int,
-        paginationTotalPages: Int
+        episodeID: String
     ) {
         if retainedPages.isEmpty {
             pages = attemptedPages
         }
         displayedEpisodeID = episodeID
-        self.paginationPage = paginationPage
-        self.paginationTotalPages = paginationTotalPages
         errorMessage = error.localizedDescription
     }
 
