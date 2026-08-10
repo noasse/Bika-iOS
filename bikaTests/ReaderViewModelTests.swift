@@ -456,6 +456,102 @@ final class ReaderViewModelTests: XCTestCase {
         XCTAssertEqual(height, 480, accuracy: 0.01)
     }
 
+    // MARK: - ReaderPageLayoutStore
+    //
+    // These rules used to live as four pieces of view state mutated from several SwiftUI
+    // callbacks, so none of them could be asserted directly.
+
+    @MainActor
+    func testLayoutStorePrefersAMeasuredPageOverTheEstimate() {
+        let store = ReaderPageLayoutStore()
+        let measured = makePageID("measured")
+        let unmeasured = makePageID("unmeasured")
+
+        store.registerSample(measured)
+        store.record(3, for: measured)
+
+        XCTAssertEqual(store.pageHeight(for: measured, viewportWidth: 320), 960, accuracy: 0.01)
+        // The unmeasured page falls back to the estimate the sample produced.
+        XCTAssertEqual(store.pageHeight(for: unmeasured, viewportWidth: 320), 960, accuracy: 0.01)
+    }
+
+    @MainActor
+    func testLayoutStoreEstimatesFromTheMedianOfItsSamples() {
+        let store = ReaderPageLayoutStore()
+        let samples = (0..<3).map { makePageID("sample-\($0)") }
+        samples.forEach(store.registerSample)
+
+        store.record(1, for: samples[0])
+        store.record(5, for: samples[1])
+        store.record(2, for: samples[2])
+
+        // Median of [1, 2, 5] is 2 — an outlier page must not drag every other page's height.
+        XCTAssertEqual(store.estimatedAspectRatio ?? 0, 2, accuracy: 0.0001)
+    }
+
+    @MainActor
+    func testLayoutStoreStopsTakingSamplesAtItsLimit() {
+        let store = ReaderPageLayoutStore()
+        let pageIDs = (0..<5).map { makePageID("page-\($0)") }
+        pageIDs.forEach(store.registerSample)
+
+        XCTAssertEqual(store.sampledPageIDs.count, ReaderPageLayoutStore.sampleCount)
+
+        // A page beyond the limit still records its own height, it just does not steer the estimate.
+        store.record(9, for: pageIDs[4])
+        XCTAssertEqual(store.pageHeight(for: pageIDs[4], viewportWidth: 320), 2880, accuracy: 0.01)
+        XCTAssertNil(store.estimatedAspectRatio)
+    }
+
+    @MainActor
+    func testLayoutStoreIgnoresRepeatAndInvalidMeasurements() {
+        let store = ReaderPageLayoutStore()
+        let pageID = makePageID("page")
+
+        XCTAssertTrue(store.record(2, for: pageID))
+        XCTAssertFalse(store.record(2, for: pageID), "an unchanged ratio must not churn layout")
+        XCTAssertFalse(store.record(0, for: pageID))
+        XCTAssertFalse(store.record(.nan, for: pageID))
+        XCTAssertFalse(store.record(.infinity, for: pageID))
+
+        XCTAssertEqual(store.pageHeight(for: pageID, viewportWidth: 320), 640, accuracy: 0.01)
+    }
+
+    @MainActor
+    func testLayoutStoreDropsEverythingWhenTheEpisodeChanges() {
+        let store = ReaderPageLayoutStore()
+        let pageID = makePageID("page")
+        store.registerSample(pageID)
+        store.record(3, for: pageID)
+
+        store.reset()
+
+        XCTAssertNil(store.estimatedAspectRatio)
+        XCTAssertTrue(store.sampledPageIDs.isEmpty)
+        // Back to the default ratio, not the previous episode's measurement.
+        XCTAssertEqual(store.pageHeight(for: pageID, viewportWidth: 320), 480, accuracy: 0.01)
+    }
+
+    @MainActor
+    func testLayoutStoreAcceptsPrefetchedRatiosInBulk() {
+        let store = ReaderPageLayoutStore()
+        let first = makePageID("first")
+        let second = makePageID("second")
+
+        store.record([first: 2, second: 4])
+
+        XCTAssertEqual(store.pageHeight(for: first, viewportWidth: 320), 640, accuracy: 0.01)
+        XCTAssertEqual(store.pageHeight(for: second, viewportWidth: 320), 1280, accuracy: 0.01)
+    }
+
+    private func makePageID(_ id: String) -> ReaderPageID {
+        ReaderPageID(
+            episodeID: "episode-1",
+            backendPageID: id,
+            imageURL: URL(string: "https://images.bika.test/\(id).jpg")!
+        )
+    }
+
     private func makeReaderViewModel(client: any APIClientProtocol, store: InMemoryKeyValueStore) -> ReaderViewModel {
         ReaderViewModel(
             comicId: "comic-1",

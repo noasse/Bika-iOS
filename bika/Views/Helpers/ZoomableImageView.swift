@@ -1,11 +1,6 @@
 import SwiftUI
 import UIKit
 
-nonisolated enum ZoomableImageSizing: Equatable, Sendable {
-    case viewport
-    case fitWidth(CGFloat)
-}
-
 @MainActor
 final class ZoomingImageScrollView: UIScrollView {
     let readerImageView = UIImageView()
@@ -15,7 +10,6 @@ final class ZoomingImageScrollView: UIScrollView {
     private var needsBaseImageLayout = true
     private var lastBaseLayoutBoundsSize = CGSize.zero
     private var layoutAspectRatio: CGFloat?
-    private var waitsForFitWidthBounds = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -32,17 +26,12 @@ final class ZoomingImageScrollView: UIScrollView {
         let aspectRatio = imageSize.width > 0 && imageSize.height > 0
             ? imageSize.height / imageSize.width
             : 1
-        setImage(
-            image,
-            layoutAspectRatio: aspectRatio,
-            waitsForFitWidthBounds: false
-        )
+        setImage(image, layoutAspectRatio: aspectRatio)
     }
 
     func setImage(
         _ image: UIImage?,
-        layoutAspectRatio: CGFloat,
-        waitsForFitWidthBounds: Bool
+        layoutAspectRatio: CGFloat
     ) {
         if readerImageView.image == nil, image == nil {
             return
@@ -52,8 +41,6 @@ final class ZoomingImageScrollView: UIScrollView {
         }
         readerImageView.image = image
         self.layoutAspectRatio = Self.validatedAspectRatio(layoutAspectRatio, image: image)
-        self.waitsForFitWidthBounds = waitsForFitWidthBounds
-        readerImageView.isHidden = image != nil && waitsForFitWidthBounds
         readerImageView.frame = .zero
         contentSize = .zero
         needsBaseImageLayout = true
@@ -71,7 +58,28 @@ final class ZoomingImageScrollView: UIScrollView {
     override func layoutSubviews() {
         super.layoutSubviews()
         layoutImageForCurrentBounds()
+        refreshPanInterception()
         onBoundsSizeChange?(bounds.size)
+    }
+
+    /// Take pan gestures only when this page actually has somewhere to scroll.
+    ///
+    /// Every page sits in its own scroll view nested inside the reader's. While a page fits its
+    /// row exactly — the normal state in the vertical reader — an enabled pan recognizer would
+    /// swallow drags that belong to the chapter, so zooming one page used to strand the reader
+    /// on it until the page was zoomed back out. Only the pan recognizer is touched: pinch and
+    /// double-tap stay live, so a page can still be zoomed from rest, and panning comes back as
+    /// soon as there is something to pan across.
+    private func refreshPanInterception() {
+        let scrollableWidth = contentSize.width - bounds.width
+        let scrollableHeight = contentSize.height - bounds.height
+        let hasSomewhereToScroll = scrollableWidth > 0.5 || scrollableHeight > 0.5
+        panGestureRecognizer.isEnabled = hasSomewhereToScroll || zoomScale > minimumZoomScale
+    }
+
+    /// Called while zooming, when `contentSize` grows past the bounds and panning must come back.
+    func refreshPanInterceptionAfterZoom() {
+        refreshPanInterception()
     }
 
     func centerImage() {
@@ -88,6 +96,16 @@ final class ZoomingImageScrollView: UIScrollView {
     }
 
     private func configureSubviews() {
+        // Owned here rather than by the SwiftUI wrapper: pan interception is derived from the
+        // zoom scale, so a scroll view that had not been configured yet would reason about
+        // gestures from the wrong bounds.
+        minimumZoomScale = 1
+        maximumZoomScale = 4
+        bouncesZoom = true
+        showsHorizontalScrollIndicator = false
+        showsVerticalScrollIndicator = false
+        backgroundColor = UIColor(white: 0.1, alpha: 1)
+
         readerImageView.contentMode = .scaleAspectFit
         readerImageView.clipsToBounds = true
         addSubview(readerImageView)
@@ -128,8 +146,10 @@ final class ZoomingImageScrollView: UIScrollView {
         contentSize = readerImageView.frame.size
         lastBaseLayoutBoundsSize = boundsSize
         needsBaseImageLayout = false
-        readerImageView.isHidden = waitsForFitWidthBounds
-            && abs(boundsSize.height - fitHeight) >= 1
+        // The page is always drawn at its natural ratio across the full width. While the row
+        // height is still an estimate the image simply sits letterboxed or clipped inside it,
+        // and settles when the real ratio lands. Hiding it until the two agreed — which is what
+        // this used to do — turned any height that never converged into a permanently blank page.
         centerImage()
     }
 
@@ -156,7 +176,10 @@ struct ZoomableImageView: UIViewRepresentable {
     let url: URL?
     let imageLoader: any ImageDataLoading
     let imageCache: ImageCache
-    var sizing: ZoomableImageSizing = .viewport
+    /// Supplied by the caller rather than derived from this view's bounds, so the prefetcher
+    /// and the visible page decode — and cache — against exactly the same target.
+    /// `nil` means the layout has not produced a usable size yet; nothing is loaded until it does.
+    var decodeTarget: ImageDecodeTarget?
     var pageID: ReaderPageID? = nil
     var diagnosticPurpose: ImageDiagnosticPurpose = .readerVisible
     var diagnostics: any ImageDiagnosticsRecording = ImageDiagnosticsService.shared
@@ -170,12 +193,6 @@ struct ZoomableImageView: UIViewRepresentable {
     func makeUIView(context: Context) -> ZoomingImageScrollView {
         let scrollView = ZoomingImageScrollView()
         scrollView.delegate = context.coordinator
-        scrollView.minimumZoomScale = 1
-        scrollView.maximumZoomScale = 4
-        scrollView.bouncesZoom = true
-        scrollView.showsHorizontalScrollIndicator = false
-        scrollView.showsVerticalScrollIndicator = false
-        scrollView.backgroundColor = UIColor(white: 0.1, alpha: 1)
 
         let doubleTap = UITapGestureRecognizer(
             target: context.coordinator,
@@ -234,7 +251,9 @@ struct ZoomableImageView: UIViewRepresentable {
         }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
-            (scrollView as? ZoomingImageScrollView)?.centerImage()
+            guard let scrollView = scrollView as? ZoomingImageScrollView else { return }
+            scrollView.centerImage()
+            scrollView.refreshPanInterceptionAfterZoom()
         }
 
         func loadImageIfNeeded(in scrollView: ZoomingImageScrollView) {
@@ -246,8 +265,7 @@ struct ZoomableImageView: UIViewRepresentable {
                 return
             }
 
-            let target = decodeTarget(in: scrollView)
-            guard target.isUsable else { return }
+            guard let target = parent.decodeTarget, target.isUsable else { return }
             let identity = DisplayIdentity(
                 cacheIdentity: ImageCache.cacheIdentity(
                     for: url,
@@ -338,8 +356,7 @@ struct ZoomableImageView: UIViewRepresentable {
             scrollView.setLoading(false)
             scrollView.setImage(
                 asset.image,
-                layoutAspectRatio: asset.layoutAspectRatio,
-                waitsForFitWidthBounds: parent.sizing.isFitWidth
+                layoutAspectRatio: asset.layoutAspectRatio
             )
             parent.onImageAspectRatio?(asset.layoutAspectRatio)
         }
@@ -380,15 +397,6 @@ struct ZoomableImageView: UIViewRepresentable {
                 || (error as? URLError)?.code == .cancelled
         }
 
-        private func decodeTarget(in scrollView: ZoomingImageScrollView) -> ImageDecodeTarget {
-            switch parent.sizing {
-            case .viewport:
-                return .fit(scrollView.bounds.size)
-            case .fitWidth(let width):
-                return .fitWidth(width)
-            }
-        }
-
         @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
             guard let scrollView = gesture.view as? ZoomingImageScrollView else { return }
             if scrollView.zoomScale > scrollView.minimumZoomScale {
@@ -426,14 +434,5 @@ private extension ImageDecodeTarget {
         case .fitWidth(let width):
             return width.isFinite && width > 0
         }
-    }
-}
-
-private extension ZoomableImageSizing {
-    var isFitWidth: Bool {
-        if case .fitWidth = self {
-            return true
-        }
-        return false
     }
 }

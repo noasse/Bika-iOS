@@ -97,24 +97,25 @@ final class ImagePipelineTests: XCTestCase {
     }
 
     @MainActor
-    func testFitWidthZoomingScrollViewWaitsForMatchingBoundsBeforeShowingImage() throws {
+    func testPageStaysVisibleWhileItsRowHeightIsStillAnEstimate() throws {
+        // A row sized from the estimated aspect ratio does not yet match the image's real one.
+        // The page must still be drawn: hiding it until the two agreed is what turned a height
+        // that never converged into a permanently blank page.
         let scrollView = ZoomingImageScrollView(
             frame: CGRect(x: 0, y: 0, width: 320, height: 500)
         )
         let image = makeImage(size: CGSize(width: 200, height: 500))
 
-        scrollView.setImage(
-            image,
-            layoutAspectRatio: 2.5,
-            waitsForFitWidthBounds: true
-        )
+        scrollView.setImage(image, layoutAspectRatio: 2.5)
         scrollView.layoutIfNeeded()
 
         let imageView = try XCTUnwrap(
             scrollView.subviews.compactMap { $0 as? UIImageView }.first
         )
-        XCTAssertTrue(imageView.isHidden)
+        XCTAssertFalse(imageView.isHidden)
+        XCTAssertEqual(imageView.frame.width, 320, accuracy: 0.01)
 
+        // Once the real ratio lands the row settles on an exact fit, still visible.
         scrollView.frame.size.height = 800
         scrollView.setNeedsLayout()
         scrollView.layoutIfNeeded()
@@ -124,17 +125,70 @@ final class ImagePipelineTests: XCTestCase {
     }
 
     @MainActor
-    func testViewportZoomingScrollViewShowsImageWithoutMatchingImageHeight() throws {
+    func testPageThatFitsItsRowLetsTheChapterScrollThrough() throws {
+        // The vertical reader's normal state: the row is exactly as tall as the page. The page's
+        // own scroll view must not take the drag, or the chapter cannot be scrolled.
+        let scrollView = ZoomingImageScrollView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 800)
+        )
+        scrollView.setImage(makeImage(size: CGSize(width: 200, height: 500)), layoutAspectRatio: 2.5)
+        scrollView.layoutIfNeeded()
+
+        XCTAssertEqual(scrollView.contentSize, CGSize(width: 320, height: 800))
+        XCTAssertFalse(scrollView.panGestureRecognizer.isEnabled)
+        // Zooming must still be reachable from rest — the capability is kept, not removed.
+        XCTAssertEqual(scrollView.maximumZoomScale, 4)
+        XCTAssertTrue(scrollView.pinchGestureRecognizer?.isEnabled ?? false)
+    }
+
+    @MainActor
+    func testPanComesBackOnceThePageIsZoomed() throws {
+        let scrollView = ZoomingImageScrollView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 800)
+        )
+        // Zooming needs the coordinator's viewForZooming, so drive the real delegate.
+        let coordinator = ZoomableImageView(
+            url: nil,
+            imageLoader: CountingImageDataLoader(data: Data()),
+            imageCache: ImageCache(countLimit: 1, totalCostLimit: 1_024)
+        ).makeCoordinator()
+        scrollView.delegate = coordinator
+
+        scrollView.setImage(makeImage(size: CGSize(width: 200, height: 500)), layoutAspectRatio: 2.5)
+        scrollView.layoutIfNeeded()
+        XCTAssertFalse(scrollView.panGestureRecognizer.isEnabled)
+
+        scrollView.setZoomScale(2, animated: false)
+        scrollView.layoutIfNeeded()
+
+        XCTAssertGreaterThan(scrollView.zoomScale, scrollView.minimumZoomScale)
+        XCTAssertTrue(
+            scrollView.panGestureRecognizer.isEnabled,
+            "a zoomed page must be pannable"
+        )
+    }
+
+    @MainActor
+    func testTallPageKeepsItsOwnScrollingInTheHorizontalReader() throws {
+        // A page taller than the viewport has somewhere to scroll, so it keeps the drag.
+        let scrollView = ZoomingImageScrollView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 500)
+        )
+        scrollView.setImage(makeImage(size: CGSize(width: 200, height: 500)), layoutAspectRatio: 2.5)
+        scrollView.layoutIfNeeded()
+
+        XCTAssertEqual(scrollView.contentSize.height, 800, accuracy: 0.01)
+        XCTAssertTrue(scrollView.panGestureRecognizer.isEnabled)
+    }
+
+    @MainActor
+    func testShortPageIsCenteredAcrossTheFullWidth() throws {
         let scrollView = ZoomingImageScrollView(
             frame: CGRect(x: 0, y: 0, width: 320, height: 500)
         )
         let image = makeImage(size: CGSize(width: 200, height: 100))
 
-        scrollView.setImage(
-            image,
-            layoutAspectRatio: 0.5,
-            waitsForFitWidthBounds: false
-        )
+        scrollView.setImage(image, layoutAspectRatio: 0.5)
         scrollView.layoutIfNeeded()
 
         let imageView = try XCTUnwrap(
@@ -177,7 +231,7 @@ final class ImagePipelineTests: XCTestCase {
             url: url,
             imageLoader: CountingImageDataLoader(data: Data()),
             imageCache: cache,
-            sizing: .fitWidth(320),
+            decodeTarget: .fitWidth(320),
             pageID: firstPageID,
             diagnostics: diagnostics,
             onImageAspectRatio: { publishedRatios.append($0) }
@@ -190,7 +244,7 @@ final class ImagePipelineTests: XCTestCase {
             url: url,
             imageLoader: CountingImageDataLoader(data: Data()),
             imageCache: cache,
-            sizing: .fitWidth(320),
+            decodeTarget: .fitWidth(320),
             pageID: secondPageID,
             diagnostics: diagnostics,
             onImageAspectRatio: { publishedRatios.append($0) }
@@ -309,6 +363,170 @@ final class ImagePipelineTests: XCTestCase {
             second.diagnosticContext.requestID
         )
         XCTAssertEqual(first, second)
+    }
+
+    // MARK: - Reader decode target agreement
+    //
+    // The reader prefetches pages and then displays them. Both paths must decode against the
+    // same target, or they key different cache entries and every page is fetched and decoded
+    // twice. That defect shipped once: the prefetcher measured the safe-area-inset container
+    // while the visible page measured its own scroll view bounds, which ignore the safe area.
+    // Nothing asserted the two agreed, so a full green suite missed it.
+
+    @MainActor
+    func testReaderPrefetchAndVisibleLoadShareASingleFetchForTheSamePage() async throws {
+        let url = try XCTUnwrap(URL(string: "https://images.bika.test/reader-agreement.jpg"))
+        let data = try makeJPEGData(size: CGSize(width: 200, height: 500), orientation: .up)
+        let loader = CountingImageDataLoader(data: data)
+        let diagnostics = RecordingImageDiagnostics()
+        let cache = ImageCache(
+            countLimit: 10,
+            totalCostLimit: 4 * 1_024 * 1_024,
+            diagnostics: diagnostics
+        )
+
+        // One measured content box, exactly as the reader now supplies it to both consumers.
+        let contentSize = CGSize(width: 402, height: 874)
+        let target = try XCTUnwrap(
+            ReaderDecodeTargetResolver.target(mode: .horizontal, contentSize: contentSize)
+        )
+        let pageID = ReaderPageID(
+            episodeID: "episode-1",
+            backendPageID: "page-1",
+            imageURL: url
+        )
+
+        _ = await ReaderImagePrefetcher.prefetch(
+            requests: [
+                ReaderImagePrefetchRequest(
+                    pageID: pageID,
+                    url: url,
+                    target: target,
+                    diagnosticContext: ImageDiagnosticContext(
+                        purpose: .readerPrefetch,
+                        url: url,
+                        pageStableID: "page-1"
+                    )
+                )
+            ],
+            imageLoader: loader,
+            imageCache: cache
+        )
+        let fetchesAfterPrefetch = await loader.loadCount
+        XCTAssertEqual(fetchesAfterPrefetch, 1)
+
+        let scrollView = ZoomingImageScrollView(
+            frame: CGRect(origin: .zero, size: contentSize)
+        )
+        let coordinator = ZoomableImageView(
+            url: url,
+            imageLoader: loader,
+            imageCache: cache,
+            decodeTarget: target,
+            pageID: pageID,
+            diagnostics: diagnostics
+        ).makeCoordinator()
+        coordinator.loadImageIfNeeded(in: scrollView)
+
+        await waitUntilAsync {
+            diagnostics.events.contains {
+                $0.purpose == .readerVisible
+                    && $0.stage == .display
+                    && $0.action == .succeeded
+            }
+        }
+
+        // The visible page must have been served by the prefetched entry.
+        let fetchesAfterDisplay = await loader.loadCount
+        XCTAssertEqual(fetchesAfterDisplay, 1)
+        XCTAssertTrue(
+            diagnostics.events.contains {
+                $0.purpose == .readerVisible
+                    && $0.stage == .decodedCache
+                    && $0.action == .hit
+            }
+        )
+    }
+
+    func testReaderDecodeTargetIsStableAcrossSubPointViewportJitter() throws {
+        let url = try XCTUnwrap(URL(string: "https://images.bika.test/jitter.jpg"))
+
+        // Layout passes report slightly different sizes for the same box.
+        let firstTarget = try XCTUnwrap(
+            ReaderDecodeTargetResolver.target(
+                mode: .horizontal,
+                contentSize: CGSize(width: 402, height: 874)
+            )
+        )
+        let jitteredTarget = try XCTUnwrap(
+            ReaderDecodeTargetResolver.target(
+                mode: .horizontal,
+                contentSize: CGSize(width: 402.4, height: 873.6)
+            )
+        )
+
+        XCTAssertEqual(
+            ImageCache.cacheIdentity(for: url, target: firstTarget, overscan: 2),
+            ImageCache.cacheIdentity(for: url, target: jitteredTarget, overscan: 2)
+        )
+    }
+
+    func testGenuinelyDifferentViewportsStillKeepSeparateCacheEntries() throws {
+        let url = try XCTUnwrap(URL(string: "https://images.bika.test/rotation.jpg"))
+        let portrait = try XCTUnwrap(
+            ReaderDecodeTargetResolver.target(
+                mode: .horizontal,
+                contentSize: CGSize(width: 402, height: 874)
+            )
+        )
+        let landscape = try XCTUnwrap(
+            ReaderDecodeTargetResolver.target(
+                mode: .horizontal,
+                contentSize: CGSize(width: 874, height: 402)
+            )
+        )
+
+        XCTAssertNotEqual(
+            ImageCache.cacheIdentity(for: url, target: portrait, overscan: 2),
+            ImageCache.cacheIdentity(for: url, target: landscape, overscan: 2)
+        )
+    }
+
+    func testReaderModesResolveDifferentDecodeTargets() {
+        let contentSize = CGSize(width: 402, height: 874)
+
+        XCTAssertEqual(
+            ReaderDecodeTargetResolver.target(mode: .horizontal, contentSize: contentSize),
+            .fit(contentSize)
+        )
+        XCTAssertEqual(
+            ReaderDecodeTargetResolver.target(mode: .vertical, contentSize: contentSize),
+            .fitWidth(contentSize.width)
+        )
+    }
+
+    func testReaderDecodeTargetRefusesToGuessBeforeLayoutIsMeasured() {
+        // Returning a fallback target here is what splits the cache; the caller must wait.
+        XCTAssertNil(
+            ReaderDecodeTargetResolver.target(mode: .horizontal, contentSize: .zero)
+        )
+        XCTAssertNil(
+            ReaderDecodeTargetResolver.target(mode: .vertical, contentSize: .zero)
+        )
+        XCTAssertNil(
+            ReaderDecodeTargetResolver.target(
+                mode: .horizontal,
+                contentSize: CGSize(width: 402, height: 0)
+            )
+        )
+        // Width alone is enough for the vertical reader.
+        XCTAssertEqual(
+            ReaderDecodeTargetResolver.target(
+                mode: .vertical,
+                contentSize: CGSize(width: 402, height: 0)
+            ),
+            .fitWidth(402)
+        )
     }
 
     func testImageLoaderCoalescesConcurrentRequestsForTheSameURL() async throws {
