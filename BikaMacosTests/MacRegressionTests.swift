@@ -126,6 +126,27 @@ final class MacRegressionTests: XCTestCase {
         XCTAssertEqual(frame.size.height, 600, accuracy: 0.01)
     }
 
+    func testMacZoomableImageLayoutContainsTallPagesInsideTheViewport() {
+        // Horizontal mode shows one whole page per screen: a portrait page must scale down to
+        // fit the height rather than overflow past the bottom of the window.
+        let frame = MacZoomableImageLayout.fittedImageFrame(
+            imageSize: CGSize(width: 800, height: 1_600),
+            viewportSize: CGSize(width: 1_000, height: 800),
+            fit: .contain
+        )
+
+        XCTAssertEqual(frame.height, 800, accuracy: 0.01)
+        XCTAssertEqual(frame.width, 400, accuracy: 0.01)
+        XCTAssertEqual(frame.minX, 300, accuracy: 0.01)
+        XCTAssertEqual(frame.minY, 0, accuracy: 0.01)
+
+        let documentSize = MacZoomableImageLayout.documentSize(
+            imageFrame: frame,
+            viewportSize: CGSize(width: 1_000, height: 800)
+        )
+        XCTAssertEqual(documentSize, CGSize(width: 1_000, height: 800))
+    }
+
     func testMacZoomableImageLayoutUsesTapLocationAsZoomCenter() {
         let center = MacZoomableImageLayout.zoomCenter(
             tapLocation: CGPoint(x: 180, y: 240),

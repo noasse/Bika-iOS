@@ -114,97 +114,78 @@ struct MacReaderKeyboardBridge: NSViewRepresentable {
     }
 }
 
-struct MacHorizontalScrollBridge: NSViewRepresentable {
-    var isEnabled = true
-    let onPrevious: () -> Void
-    let onNext: () -> Void
+nonisolated enum MacReaderSwipeDirection: Equatable {
+    case previous
+    case next
+}
 
-    func makeNSView(context: Context) -> ScrollView {
-        let view = ScrollView()
-        view.isEnabled = isEnabled
-        view.onPrevious = onPrevious
-        view.onNext = onNext
-        return view
+/// Turns a stream of horizontal scroll deltas into discrete page turns.
+///
+/// Trackpad gestures carry phase information and must only fire once per swipe; a mouse wheel
+/// reports no phase at all, so those fall back to a cooldown.
+nonisolated struct MacHorizontalSwipeAccumulator {
+    struct Event {
+        var deltaX: CGFloat
+        var deltaY: CGFloat
+        var phase: NSEvent.Phase
+        var momentumPhase: NSEvent.Phase
+        var timestamp: TimeInterval
     }
 
-    func updateNSView(_ nsView: ScrollView, context: Context) {
-        nsView.isEnabled = isEnabled
-        nsView.onPrevious = onPrevious
-        nsView.onNext = onNext
+    var threshold: CGFloat = 36
+    var discreteScrollCooldown: TimeInterval = 0.35
+
+    private var accumulatedDeltaX: CGFloat = 0
+    private var triggeredInCurrentGesture = false
+    private var lastDiscreteTrigger: TimeInterval = -.greatestFiniteMagnitude
+
+    mutating func reset() {
+        accumulatedDeltaX = 0
+        triggeredInCurrentGesture = false
     }
 
-    final class ScrollView: NSView {
-        var isEnabled = true {
-            didSet {
-                if !isEnabled {
-                    accumulatedDeltaX = 0
-                    triggeredInCurrentGesture = false
-                }
-            }
-        }
-        var onPrevious: (() -> Void)?
-        var onNext: (() -> Void)?
-
-        private var accumulatedDeltaX: CGFloat = 0
-        private let threshold: CGFloat = 36
-        private let discreteScrollCooldown: TimeInterval = 0.35
-        private var triggeredInCurrentGesture = false
-        private var lastDiscreteTrigger = Date.distantPast
-
-        override var acceptsFirstResponder: Bool { false }
-
-        override func scrollWheel(with event: NSEvent) {
-            guard isEnabled else { return }
-
-            resetGestureIfNeeded(for: event)
-            defer { finishGestureIfNeeded(for: event) }
-
-            guard event.momentumPhase.isEmpty else { return }
-
-            let horizontal = event.scrollingDeltaX
-            let vertical = event.scrollingDeltaY
-            guard abs(horizontal) > abs(vertical), abs(horizontal) > 0 else {
-                return
-            }
-
-            guard canTrigger(for: event) else { return }
-            accumulatedDeltaX += horizontal
-            guard abs(accumulatedDeltaX) >= threshold else { return }
-
-            if accumulatedDeltaX > 0 {
-                onNext?()
-            } else {
-                onPrevious?()
-            }
-            accumulatedDeltaX = 0
-            markTriggered(for: event)
-        }
-
-        private func resetGestureIfNeeded(for event: NSEvent) {
-            guard event.phase.contains(.mayBegin) || event.phase.contains(.began) else { return }
+    mutating func consume(_ event: Event) -> MacReaderSwipeDirection? {
+        if event.phase.contains(.mayBegin) || event.phase.contains(.began) {
             accumulatedDeltaX = 0
             triggeredInCurrentGesture = false
         }
-
-        private func finishGestureIfNeeded(for event: NSEvent) {
-            guard event.phase.contains(.ended) || event.phase.contains(.cancelled) else { return }
-            accumulatedDeltaX = 0
-            triggeredInCurrentGesture = false
+        defer {
+            if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+                accumulatedDeltaX = 0
+                triggeredInCurrentGesture = false
+            }
         }
 
-        private func canTrigger(for event: NSEvent) -> Bool {
-            if event.phase.isEmpty {
-                return Date().timeIntervalSince(lastDiscreteTrigger) >= discreteScrollCooldown
-            }
-            return !triggeredInCurrentGesture
-        }
+        guard event.momentumPhase.isEmpty else { return nil }
+        guard abs(event.deltaX) > abs(event.deltaY), abs(event.deltaX) > 0 else { return nil }
+        guard canTrigger(event) else { return nil }
 
-        private func markTriggered(for event: NSEvent) {
-            if event.phase.isEmpty {
-                lastDiscreteTrigger = Date()
-            } else {
-                triggeredInCurrentGesture = true
-            }
+        accumulatedDeltaX += event.deltaX
+        guard abs(accumulatedDeltaX) >= threshold else { return nil }
+
+        let direction: MacReaderSwipeDirection = accumulatedDeltaX > 0 ? .next : .previous
+        accumulatedDeltaX = 0
+        markTriggered(event)
+        return direction
+    }
+
+    /// True when the gesture is horizontal enough that the reader, not the scroll view, owns it.
+    static func isHorizontalDominant(deltaX: CGFloat, deltaY: CGFloat) -> Bool {
+        abs(deltaX) > abs(deltaY) && abs(deltaX) > 0
+    }
+
+    private func canTrigger(_ event: Event) -> Bool {
+        if event.phase.isEmpty {
+            return event.timestamp - lastDiscreteTrigger >= discreteScrollCooldown
+        }
+        return !triggeredInCurrentGesture
+    }
+
+    private mutating func markTriggered(_ event: Event) {
+        if event.phase.isEmpty {
+            lastDiscreteTrigger = event.timestamp
+        } else {
+            triggeredInCurrentGesture = true
         }
     }
 }
