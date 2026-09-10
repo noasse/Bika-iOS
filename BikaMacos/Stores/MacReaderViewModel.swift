@@ -11,7 +11,6 @@ final class MacReaderViewModel {
     var currentPageIndex: Int
     var currentEpisodeIndex: Int
     var readerMode: MacReaderMode
-    var imageScale: Double
 
     let request: MacReaderLaunchRequest
 
@@ -35,8 +34,6 @@ final class MacReaderViewModel {
 
         let savedMode = keyValueStore.string(forKey: "macReaderMode") ?? MacReaderMode.waterfall.rawValue
         readerMode = MacReaderMode(rawValue: savedMode) ?? .waterfall
-        let savedScale = keyValueStore.string(forKey: "macReaderImageScale").flatMap(Double.init)
-        imageScale = savedScale.map { min(max($0, 0.55), 2.4) } ?? 1.0
 
         currentEpisodeIndex = min(max(request.startEpisodeIndex, 0), max(request.episodes.count - 1, 0))
         currentPageIndex = max(request.startPageIndex, 0)
@@ -77,15 +74,6 @@ final class MacReaderViewModel {
     func setReaderMode(_ mode: MacReaderMode) {
         readerMode = mode
         keyValueStore.set(mode.rawValue, forKey: "macReaderMode")
-    }
-
-    func setImageScale(_ scale: Double) {
-        imageScale = min(max(scale, 0.55), 2.4)
-        keyValueStore.set(String(imageScale), forKey: "macReaderImageScale")
-    }
-
-    func stepImageScale(_ delta: Double) {
-        setImageScale(imageScale + delta)
     }
 
     func setCurrentPage(_ index: Int) {
