@@ -8,6 +8,7 @@ struct MacListPaneView: View {
     @State private var pageInputText = ""
     @State private var showingSloganEditor = false
     @State private var sloganText = ""
+    @State private var showingClearHistoryConfirmation = false
 
     private let categoryColumns = [
         GridItem(.adaptive(minimum: 132, maximum: 180), spacing: 12)
@@ -52,6 +53,18 @@ struct MacListPaneView: View {
                 submitSlogan()
             }
             Button("取消", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "确认清空阅读历史？",
+            isPresented: $showingClearHistoryConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("清空历史", role: .destructive) {
+                model.clearHistory()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("这会删除本机的全部阅读记录和阅读进度，已开启云端同步时也会一并清除云端历史，且无法撤销。")
         }
     }
 
@@ -203,7 +216,7 @@ struct MacListPaneView: View {
                         .foregroundStyle(MacUI.secondaryText(for: colorScheme))
                 Spacer()
                 Button(role: .destructive) {
-                    model.clearHistory()
+                    showingClearHistoryConfirmation = true
                 } label: {
                     Label("清空", systemImage: "trash")
                 }
@@ -476,7 +489,10 @@ struct MacListPaneView: View {
         Binding {
             model.selectedComicID
         } set: { comicID in
-            guard let comicID else { return }
+            guard let comicID else {
+                model.clearDetail()
+                return
+            }
             Task { await model.selectComic(id: comicID) }
         }
     }
