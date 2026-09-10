@@ -53,10 +53,8 @@ struct MacReaderWindowView: View {
                 partialLoadStatus
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            MacReaderKeyboardBridge(isEnabled: !showPageInput) {
-                navigatePreviousPage()
-            } onRight: {
-                navigateNextPage()
+            MacReaderKeyboardBridge(isEnabled: !showPageInput) { command in
+                handleKeyCommand(command)
             }
             .frame(width: 0, height: 0)
             MacReaderWindowSizeBridge(keyValueStore: keyValueStore)
@@ -596,6 +594,19 @@ struct MacReaderWindowView: View {
                 waterfallScrollRequest = currentPage
             }
             viewModel.setReaderMode(mode)
+        }
+    }
+
+    private func handleKeyCommand(_ command: MacReaderKeyCommand) {
+        switch command {
+        case .previousPage:
+            navigatePreviousPage()
+        case .nextPage:
+            navigateNextPage()
+        case .firstPage:
+            goToDisplayPage(1)
+        case .lastPage:
+            goToDisplayPage(viewModel.pages.count)
         }
     }
 
