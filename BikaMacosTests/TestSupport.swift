@@ -152,3 +152,55 @@ final class SpyImageCacheManager: MacImageCacheManaging, @unchecked Sendable {
         state.value = current
     }
 }
+
+/// Wraps a store so tests can count how often a key is actually rewritten.
+final class CountingKeyValueStore: KeyValueStore, @unchecked Sendable {
+    private let wrapped: any KeyValueStore
+    private let counts = LockedValue<[String: Int]>([:])
+
+    init(wrapping wrapped: any KeyValueStore = InMemoryKeyValueStore()) {
+        self.wrapped = wrapped
+    }
+
+    func writeCount(forKeyPrefix prefix: String) -> Int {
+        counts.value
+            .filter { $0.key.hasPrefix(prefix) }
+            .values
+            .reduce(0, +)
+    }
+
+    private func recordWrite(_ key: String) {
+        var current = counts.value
+        current[key, default: 0] += 1
+        counts.value = current
+    }
+
+    func string(forKey key: String) -> String? { wrapped.string(forKey: key) }
+    func integer(forKey key: String) -> Int { wrapped.integer(forKey: key) }
+    func data(forKey key: String) -> Data? { wrapped.data(forKey: key) }
+    func stringArray(forKey key: String) -> [String]? { wrapped.stringArray(forKey: key) }
+
+    func set(_ value: String?, forKey key: String) {
+        recordWrite(key)
+        wrapped.set(value, forKey: key)
+    }
+
+    func set(_ value: Int, forKey key: String) {
+        recordWrite(key)
+        wrapped.set(value, forKey: key)
+    }
+
+    func set(_ value: Data?, forKey key: String) {
+        recordWrite(key)
+        wrapped.set(value, forKey: key)
+    }
+
+    func set(_ value: [String]?, forKey key: String) {
+        recordWrite(key)
+        wrapped.set(value, forKey: key)
+    }
+
+    func removeObject(forKey key: String) { wrapped.removeObject(forKey: key) }
+    func keys(withPrefix prefix: String) -> [String] { wrapped.keys(withPrefix: prefix) }
+    func resetPersistentState() { wrapped.resetPersistentState() }
+}
