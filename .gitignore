@@ -7,3 +7,6 @@ xcuserdata/
 # Test artifacts
 artifacts/test-results/
 *.xcresult
+
+# Per-developer signing override (see Config/BikaMacosSigning.xcconfig)
+Config/Signing.local.xcconfig

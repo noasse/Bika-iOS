@@ -85,6 +85,7 @@
 		F10000022F694FA800F6AB0F /* bikaUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = bikaUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F10000032F694FA800F6AB0F /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = Platforms/iPhoneOS.platform/Developer/Library/Frameworks/XCTest.framework; sourceTree = DEVELOPER_DIR; };
 		F10000202F694FA800F6AB0F /* bika.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = bika.xctestplan; sourceTree = "<group>"; };
+		C0F16C0F1A0000000000A001 /* BikaMacosSigning.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = BikaMacosSigning.xcconfig; path = Config/BikaMacosSigning.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -200,6 +201,7 @@
 				F10000042F694FA800F6AB0F /* bikaTests */,
 				F10000052F694FA800F6AB0F /* bikaUITests */,
 				F10000202F694FA800F6AB0F /* bika.xctestplan */,
+				C0F16C0F1A0000000000A001 /* BikaMacosSigning.xcconfig */,
 				EC88BE482FEA2C25004AFB7B /* BikaMacos */,
 				EC88BF012FEA5000004AFB7B /* BikaMacosTests */,
 				EC88C1002FEA4000004AFB7B /* Bika Shared */,
@@ -506,14 +508,12 @@
 /* Begin XCBuildConfiguration section */
 		EC88BE4F2FEA2C25004AFB7B /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C0F16C0F1A0000000000A001 /* BikaMacosSigning.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -544,14 +544,12 @@
 		};
 		EC88BE502FEA2C25004AFB7B /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C0F16C0F1A0000000000A001 /* BikaMacosSigning.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -582,12 +580,10 @@
 		};
 		EC88BF092FEA5000004AFB7B /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C0F16C0F1A0000000000A001 /* BikaMacosSigning.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -611,12 +607,10 @@
 		};
 		EC88BF0A2FEA5000004AFB7B /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C0F16C0F1A0000000000A001 /* BikaMacosSigning.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
