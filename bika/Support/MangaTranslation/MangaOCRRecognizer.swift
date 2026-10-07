@@ -31,12 +31,16 @@ nonisolated final class MangaOCRRecognizer: MangaTextRecognizing, @unchecked Sen
         let eos_token_id: Int
         let max_tokens: Int
         let no_repeat_ngram_size: Int
+        /// The prefix lengths the decoder accepts, ascending; shorter prefixes are padded.
+        let decoder_lengths: [Int]?
     }
 
     /// The interface this code drives: the encoder returns the decoder's cross-attention keys
-    /// and values, and the decoder takes them with the prefix. Format 1 models took encoder
-    /// states instead and recomputed the projection every step.
-    static let supportedFormat = 2
+    /// and values, and the decoder takes them with the prefix padded to one of a few fixed
+    /// lengths, plus the position of its last token. Format 1 took encoder states and
+    /// recomputed the projection every step; format 2 took the prefix at its own length, which
+    /// the GPU specialised for at every new length — about 0.2 s each on a device.
+    static let supportedFormat = 3
 
     enum LoadError: Error {
         case missing(String)
@@ -45,14 +49,27 @@ nonisolated final class MangaOCRRecognizer: MangaTextRecognizing, @unchecked Sen
     }
 
     static func validate(_ manifest: Manifest) throws {
-        guard manifest.format == supportedFormat else { throw LoadError.unsupportedFormat(manifest.format) }
+        guard manifest.format == supportedFormat,
+              let lengths = manifest.decoder_lengths,
+              lengths == lengths.sorted(),
+              let longest = lengths.last, longest >= manifest.max_tokens
+        else { throw LoadError.unsupportedFormat(manifest.format) }
+    }
+
+    /// The shortest decoder length that holds a prefix of `count` tokens.
+    static func paddedLength(for count: Int, lengths: [Int]) -> Int? {
+        lengths.first { $0 >= count }
     }
 
     let identifier: String
+    /// Loading both models and specialising the decoder for every length, which happens once,
+    /// before the first page is read.
+    private(set) var loadMilliseconds = 0
     private let encoder: MLModel
     private let decoder: MLModel
     private let vocabulary: [String]
     private let manifest: Manifest
+    private let decoderLengths: [Int]
     /// Predictions are serialised; the recognition queue already runs one page at a time.
     private let lock = NSLock()
 
@@ -67,6 +84,7 @@ nonisolated final class MangaOCRRecognizer: MangaTextRecognizing, @unchecked Sen
             }
             return url
         }
+        let start = DispatchTime.now()
         let configuration = MLModelConfiguration()
         configuration.computeUnits = .all
         encoder = try MLModel(contentsOf: try url("MangaOCREncoder", "mlmodelc"), configuration: configuration)
@@ -77,7 +95,40 @@ nonisolated final class MangaOCRRecognizer: MangaTextRecognizing, @unchecked Sen
         // A model converted for another interface would be driven with the wrong inputs; fall
         // back to Vision instead of misreading.
         try Self.validate(manifest)
+        decoderLengths = manifest.decoder_lengths ?? []
         identifier = "manga-ocr@\(manifest.revision.prefix(8))/f\(Self.supportedFormat)"
+        try warmUp()
+        loadMilliseconds = Int((DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000)
+    }
+
+    /// One prediction at every decoder length, so the specialising happens here rather than
+    /// partway through the first pages.
+    private func warmUp() throws {
+        let encoded = try encoder.prediction(from: MLDictionaryFeatureProvider(dictionary: [
+            "pixel_values": MLFeatureValue(multiArray: try MLMultiArray(shape: [1, 3, 224, 224], dataType: .float32)),
+        ]))
+        guard let keys = encoded.featureValue(for: "cross_keys"),
+              let values = encoded.featureValue(for: "cross_values") else { return }
+        for length in decoderLengths {
+            _ = try decode([manifest.decoder_start_token_id], paddedTo: length, keys: keys, values: values)
+        }
+    }
+
+    /// Logits for the token after `ids`, which are padded with [PAD] up to `length`. Padding
+    /// sits after the prefix, where the decoder's causal mask keeps it out of every position read.
+    private func decode(_ ids: [Int], paddedTo length: Int, keys: MLFeatureValue, values: MLFeatureValue) throws -> MLMultiArray? {
+        let input = try MLMultiArray(shape: [1, NSNumber(value: length)], dataType: .int32)
+        input.withUnsafeMutableBufferPointer(ofType: Int32.self) { buffer, _ in
+            for index in 0..<length { buffer[index] = index < ids.count ? Int32(ids[index]) : 0 }
+        }
+        let last = try MLMultiArray(shape: [1], dataType: .int32)
+        last[0] = NSNumber(value: ids.count - 1)
+        return try decoder.prediction(from: MLDictionaryFeatureProvider(dictionary: [
+            "input_ids": MLFeatureValue(multiArray: input),
+            "cross_keys": keys,
+            "cross_values": values,
+            "last_index": MLFeatureValue(multiArray: last),
+        ])).featureValue(for: "logits")?.multiArrayValue
     }
 
     func recognize(_ crop: CGImage) throws -> JapaneseTextRecognizer.Result {
@@ -96,13 +147,8 @@ nonisolated final class MangaOCRRecognizer: MangaTextRecognizing, @unchecked Sen
             var probabilities: [Double] = []
             while ids.count < manifest.max_tokens {
                 try Task.checkCancellation()
-                let input = try MLMultiArray(shape: [1, NSNumber(value: ids.count)], dataType: .int32)
-                for (index, id) in ids.enumerated() { input[[0, NSNumber(value: index)]] = NSNumber(value: id) }
-                guard let logits = try decoder.prediction(from: MLDictionaryFeatureProvider(dictionary: [
-                    "input_ids": MLFeatureValue(multiArray: input),
-                    "cross_keys": keys,
-                    "cross_values": values,
-                ])).featureValue(for: "logits")?.multiArrayValue else { break }
+                guard let length = Self.paddedLength(for: ids.count, lengths: decoderLengths),
+                      let logits = try decode(ids, paddedTo: length, keys: keys, values: values) else { break }
 
                 let (token, probability) = Self.nextToken(
                     logits,

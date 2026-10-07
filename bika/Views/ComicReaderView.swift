@@ -587,6 +587,7 @@ extension ComicReaderView {
 
             let report = MangaRecognitionReport(
                 textRecognizer: MangaPageTextExtractor().recognizerIdentifier,
+                recognizerLoadMilliseconds: MangaOCRRecognizer.bundled?.loadMilliseconds,
                 appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?",
                 buildNumber: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?",
                 deviceModel: Self.deviceModelIdentifier(),

@@ -2,8 +2,8 @@
 
 For each sample image: decode greedily with the stock PyTorch model and with Core ML (same preprocessing,
 same no-repeat-3-gram rule), require identical text, and report the largest logit difference
-at every decoding step — which covers every prefix length the decoder sees, since its input
-length was traced at one value and must work at all of them.
+at every decoding step — which covers every prefix length the decoder sees, padded to the
+fixed lengths it was converted for.
 
 Usage (from the repo root):
   swift tools/models/render_samples.swift tools/models/.cache/samples
@@ -98,10 +98,15 @@ def main() -> int:
         keys, values = cross["cross_keys"].astype(np.float32), cross["cross_values"].astype(np.float32)
 
         def ml_step(ids):
+            # Pad to the shortest fixed length that fits, as the app does.
+            size = next(n for n in manifest["decoder_lengths"] if n >= len(ids))
+            padded = np.zeros((1, size), dtype=np.int32)
+            padded[0, :len(ids)] = ids
             return decoder.predict({
-                "input_ids": np.array([ids], dtype=np.int32),
+                "input_ids": padded,
                 "cross_keys": keys,
                 "cross_values": values,
+                "last_index": np.array([len(ids) - 1], dtype=np.int32),
             })["logits"][0]
 
         ml_ids, ml_logits = greedy(ml_step, start, eos, max_tokens, n)

@@ -3,7 +3,8 @@
 Produces, in bika/MangaModels/ (git-ignored, bundled by Xcode when present):
   MangaOCREncoder.mlpackage   pixel_values [1,3,224,224]
                               -> cross_keys, cross_values [2,1,12,197,64]
-  MangaOCRDecoder.mlpackage   input_ids [1,L] + cross_keys + cross_values -> logits [1,6144]
+  MangaOCRDecoder.mlpackage   input_ids [1,N] (padded) + last_index + cross_keys + cross_values
+                              -> logits [1,6144] at last_index; N is one of DECODER_LENGTHS
   MangaOCRVocab.txt           token id -> text, one per line
   MangaOCRManifest.json       where the weights came from, how they were converted, format
 
@@ -11,6 +12,10 @@ The app runs the encoder once per text region and the decoder once per output ch
 Format 2 (manga_ocr_modules.py): the decoder's cross-attention keys and values are computed
 once per region with the encoder, and the decoder computes logits for the last position only.
 Format 1 recomputed both every step, which a device run measured at about 52 ms per character.
+Format 3 pads the prefix to one of a few fixed lengths. With a free-ranging length the GPU
+specialised the decoder for every new prefix length it met — about 0.2 s each on a device, so
+a session's first pages took 6.7 s and 10 s against 2.5 s once warm. A few fixed lengths can
+all be specialised once, when the model loads.
 
 Usage (from the repo root):
   tools/models/.venv/bin/python tools/models/convert_manga_ocr.py
@@ -36,9 +41,9 @@ ROOT = Path(__file__).resolve().parents[2]
 CACHE = ROOT / "tools" / "models" / ".cache"
 OUTPUT = ROOT / "bika" / "MangaModels"
 MAX_TOKENS = 300  # the model's own max_length
+DECODER_LENGTHS = [16, 32, 64, 128, MAX_TOKENS]  # most bubbles end within 16 tokens
 
-
-FORMAT = 2
+FORMAT = 3
 
 
 def main() -> int:
@@ -64,8 +69,10 @@ def main() -> int:
         keys, values = encoder(pixel_values)
 
         decoder = FastDecoder(model).eval()
-        example_ids = torch.tensor([[config.decoder_start_token_id, 5, 6]], dtype=torch.int32)
-        traced_decoder = torch.jit.trace(decoder, (example_ids, keys, values))
+        example_ids = torch.zeros(1, DECODER_LENGTHS[0], dtype=torch.int32)
+        example_ids[0, :3] = torch.tensor([config.decoder_start_token_id, 5, 6])
+        example_last = torch.tensor([2], dtype=torch.int32)
+        traced_decoder = torch.jit.trace(decoder, (example_ids, keys, values, example_last))
 
     kv_shape = tuple(keys.shape)
     encoder_ml = ct.convert(
@@ -82,9 +89,14 @@ def main() -> int:
     decoder_ml = ct.convert(
         traced_decoder,
         inputs=[
-            ct.TensorType(name="input_ids", shape=(1, ct.RangeDim(1, MAX_TOKENS)), dtype=np.int32),
+            ct.TensorType(
+                name="input_ids",
+                shape=ct.EnumeratedShapes(shapes=[(1, n) for n in DECODER_LENGTHS], default=(1, DECODER_LENGTHS[0])),
+                dtype=np.int32,
+            ),
             ct.TensorType(name="cross_keys", shape=kv_shape, dtype=np.float32),
             ct.TensorType(name="cross_values", shape=kv_shape, dtype=np.float32),
+            ct.TensorType(name="last_index", shape=(1,), dtype=np.int32),
         ],
         outputs=[ct.TensorType(name="logits", dtype=np.float32)],
         convert_to="mlprogram",
@@ -105,6 +117,7 @@ def main() -> int:
         "revision": revision,
         "license": "Apache-2.0",
         "format": FORMAT,
+        "decoder_lengths": DECODER_LENGTHS,
         "cross_kv_shape": list(kv_shape),
         "image_size": 224,
         "image_mean": [0.5, 0.5, 0.5],

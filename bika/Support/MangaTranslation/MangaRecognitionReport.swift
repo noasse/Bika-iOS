@@ -39,6 +39,9 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
     let pipelineVersion: Int
     /// What read the bubbles: `manga-ocr@<revision>`, or `vision` when the model is not bundled.
     let textRecognizer: String
+    /// Loading and warming up the recogniser, which happens once per app launch before the
+    /// first page is read; nil on the Vision path.
+    let recognizerLoadMilliseconds: Int?
     let appVersion: String
     let buildNumber: String
     let deviceModel: String
@@ -53,6 +56,7 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
         exportedAt: Date = Date(),
         pipelineVersion: Int = MangaPageTextExtractor.pipelineVersion,
         textRecognizer: String,
+        recognizerLoadMilliseconds: Int? = nil,
         appVersion: String,
         buildNumber: String,
         deviceModel: String,
@@ -65,6 +69,7 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
         self.exportedAt = exportedAt
         self.pipelineVersion = pipelineVersion
         self.textRecognizer = textRecognizer
+        self.recognizerLoadMilliseconds = recognizerLoadMilliseconds
         self.appVersion = appVersion
         self.buildNumber = buildNumber
         self.deviceModel = deviceModel

@@ -44,18 +44,31 @@ final class MangaOCRRecognizerTests: XCTestCase {
     }
 
     func testOnlyTheSupportedModelFormatLoads() throws {
-        func manifest(_ format: Int?) throws -> MangaOCRRecognizer.Manifest {
+        func manifest(_ format: Int?, lengths: String? = "[16, 32, 64, 128, 300]") throws -> MangaOCRRecognizer.Manifest {
             let format = format.map { "\"format\": \($0)," } ?? ""
+            let lengths = lengths.map { "\"decoder_lengths\": \($0)," } ?? ""
             let json = """
-            {\(format) "revision": "aa6573bd", "vocab_size": 6144, "decoder_start_token_id": 2,
+            {\(format) \(lengths) "revision": "aa6573bd", "vocab_size": 6144, "decoder_start_token_id": 2,
              "eos_token_id": 3, "max_tokens": 300, "no_repeat_ngram_size": 3}
             """
             return try JSONDecoder().decode(MangaOCRRecognizer.Manifest.self, from: Data(json.utf8))
         }
-        XCTAssertNoThrow(try MangaOCRRecognizer.validate(manifest(2)))
-        // Format 1 models, or a manifest with no format, would be driven with the wrong inputs.
-        XCTAssertThrowsError(try MangaOCRRecognizer.validate(manifest(1)))
+        XCTAssertNoThrow(try MangaOCRRecognizer.validate(manifest(3)))
+        // Older formats, or a manifest with no format, would be driven with the wrong inputs.
+        XCTAssertThrowsError(try MangaOCRRecognizer.validate(manifest(2)))
         XCTAssertThrowsError(try MangaOCRRecognizer.validate(manifest(nil)))
+        // Every prefix up to max_tokens must fit some length.
+        XCTAssertThrowsError(try MangaOCRRecognizer.validate(manifest(3, lengths: nil)))
+        XCTAssertThrowsError(try MangaOCRRecognizer.validate(manifest(3, lengths: "[16, 32, 64]")))
+    }
+
+    func testPrefixIsPaddedToTheShortestLengthThatHoldsIt() {
+        let lengths = [16, 32, 64, 128, 300]
+        XCTAssertEqual(MangaOCRRecognizer.paddedLength(for: 1, lengths: lengths), 16)
+        XCTAssertEqual(MangaOCRRecognizer.paddedLength(for: 16, lengths: lengths), 16)
+        XCTAssertEqual(MangaOCRRecognizer.paddedLength(for: 17, lengths: lengths), 32)
+        XCTAssertEqual(MangaOCRRecognizer.paddedLength(for: 299, lengths: lengths), 300)
+        XCTAssertNil(MangaOCRRecognizer.paddedLength(for: 301, lengths: lengths))
     }
 
     func testPixelValuesAreScaledToMinusOneOne() throws {
@@ -76,6 +89,7 @@ final class MangaOCRRecognizerTests: XCTestCase {
         try requireModel()
         XCTAssertTrue(try XCTUnwrap(MangaOCRRecognizer.bundled).identifier.hasPrefix("manga-ocr@"))
         XCTAssertTrue(try XCTUnwrap(MangaOCRRecognizer.bundled).identifier.hasSuffix("/f\(MangaOCRRecognizer.supportedFormat)"))
+        XCTAssertGreaterThan(try XCTUnwrap(MangaOCRRecognizer.bundled).loadMilliseconds, 0)
         XCTAssertTrue(MangaPageTextExtractor().recognizerIdentifier.hasPrefix("manga-ocr@"))
         XCTAssertEqual(MangaPageTextExtractor.vision().recognizerIdentifier, "vision")
     }
@@ -110,6 +124,18 @@ final class MangaOCRRecognizerTests: XCTestCase {
         ])
 
         XCTAssertEqual(try modelExtractor().extract(from: page).map(\.sourceText), ["おい待てよ", "話を聞いて"])
+    }
+
+    func testReadingContinuesPastTheFirstPaddedLength() throws {
+        try requireModel()
+        // 20 characters: the prefix outgrows the 16-token decoder length partway through.
+        let page = MangaPageFixtures.page(bubbles: [
+            Bubble(frame: CGRect(x: 560, y: 100, width: 460, height: 620), columns: ["俺はまだ", "諦めてないからな", "ちょっと待って"]),
+        ])
+
+        let blocks = try modelExtractor().extract(from: page)
+
+        XCTAssertEqual(blocks.map(\.sourceText), ["俺はまだ諦めてないからなちょっと待って"])
     }
 
     func testFuriganaDoesNotEndUpInTheText() throws {

@@ -77,7 +77,15 @@ class FastDecoder(torch.nn.Module):
             scores = scores + mask
         return torch.matmul(torch.softmax(scores, dim=-1), value)
 
-    def forward(self, input_ids: torch.Tensor, cross_keys: torch.Tensor, cross_values: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        cross_keys: torch.Tensor,
+        cross_values: torch.Tensor,
+        last_index: torch.Tensor,
+    ) -> torch.Tensor:
+        """`input_ids` may be padded at the end to a fixed length; `last_index` is the position of
+        the last real token. The causal mask keeps padding from influencing earlier positions."""
         # Positions and the causal mask come from the input itself, so a traced graph works
         # for every prefix length rather than the one it was traced with.
         positions = torch.cumsum(torch.ones_like(input_ids), dim=1) - 1
@@ -103,14 +111,20 @@ class FastDecoder(torch.nn.Module):
             hidden = F.gelu(layer.intermediate.dense(x))
             x = layer.output.LayerNorm(x + layer.output.dense(hidden))
 
-        last = x[:, -1, :]
+        last = torch.index_select(x, 1, last_index)[:, 0, :]
         transform = self.head.transform
         last = transform.LayerNorm(F.gelu(transform.dense(last)))
         return self.head.decoder(last)  # [1, vocab]
 
 
-def check_modules(model: VisionEncoderDecoderModel, lengths=(1, 2, 7, 23, 64), tolerance=1e-3) -> float:
-    """Largest difference between FastDecoder and the stock decoder's last-position logits."""
+def check_modules(
+    model: VisionEncoderDecoderModel,
+    lengths=(1, 2, 7, 16, 23, 64),
+    padded_to=(16, 32, 64, 128),
+    tolerance=1e-3,
+) -> float:
+    """Largest difference between FastDecoder and the stock decoder's last-position logits, with
+    the prefix both unpadded and padded to every fixed length at least as long as it."""
     encoder = EncoderWithCrossKV(model).eval()
     fast = FastDecoder(model).eval()
     torch.manual_seed(0)
@@ -123,8 +137,12 @@ def check_modules(model: VisionEncoderDecoderModel, lengths=(1, 2, 7, 23, 64), t
             ids = torch.randint(5, model.decoder.config.vocab_size, (1, length))
             ids[0, 0] = model.config.decoder_start_token_id
             stock = model.decoder(input_ids=ids, encoder_hidden_states=states, use_cache=False).logits[:, -1, :]
-            ours = fast(ids, keys, values)
-            worst = max(worst, float((stock - ours).abs().max()))
+            last = torch.tensor([length - 1])
+            worst = max(worst, float((stock - fast(ids, keys, values, last)).abs().max()))
+            for size in (size for size in padded_to if size >= length):
+                padded = torch.zeros(1, size, dtype=ids.dtype)
+                padded[0, :length] = ids[0]
+                worst = max(worst, float((stock - fast(padded, keys, values, last)).abs().max()))
     if worst > tolerance:
         raise AssertionError(f"FastDecoder differs from the stock decoder by {worst}")
     return worst
