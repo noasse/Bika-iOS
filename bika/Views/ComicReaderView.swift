@@ -14,6 +14,8 @@ struct ComicReaderView: View {
     /// Both readers lay out inside `.ignoresSafeArea()`, so this — not the safe-area-inset
     /// container — is the size images must be decoded for.
     @State private var contentSize = CGSize.zero
+    /// Debug builds: draw what the translation pipeline recognises on each page.
+    @State private var debugRecognizesText = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     private let startPageIndex: Int
@@ -241,7 +243,8 @@ struct ComicReaderView: View {
                         imageCache: imageCache,
                         decodeTarget: readerDecodeTarget(),
                         pageID: readerPageID(for: index),
-                        onSingleTap: handleTap
+                        onSingleTap: handleTap,
+                        debugRecognizesText: debugRecognizesText
                     )
                         .containerRelativeFrame(.horizontal)
                         .id(index)
@@ -274,7 +277,8 @@ struct ComicReaderView: View {
                                 guard let pageID else { return }
                                 pageLayout.record(aspectRatio, for: pageID)
                             },
-                            onSingleTap: handleTap
+                            onSingleTap: handleTap,
+                            debugRecognizesText: debugRecognizesText
                         )
                         .onAppear {
                             guard let pageID else { return }
@@ -418,6 +422,17 @@ struct ComicReaderView: View {
                     .font(.subheadline)
 
                 Spacer()
+
+#if DEBUG
+                Button {
+                    debugRecognizesText.toggle()
+                } label: {
+                    Image(systemName: debugRecognizesText ? "text.viewfinder" : "viewfinder")
+                        .font(.subheadline)
+                }
+                .accessibilityLabel("文字识别调试")
+                .accessibilityIdentifier("reader.debugTextRecognition")
+#endif
 
                 Text("\(currentPage + 1)/\(viewModel.pages.count)")
                     .font(.caption)

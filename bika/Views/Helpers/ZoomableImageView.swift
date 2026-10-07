@@ -10,6 +10,27 @@ final class ZoomingImageScrollView: UIScrollView {
     private var needsBaseImageLayout = true
     private var lastBaseLayoutBoundsSize = CGSize.zero
     private var layoutAspectRatio: CGFloat?
+#if DEBUG
+    private var textDebugOverlay: MangaTextDebugOverlayView?
+
+    /// Shows what the translation pipeline found on this page. `nil` removes the overlay.
+    func setTextDebugState(_ state: MangaTextDebugOverlayView.State?) {
+        guard let state else {
+            textDebugOverlay?.removeFromSuperview()
+            textDebugOverlay = nil
+            return
+        }
+        let overlay = textDebugOverlay ?? {
+            let overlay = MangaTextDebugOverlayView(frame: readerImageView.bounds)
+            // A subview of the image view, so it zooms and pans with the page.
+            readerImageView.addSubview(overlay)
+            textDebugOverlay = overlay
+            return overlay
+        }()
+        overlay.imageSize = readerImageView.image?.size ?? .zero
+        overlay.state = state
+    }
+#endif
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -41,6 +62,10 @@ final class ZoomingImageScrollView: UIScrollView {
         }
         readerImageView.image = image
         self.layoutAspectRatio = Self.validatedAspectRatio(layoutAspectRatio, image: image)
+#if DEBUG
+        // Results belong to the previous image.
+        setTextDebugState(nil)
+#endif
         readerImageView.frame = .zero
         contentSize = .zero
         needsBaseImageLayout = true
@@ -59,6 +84,11 @@ final class ZoomingImageScrollView: UIScrollView {
         super.layoutSubviews()
         layoutImageForCurrentBounds()
         refreshPanInterception()
+#if DEBUG
+        // Zoom scales the image view with a transform, which leaves its bounds alone; only a
+        // relayout changes them, and the overlay follows here.
+        textDebugOverlay?.frame = readerImageView.bounds
+#endif
         onBoundsSizeChange?(bounds.size)
     }
 
@@ -185,6 +215,9 @@ struct ZoomableImageView: UIViewRepresentable {
     var diagnostics: any ImageDiagnosticsRecording = ImageDiagnosticsService.shared
     var onImageAspectRatio: ((CGFloat) -> Void)?
     var onSingleTap: ((CGPoint) -> Void)?
+    /// Debug builds: run the translation pipeline's text recognition on this page and draw
+    /// what it found. Ignored in release builds.
+    var debugRecognizesText = false
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -219,6 +252,9 @@ struct ZoomableImageView: UIViewRepresentable {
     func updateUIView(_ scrollView: ZoomingImageScrollView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.loadImageIfNeeded(in: scrollView)
+#if DEBUG
+        context.coordinator.refreshTextDebug(in: scrollView)
+#endif
     }
 
     static func dismantleUIView(_ scrollView: ZoomingImageScrollView, coordinator: Coordinator) {
@@ -237,6 +273,11 @@ struct ZoomableImageView: UIViewRepresentable {
         private var loadedIdentity: DisplayIdentity?
         private var loadingIdentity: DisplayIdentity?
         private var loadTask: Task<Void, Never>?
+#if DEBUG
+        private var displayedAsset: DecodedImageAsset?
+        private var recognisedIdentity: DisplayIdentity?
+        private var recognitionTask: Task<Void, Never>?
+#endif
 
         init(parent: ZoomableImageView) {
             self.parent = parent
@@ -244,7 +285,58 @@ struct ZoomableImageView: UIViewRepresentable {
 
         deinit {
             loadTask?.cancel()
+#if DEBUG
+            recognitionTask?.cancel()
+#endif
         }
+
+#if DEBUG
+        /// Runs text recognition on the page currently shown, once per page, when enabled.
+        func refreshTextDebug(in scrollView: ZoomingImageScrollView) {
+            guard parent.debugRecognizesText else {
+                recognitionTask?.cancel()
+                recognitionTask = nil
+                recognisedIdentity = nil
+                scrollView.setTextDebugState(nil)
+                return
+            }
+            guard let identity = loadedIdentity,
+                  let asset = displayedAsset,
+                  identity != recognisedIdentity else { return }
+
+            recognitionTask?.cancel()
+            recognisedIdentity = identity
+            scrollView.setTextDebugState(.recognising)
+
+            recognitionTask = Task { [weak self, weak scrollView] in
+                let outcome = await Task.detached(priority: .utility) { () -> Result<([MangaTextBlock], Int), Error> in
+                    guard let cgImage = asset.image.cgImage else {
+                        return .failure(CocoaError(.fileReadCorruptFile))
+                    }
+                    let clock = ContinuousClock()
+                    let start = clock.now
+                    do {
+                        let blocks = try MangaPageTextExtractor().extract(from: cgImage)
+                        let elapsed = start.duration(to: clock.now)
+                        let milliseconds = Int(elapsed.components.seconds * 1000)
+                            + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
+                        return .success((blocks, milliseconds))
+                    } catch {
+                        return .failure(error)
+                    }
+                }.value
+
+                // The page may have changed while recognition ran.
+                guard !Task.isCancelled, let self, let scrollView, self.recognisedIdentity == identity else { return }
+                switch outcome {
+                case .success(let (blocks, milliseconds)):
+                    scrollView.setTextDebugState(.finished(blocks: blocks, milliseconds: milliseconds))
+                case .failure(let error):
+                    scrollView.setTextDebugState(.failed(error.localizedDescription))
+                }
+            }
+        }
+#endif
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? {
             (scrollView as? ZoomingImageScrollView)?.readerImageView
@@ -279,6 +371,12 @@ struct ZoomableImageView: UIViewRepresentable {
             loadTask?.cancel()
             loadedIdentity = nil
             loadingIdentity = identity
+#if DEBUG
+            recognitionTask?.cancel()
+            recognitionTask = nil
+            recognisedIdentity = nil
+            displayedAsset = nil
+#endif
             scrollView.setImage(nil)
             scrollView.setLoading(true)
 
@@ -343,6 +441,10 @@ struct ZoomableImageView: UIViewRepresentable {
             loadTask?.cancel()
             loadTask = nil
             loadingIdentity = nil
+#if DEBUG
+            recognitionTask?.cancel()
+            recognitionTask = nil
+#endif
         }
 
         private func display(
@@ -359,6 +461,10 @@ struct ZoomableImageView: UIViewRepresentable {
                 layoutAspectRatio: asset.layoutAspectRatio
             )
             parent.onImageAspectRatio?(asset.layoutAspectRatio)
+#if DEBUG
+            displayedAsset = asset
+            refreshTextDebug(in: scrollView)
+#endif
         }
 
         private static func displayEvent(
