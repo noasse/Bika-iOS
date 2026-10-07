@@ -72,4 +72,6 @@ nonisolated struct MangaTextBlock: Codable, Hashable, Sendable {
     var orientation: MangaTextOrientation
     /// Recognised source text with lines joined in reading order.
     var sourceText: String
+    /// Vision's mean confidence over the text, 0...1.
+    var confidence: Double = 0
 }

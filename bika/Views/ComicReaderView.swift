@@ -16,6 +16,13 @@ struct ComicReaderView: View {
     @State private var contentSize = CGSize.zero
     /// Debug builds: draw what the translation pipeline recognises on each page.
     @State private var debugRecognizesText = false
+#if DEBUG
+    /// Progress of a chapter recognition report: pages done out of total.
+    @State private var recognitionReportProgress: (done: Int, total: Int)?
+    @State private var recognitionReportTask: Task<Void, Never>?
+    @State private var recognitionReportItem: DiagnosticsExportItem?
+    @State private var recognitionReportMessage: String?
+#endif
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     private let startPageIndex: Int
@@ -93,6 +100,12 @@ struct ComicReaderView: View {
             if viewModel.showToolbar {
                 toolbarOverlay
             }
+
+#if DEBUG
+            if let progress = recognitionReportProgress {
+                recognitionReportBadge(progress)
+            }
+#endif
         }
         .background(contentGeometryProbe)
         .statusBar(hidden: !viewModel.showToolbar)
@@ -106,6 +119,9 @@ struct ComicReaderView: View {
             viewModel.cancelLoadingPages()
             cancelImagePrefetch()
             saveProgress()
+#if DEBUG
+            recognitionReportTask?.cancel()
+#endif
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase != .active {
@@ -137,6 +153,22 @@ struct ComicReaderView: View {
             imagePrefetchKey = nil
             scheduleImagePrefetch(around: currentPage)
         }
+#if DEBUG
+        .sheet(item: $recognitionReportItem) { item in
+            ActivityShareSheet(fileURL: item.url)
+        }
+        .alert(
+            "识别报告",
+            isPresented: Binding(
+                get: { recognitionReportMessage != nil },
+                set: { if !$0 { recognitionReportMessage = nil } }
+            )
+        ) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(recognitionReportMessage ?? "")
+        }
+#endif
     }
 
     /// `scrollPosition(id:)` reports `nil` whenever the scroll view is between items. Dropping
@@ -424,8 +456,12 @@ struct ComicReaderView: View {
                 Spacer()
 
 #if DEBUG
-                Button {
-                    debugRecognizesText.toggle()
+                Menu {
+                    Toggle("显示识别框", isOn: $debugRecognizesText)
+                    Button("识别并导出本章") {
+                        startRecognitionReport()
+                    }
+                    .disabled(recognitionReportTask != nil)
                 } label: {
                     Image(systemName: debugRecognizesText ? "text.viewfinder" : "viewfinder")
                         .font(.subheadline)
@@ -492,6 +528,132 @@ struct ComicReaderView: View {
         .foregroundStyle(.white)
     }
 }
+
+#if DEBUG
+// MARK: - Recognition report (debug)
+
+extension ComicReaderView {
+    private func recognitionReportBadge(_ progress: (done: Int, total: Int)) -> some View {
+        VStack {
+            HStack(spacing: 10) {
+                ProgressView()
+                    .tint(.white)
+                Text("识别本章 \(progress.done)/\(progress.total)")
+                    .font(.subheadline.monospacedDigit())
+                Button("取消") {
+                    recognitionReportTask?.cancel()
+                }
+                .font(.subheadline.weight(.semibold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial, in: Capsule())
+            .padding(.top, viewModel.showToolbar ? 64 : 12)
+            Spacer()
+        }
+    }
+
+    /// Recognises every page of the current chapter, one at a time through the same queue as
+    /// the overlay, and offers the result as a JSON file. A page that fails is recorded and the
+    /// run continues; cancelling, or leaving the reader, stops it without exporting.
+    private func startRecognitionReport() {
+        guard recognitionReportTask == nil else { return }
+        guard let episode = viewModel.currentEpisode,
+              !viewModel.pages.isEmpty,
+              let target = readerDecodeTarget() else {
+            recognitionReportMessage = "页面尚未加载完成，请稍后再试。"
+            return
+        }
+
+        let urls = viewModel.pages.map(\.media.imageURL)
+        let loader = imageDataLoader
+        let cache = imageCache
+        let comicID = viewModel.comicId
+        recognitionReportProgress = (0, urls.count)
+
+        recognitionReportTask = Task {
+            defer {
+                recognitionReportTask = nil
+                recognitionReportProgress = nil
+            }
+            var pages: [MangaRecognitionReport.Page] = []
+            for (index, url) in urls.enumerated() {
+                guard !Task.isCancelled else { return }
+                pages.append(await Self.recognisePage(index: index, url: url, target: target, loader: loader, cache: cache))
+                recognitionReportProgress = (index + 1, urls.count)
+            }
+            guard !Task.isCancelled else { return }
+
+            let report = MangaRecognitionReport(
+                appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?",
+                buildNumber: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?",
+                deviceModel: Self.deviceModelIdentifier(),
+                systemVersion: UIDevice.current.systemVersion,
+                comicID: comicID,
+                episodeOrder: episode.order,
+                episodeTitle: episode.title,
+                pages: pages
+            )
+            do {
+                recognitionReportItem = DiagnosticsExportItem(url: try report.write())
+            } catch {
+                recognitionReportMessage = "写入报告失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private static func recognisePage(
+        index: Int,
+        url: URL?,
+        target: ImageDecodeTarget,
+        loader: any ImageDataLoading,
+        cache: ImageCache
+    ) async -> MangaRecognitionReport.Page {
+        func failed(_ message: String) -> MangaRecognitionReport.Page {
+            .init(index: index, pixelWidth: nil, pixelHeight: nil, milliseconds: nil, error: message, blocks: [])
+        }
+        guard let url else { return failed("页面没有图片地址") }
+        do {
+            // Same decode target and cache as the reader, so pages already on screen are not
+            // downloaded or decoded again.
+            let asset = try await cache.loadAsset(
+                for: url,
+                target: target,
+                overscan: 2,
+                priority: .utility,
+                imageLoader: loader,
+                diagnosticContext: ImageDiagnosticContext(purpose: .readerPrefetch, url: url)
+            )
+            guard let cgImage = asset.image.cgImage else { return failed("图片无法解码") }
+            let result = try await MangaTextRecognitionQueue.shared.run {
+                try MangaPageTextExtractor().timedExtract(from: cgImage)
+            }
+            return .init(
+                index: index,
+                pixelWidth: cgImage.width,
+                pixelHeight: cgImage.height,
+                milliseconds: result.milliseconds,
+                error: nil,
+                blocks: result.blocks
+            )
+        } catch is CancellationError {
+            return failed("已取消")
+        } catch {
+            return failed(error.localizedDescription)
+        }
+    }
+
+    /// The hardware identifier, e.g. iPhone17,1 — more useful than "iPhone" when comparing runs.
+    private static func deviceModelIdentifier() -> String {
+        var info = utsname()
+        uname(&info)
+        return withUnsafeBytes(of: &info.machine) { bytes in
+            String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
+    }
+}
+#endif
 
 nonisolated enum ReaderImagePrefetchPlan {
     static func indices(

@@ -313,16 +313,11 @@ struct ZoomableImageView: UIViewRepresentable {
                 do {
                     // One page at a time, newest first, cancellable while waiting or running.
                     // The time reported is the work itself, not the wait for a turn.
-                    let value = try await MangaTextRecognitionQueue.shared.run { () throws -> ([MangaTextBlock], Int) in
+                    let value = try await MangaTextRecognitionQueue.shared.run {
                         guard let cgImage = asset.image.cgImage else { throw CocoaError(.fileReadCorruptFile) }
-                        let clock = ContinuousClock()
-                        let start = clock.now
-                        let blocks = try MangaPageTextExtractor().extract(from: cgImage)
-                        let elapsed = start.duration(to: clock.now)
-                        return (blocks, Int(elapsed.components.seconds * 1000)
-                            + Int(elapsed.components.attoseconds / 1_000_000_000_000_000))
+                        return try MangaPageTextExtractor().timedExtract(from: cgImage)
                     }
-                    outcome = .success(value)
+                    outcome = .success((value.blocks, value.milliseconds))
                 } catch is CancellationError {
                     // The page went away or changed; whoever replaced it owns the overlay now.
                     return

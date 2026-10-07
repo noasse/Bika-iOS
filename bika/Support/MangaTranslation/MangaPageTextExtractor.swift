@@ -7,6 +7,14 @@ import Foundation
 /// horizontal strip → Vision OCR. Text outside bubbles (sound effects, narration boxes drawn
 /// over art) is out of scope for this experiment.
 nonisolated struct MangaPageTextExtractor: Sendable {
+    /// Bumped whenever a change can alter what is recognised on a page. Reports record it so
+    /// two evaluation runs can be compared, and cached results from another version are not
+    /// reused.
+    ///
+    /// 1 bubbles and vertical reflow · 2 batched OCR · 3 line-art and garbage filters ·
+    /// 4 flat-fill bubbles, free horizontal text, across-column misread filter.
+    static let pipelineVersion = 4
+
     nonisolated struct Configuration: Sendable {
         /// Analysis happens on a copy whose long side is at most this many pixels.
         var analysisMaxDimension = 2000
@@ -29,6 +37,17 @@ nonisolated struct MangaPageTextExtractor: Sendable {
     var reflow = TextReflow()
     var recognizer = JapaneseTextRecognizer()
     var captionReader = CaptionTextReader()
+
+    /// `extract(from:)` plus how long it took in milliseconds.
+    func timedExtract(from image: CGImage) throws -> (blocks: [MangaTextBlock], milliseconds: Int) {
+        let clock = ContinuousClock()
+        let start = clock.now
+        let blocks = try extract(from: image)
+        let elapsed = start.duration(to: clock.now)
+        let milliseconds = Int(elapsed.components.seconds * 1000)
+            + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
+        return (blocks, milliseconds)
+    }
 
     func extract(from image: CGImage) throws -> [MangaTextBlock] {
         guard let bitmap = GrayscaleBitmap(image: image, maxDimension: configuration.analysisMaxDimension) else {
@@ -80,7 +99,8 @@ nonisolated struct MangaPageTextExtractor: Sendable {
                 textBounds: NormalizedRect(pixelRect: textBounds.cgRect, in: size),
                 lines: lines.map { NormalizedRect(pixelRect: $0.bounds.cgRect, in: size) },
                 orientation: reading.text.orientation,
-                sourceText: reading.result.text
+                sourceText: reading.result.text,
+                confidence: reading.result.confidence
             )
         }
         if configuration.readsCaptions {
@@ -99,7 +119,8 @@ nonisolated struct MangaPageTextExtractor: Sendable {
                     textBounds: NormalizedRect(pixelRect: bounds, in: size),
                     lines: paragraph.lines.map { NormalizedRect(pixelRect: $0, in: size) },
                     orientation: .horizontal,
-                    sourceText: paragraph.text
+                    sourceText: paragraph.text,
+                    confidence: paragraph.confidence
                 ))
             }
         }
