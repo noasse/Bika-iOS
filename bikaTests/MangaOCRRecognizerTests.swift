@@ -43,6 +43,21 @@ final class MangaOCRRecognizerTests: XCTestCase {
         XCTAssertEqual(MangaOCRRecognizer.normalised("そうか..."), "そうか…")
     }
 
+    func testOnlyTheSupportedModelFormatLoads() throws {
+        func manifest(_ format: Int?) throws -> MangaOCRRecognizer.Manifest {
+            let format = format.map { "\"format\": \($0)," } ?? ""
+            let json = """
+            {\(format) "revision": "aa6573bd", "vocab_size": 6144, "decoder_start_token_id": 2,
+             "eos_token_id": 3, "max_tokens": 300, "no_repeat_ngram_size": 3}
+            """
+            return try JSONDecoder().decode(MangaOCRRecognizer.Manifest.self, from: Data(json.utf8))
+        }
+        XCTAssertNoThrow(try MangaOCRRecognizer.validate(manifest(2)))
+        // Format 1 models, or a manifest with no format, would be driven with the wrong inputs.
+        XCTAssertThrowsError(try MangaOCRRecognizer.validate(manifest(1)))
+        XCTAssertThrowsError(try MangaOCRRecognizer.validate(manifest(nil)))
+    }
+
     func testPixelValuesAreScaledToMinusOneOne() throws {
         let context = CGContext(data: nil, width: 10, height: 10, bitsPerComponent: 8, bytesPerRow: 0,
                                 space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)!
@@ -60,6 +75,7 @@ final class MangaOCRRecognizerTests: XCTestCase {
     func testBundledModelLoads() throws {
         try requireModel()
         XCTAssertTrue(try XCTUnwrap(MangaOCRRecognizer.bundled).identifier.hasPrefix("manga-ocr@"))
+        XCTAssertTrue(try XCTUnwrap(MangaOCRRecognizer.bundled).identifier.hasSuffix("/f\(MangaOCRRecognizer.supportedFormat)"))
         XCTAssertTrue(MangaPageTextExtractor().recognizerIdentifier.hasPrefix("manga-ocr@"))
         XCTAssertEqual(MangaPageTextExtractor.vision().recognizerIdentifier, "vision")
     }

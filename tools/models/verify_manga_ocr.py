@@ -1,6 +1,6 @@
 """Check the converted Core ML manga-ocr models against the original PyTorch model.
 
-For each sample image: decode greedily with PyTorch and with Core ML (same preprocessing,
+For each sample image: decode greedily with the stock PyTorch model and with Core ML (same preprocessing,
 same no-repeat-3-gram rule), require identical text, and report the largest logit difference
 at every decoding step — which covers every prefix length the decoder sees, since its input
 length was traced at one value and must work at all of them.
@@ -94,23 +94,30 @@ def main() -> int:
 
             torch_ids, torch_logits = greedy(torch_step, start, eos, max_tokens, n)
 
-        states_ml = encoder.predict({"pixel_values": pixels})["encoder_hidden_states"]
+        cross = encoder.predict({"pixel_values": pixels})
+        keys, values = cross["cross_keys"].astype(np.float32), cross["cross_values"].astype(np.float32)
 
         def ml_step(ids):
             return decoder.predict({
                 "input_ids": np.array([ids], dtype=np.int32),
-                "encoder_hidden_states": states_ml.astype(np.float32),
+                "cross_keys": keys,
+                "cross_values": values,
             })["logits"][0]
 
         ml_ids, ml_logits = greedy(ml_step, start, eos, max_tokens, n)
 
-        encoder_diff = float(np.abs(states_ml - states_torch.numpy()).max())
+        # Reference cross-attention keys from the stock decoder's own projection.
+        with torch.no_grad():
+            layer = torch_model.decoder.bert.encoder.layer[0].crossattention.self
+            heads = torch_model.decoder.config.num_attention_heads
+            reference = layer.key(states_torch).view(1, -1, heads, keys.shape[-1]).transpose(1, 2).numpy()
+        encoder_diff = float(np.abs(keys[0] - reference).max())
         step_diffs = [float(np.abs(a - b).max()) for a, b in zip(torch_logits, ml_logits)]
         same = torch_ids == ml_ids
         failures += 0 if same else 1
         print(f"{path.stem:22} torch={detokenize(torch_ids, vocab)!r:28} coreml={detokenize(ml_ids, vocab)!r:28} "
               f"{'SAME' if same else 'DIFFERENT'}  steps={len(ml_ids) - 1}  "
-              f"max|Δencoder|={encoder_diff:.3f}  max|Δlogits| per step={max(step_diffs):.3f}")
+              f"max|Δcross keys|={encoder_diff:.3f}  max|Δlogits| per step={max(step_diffs):.3f}")
 
     print(f"\n{len(samples) - failures}/{len(samples)} samples decode identically")
     return 0 if failures == 0 else 2

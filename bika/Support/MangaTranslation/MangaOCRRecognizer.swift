@@ -23,9 +23,9 @@ nonisolated final class MangaOCRRecognizer: MangaTextRecognizing, @unchecked Sen
     static let bundled: MangaOCRRecognizer? = try? MangaOCRRecognizer(bundle: .main)
 
     nonisolated struct Manifest: Decodable, Sendable {
+        /// Model interface version written by convert_manga_ocr.py.
+        let format: Int?
         let revision: String
-        let encoder_sequence: Int
-        let hidden_size: Int
         let vocab_size: Int
         let decoder_start_token_id: Int
         let eos_token_id: Int
@@ -33,8 +33,19 @@ nonisolated final class MangaOCRRecognizer: MangaTextRecognizing, @unchecked Sen
         let no_repeat_ngram_size: Int
     }
 
+    /// The interface this code drives: the encoder returns the decoder's cross-attention keys
+    /// and values, and the decoder takes them with the prefix. Format 1 models took encoder
+    /// states instead and recomputed the projection every step.
+    static let supportedFormat = 2
+
     enum LoadError: Error {
         case missing(String)
+        /// Converted for a different interface; reconvert with tools/models/convert_manga_ocr.py.
+        case unsupportedFormat(Int?)
+    }
+
+    static func validate(_ manifest: Manifest) throws {
+        guard manifest.format == supportedFormat else { throw LoadError.unsupportedFormat(manifest.format) }
     }
 
     let identifier: String
@@ -63,15 +74,23 @@ nonisolated final class MangaOCRRecognizer: MangaTextRecognizing, @unchecked Sen
         vocabulary = try String(contentsOf: try url("MangaOCRVocab", "txt"), encoding: .utf8)
             .components(separatedBy: "\n")
         manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: try url("MangaOCRManifest", "json")))
-        identifier = "manga-ocr@\(manifest.revision.prefix(8))"
+        // A model converted for another interface would be driven with the wrong inputs; fall
+        // back to Vision instead of misreading.
+        try Self.validate(manifest)
+        identifier = "manga-ocr@\(manifest.revision.prefix(8))/f\(Self.supportedFormat)"
     }
 
     func recognize(_ crop: CGImage) throws -> JapaneseTextRecognizer.Result {
         try lock.withLock {
-            let states = try encoder.prediction(from: MLDictionaryFeatureProvider(dictionary: [
+            // Once per region: the image, and every decoder layer's cross-attention keys and
+            // values, which would otherwise be recomputed on every step.
+            let encoded = try encoder.prediction(from: MLDictionaryFeatureProvider(dictionary: [
                 "pixel_values": MLFeatureValue(multiArray: try Self.pixelValues(crop)),
-            ])).featureValue(for: "encoder_hidden_states")?.multiArrayValue
-            guard let states else { return JapaneseTextRecognizer.Result(text: "", confidence: 0) }
+            ]))
+            guard let keys = encoded.featureValue(for: "cross_keys"),
+                  let values = encoded.featureValue(for: "cross_values") else {
+                return JapaneseTextRecognizer.Result(text: "", confidence: 0)
+            }
 
             var ids = [manifest.decoder_start_token_id]
             var probabilities: [Double] = []
@@ -81,7 +100,8 @@ nonisolated final class MangaOCRRecognizer: MangaTextRecognizing, @unchecked Sen
                 for (index, id) in ids.enumerated() { input[[0, NSNumber(value: index)]] = NSNumber(value: id) }
                 guard let logits = try decoder.prediction(from: MLDictionaryFeatureProvider(dictionary: [
                     "input_ids": MLFeatureValue(multiArray: input),
-                    "encoder_hidden_states": MLFeatureValue(multiArray: states),
+                    "cross_keys": keys,
+                    "cross_values": values,
                 ])).featureValue(for: "logits")?.multiArrayValue else { break }
 
                 let (token, probability) = Self.nextToken(
