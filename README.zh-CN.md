@@ -142,7 +142,7 @@ macOS 应用代码位于 `BikaMacos/`，复用现有模型、网络层、依赖�
 ├── bika/                   # iOS 与共享应用源代码
 ├── bikaTests/              # 单元测试
 ├── bikaUITests/            # UI Smoke 测试
-├── script/build_and_run.sh # macOS 本地运行/调试入口
+├── scripts/build_and_run.sh # macOS 本地运行/调试入口
 ├── scripts/test.sh         # 统一本地测试入口
 ├── TESTING.md              # 测试说明
 ├── CLOUD_HISTORY_SYNC.md   # 可选同步服务说明
@@ -178,7 +178,7 @@ chmod +x ./scripts/test.sh
 ./scripts/test.sh unit
 ./scripts/test.sh ui-smoke
 ./scripts/test.sh all
-./script/build_and_run.sh --verify
+./scripts/build_and_run.sh --verify
 ```
 
 ## 测试与 CI

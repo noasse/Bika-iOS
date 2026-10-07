@@ -52,7 +52,7 @@
 
 - 目标：验证 `BikaMacos` app bundle 可以构建并启动。
 - 对应 scheme：`BikaMacos`
-- 运行入口：`script/build_and_run.sh`
+- 运行入口：`scripts/build_and_run.sh`
 - 当前重点覆盖：
   - macOS target 编译通过
   - app bundle 可以启动
@@ -71,7 +71,7 @@
 - 测试计划：`./bika.xctestplan`
 - macOS 测试 target：`./BikaMacosTests`
 - 脚本：`./scripts/test.sh`
-- macOS 脚本：`./script/build_and_run.sh`
+- macOS 脚本：`./scripts/build_and_run.sh`
 - 结果目录：`./artifacts/test-results`
 - DerivedData：`/tmp/bika-derived`
 - macOS Unit DerivedData：`/tmp/bika-derived-mac`
@@ -94,7 +94,7 @@ chmod +x ./scripts/test.sh
 ./scripts/test.sh all
 ./scripts/test.sh build-for-testing
 ./scripts/test.sh clean
-./script/build_and_run.sh --verify
+./scripts/build_and_run.sh --verify
 ```
 
 ## 可选环境变量
@@ -172,6 +172,6 @@ CI 配置位于 [ios-tests.yml](.github/workflows/ios-tests.yml)。
 
 - 提交 PR 前至少跑 `./scripts/test.sh unit`
 - 改动分页列表、详情、评论、阅读器或设置时，建议跑 `./scripts/test.sh all`
-- 改动 macOS target 时至少跑 `./scripts/test.sh mac-unit` 和 `./script/build_and_run.sh --verify`
+- 改动 macOS target 时至少跑 `./scripts/test.sh mac-unit` 和 `./scripts/build_and_run.sh --verify`
 - 新增分页列表页时，优先复用统一分页模式，再补共享行为测试
 - 新增模型解码时，明确“关键字段”和“降级字段”的边界，并补单测

@@ -142,7 +142,7 @@ The app can switch to fixture-backed dependencies for repeatable local and CI ve
 ├── bika/                   # Shared iOS app source
 ├── bikaTests/              # Unit tests
 ├── bikaUITests/            # UI smoke tests
-├── script/build_and_run.sh # macOS local run/debug helper
+├── scripts/build_and_run.sh # macOS local run/debug helper
 ├── scripts/test.sh         # Unified local test entry
 ├── TESTING.md              # Testing guide
 ├── CLOUD_HISTORY_SYNC.md   # Optional sync service notes
@@ -178,7 +178,7 @@ chmod +x ./scripts/test.sh
 ./scripts/test.sh unit
 ./scripts/test.sh ui-smoke
 ./scripts/test.sh all
-./script/build_and_run.sh --verify
+./scripts/build_and_run.sh --verify
 ```
 
 ## Testing And CI
