@@ -114,8 +114,78 @@ nonisolated struct JapaneseTextRecognizer: Sendable {
             }
             repaired.append(character)
         }
-        return String(repaired)
+        return collapsingDotRuns(String(repaired))
     }
+
+    /// A vertical ellipsis is cut into cells like any other glyph, so it comes back as `…`
+    /// plus a stray `・` or `•`. Any run of two or more dot-like characters becomes one `…`;
+    /// a single `・` is left alone, as in names (アルカナ・シャドウ).
+    static func collapsingDotRuns(_ text: String) -> String {
+        var result = ""
+        var run = 0
+        var pendingDot: Character = "・"
+        func flush() {
+            if run >= 2 { result.append("…") } else if run == 1 { result.append(pendingDot) }
+            run = 0
+        }
+        for character in text {
+            if dotLike.contains(character) {
+                if run == 0 { pendingDot = character }
+                run += 1
+            } else {
+                flush()
+                result.append(character)
+            }
+        }
+        flush()
+        return result
+    }
+
+    private static let dotLike: Set<Character> = ["…", "⋯", "・", "･", "•", "·", ".", "‥"]
+
+    /// Whether recognised text is plausibly Japanese dialogue rather than something Vision made
+    /// of an eye, a hair line or a page number.
+    ///
+    /// On line-art pages the white of a face enclosed by its outline is shaped exactly like a
+    /// speech bubble, and Vision returns things like `し?,`, `•…`, `11/` or `111X` for the
+    /// features inside it. Kana and kanji must be at least `minimumRatio` of the characters
+    /// that count. Ordinary dialogue punctuation does not count either way — including the ASCII
+    /// `?` and `!` Vision often returns for full-width ones — so a one-kana line like `は?`
+    /// passes. Stray symbols count against; digits count half, since dialogue does use them.
+    static func looksLikeJapanese(_ text: String, minimumRatio: Double = 0.6) -> Bool {
+        let counts = characterCounts(text)
+        guard counts.japanese >= 1 else { return false }
+        return counts.japanese / (counts.japanese + counts.foreign) >= minimumRatio
+    }
+
+    /// Kana and kanji, excluding punctuation. Used to compare two readings of one bubble: the
+    /// wrong orientation tends to read only part of the text.
+    static func japaneseLetterCount(_ text: String) -> Int {
+        Int(characterCounts(text).japanese)
+    }
+
+    private static func characterCounts(_ text: String) -> (japanese: Double, foreign: Double) {
+        var japanese = 0.0
+        var foreign = 0.0
+        for character in text where !character.isWhitespace && !dialoguePunctuation.contains(character) {
+            if isJapanese(character) {
+                japanese += 1
+            } else if character.isASCII, character.isNumber {
+                foreign += 0.5
+            } else {
+                foreign += 1
+            }
+        }
+        return (japanese, foreign)
+    }
+
+    /// Punctuation that real dialogue is full of. `・` and `ー` sit inside the katakana block,
+    /// so they must be listed here or a line of dots would count as Japanese.
+    private static let dialoguePunctuation: Set<Character> = [
+        "…", "⋯", "‥", "・", "･", "ー", "〜", "~", "、", "。", "，", "．",
+        "！", "？", "!", "?", "「", "」", "『", "』", "（", "）", "(", ")",
+        "♡", "♥", "♪", "☆", "★", "―", "—",
+    ]
 
     private static let verticalBarLookalikes: Set<Character> = ["|", "｜", "丨", "l", "I", "1", "︱"]
 

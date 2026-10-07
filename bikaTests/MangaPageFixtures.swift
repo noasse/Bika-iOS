@@ -25,7 +25,14 @@ enum MangaPageFixtures {
     /// - Parameter screentone: covers the art area with a dot pattern, as printed manga does.
     ///   Every white gap between dots is a tiny enclosed light region, which is what makes
     ///   real pages expensive for bubble detection.
-    static func page(bubbles: [Bubble], size: CGSize = pageSize, screentone: Bool = false) -> CGImage {
+    /// - Parameter decorations: extra line art drawn before the bubbles, in top-left page
+    ///   coordinates — for shapes that only look like bubbles.
+    static func page(
+        bubbles: [Bubble],
+        size: CGSize = pageSize,
+        screentone: Bool = false,
+        decorations: (CGContext) -> Void = { _ in }
+    ) -> CGImage {
         let width = Int(size.width), height = Int(size.height)
         let context = CGContext(
             data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
@@ -66,6 +73,9 @@ enum MangaPageFixtures {
         context.setLineWidth(6)
         context.stroke(panel)
 
+        context.saveGState()
+        decorations(context)
+        context.restoreGState()
         for bubble in bubbles { draw(bubble, in: context) }
         return context.makeImage()!
     }

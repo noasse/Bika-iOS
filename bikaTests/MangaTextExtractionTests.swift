@@ -178,6 +178,81 @@ final class MangaTextExtractionTests: XCTestCase {
         XCTAssertEqual(blocks.map(\.sourceText), ["おい待てよ", "話を聞いて"])
     }
 
+    // MARK: - Device findings (round 2)
+    //
+    // Each of these reproduces something seen on real line-art pages on a device.
+
+    func testBubbleInsideAnEnclosedAreaIsReadOnce() throws {
+        // A real bubble inside a larger area closed off by line art. The outer area's "ink" is
+        // the bubble's outline and text, so it used to be read a second time.
+        let page = MangaPageFixtures.page(bubbles: [
+            Bubble(frame: CGRect(x: 520, y: 220, width: 260, height: 380), columns: ["待って", "くれ"]),
+        ]) { context in
+            context.setFillColor(gray: 1, alpha: 1)
+            context.fill(CGRect(x: 360, y: 120, width: 560, height: 600))
+            context.setStrokeColor(gray: 0, alpha: 1)
+            context.setLineWidth(5)
+            context.stroke(CGRect(x: 360, y: 120, width: 560, height: 600))
+        }
+
+        let blocks = try MangaPageTextExtractor().extract(from: page)
+
+        XCTAssertEqual(blocks.map(\.sourceText), ["待ってくれ"])
+    }
+
+    func testVerticalEllipsisAtTheEndOfALineBecomesOneEllipsis() throws {
+        // Reflow cuts a vertical double ellipsis into cells. Before collapsing dot runs it came
+        // back as `そうか…・…•なるほど`, the same artefact seen on a device.
+        let page = MangaPageFixtures.page(bubbles: [
+            Bubble(frame: CGRect(x: 650, y: 120, width: 300, height: 560), columns: ["そうか……", "なるほど"]),
+        ])
+
+        let blocks = try MangaPageTextExtractor().extract(from: page)
+
+        XCTAssertEqual(blocks.first?.sourceText, "そうか…なるほど")
+    }
+
+    // Strings below were returned on a device for line-art features (faces, hair, page
+    // numbers) that the bubble detector took for bubbles. Synthetic faces could not reproduce
+    // that — Vision returns nothing for them — so the filter is tested on the strings directly.
+    func testRejectsTextThatIsNotJapanese() {
+        for garbage in ["し?,", "•…", "12/", "1X", "0.", "6", "※", "、//はい)", "…", "ー"] {
+            XCTAssertFalse(
+                JapaneseTextRecognizer.looksLikeJapanese(JapaneseTextRecognizer.collapsingDotRuns(garbage)),
+                "\(garbage) should be rejected"
+            )
+        }
+    }
+
+    func testKeepsShortAndPunctuatedJapanese() {
+        for line in ["は?", "え!?", "本当に?", "そうか…", "…ハハ…", "あと10分", "待ってくれ"] {
+            XCTAssertTrue(JapaneseTextRecognizer.looksLikeJapanese(line), "\(line) should be kept")
+        }
+    }
+
+    func testDotRunsCollapseButANameSeparatorStays() {
+        XCTAssertEqual(JapaneseTextRecognizer.collapsingDotRuns("そうか…・"), "そうか…")
+        XCTAssertEqual(JapaneseTextRecognizer.collapsingDotRuns("待って・・・"), "待って…")
+        XCTAssertEqual(JapaneseTextRecognizer.collapsingDotRuns("えっ..."), "えっ…")
+        XCTAssertEqual(JapaneseTextRecognizer.collapsingDotRuns("…•"), "…")
+        XCTAssertEqual(JapaneseTextRecognizer.collapsingDotRuns("そうか・・・⋯・・"), "そうか…")
+        XCTAssertEqual(JapaneseTextRecognizer.collapsingDotRuns("ジョン・スミス"), "ジョン・スミス")
+    }
+
+    func testAlternativeReadingNeedsMoreConfidenceAndAsMuchText() {
+        typealias R = JapaneseTextRecognizer.Result
+        let vertical = R(text: "これはなんだろう", confidence: 0.6)
+
+        // More confident but reads only part of the text: a row across two columns.
+        XCTAssertFalse(MangaPageTextExtractor.alternativeWins(R(text: "これは", confidence: 0.95), over: vertical, margin: 0.15))
+        // As long but not clearly more confident.
+        XCTAssertFalse(MangaPageTextExtractor.alternativeWins(R(text: "これはなんだろう", confidence: 0.7), over: vertical, margin: 0.15))
+        // Clearly better on both.
+        XCTAssertTrue(MangaPageTextExtractor.alternativeWins(R(text: "これはなんだろうか", confidence: 0.9), over: vertical, margin: 0.15))
+        // Nothing to beat.
+        XCTAssertTrue(MangaPageTextExtractor.alternativeWins(R(text: "は", confidence: 0.4), over: nil, margin: 0.15))
+    }
+
     // MARK: - Helpers
 
     private func onlyBubble(_ bubble: Bubble) throws -> DetectedBubble {

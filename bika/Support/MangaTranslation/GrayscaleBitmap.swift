@@ -91,6 +91,10 @@ nonisolated struct PixelRect: Hashable, Sendable {
         CGRect(x: minX, y: minY, width: width, height: height)
     }
 
+    func contains(_ other: PixelRect) -> Bool {
+        other.minX >= minX && other.maxX <= maxX && other.minY >= minY && other.maxY <= maxY
+    }
+
     func union(_ other: PixelRect) -> PixelRect {
         PixelRect(
             minX: min(minX, other.minX),

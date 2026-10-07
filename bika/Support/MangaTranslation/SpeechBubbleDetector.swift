@@ -132,7 +132,12 @@ nonisolated struct SpeechBubbleDetector: Sendable {
             ) else { continue }
             bubbles.append(bubble)
         }
-        return bubbles
+        // A speech bubble never holds another speech bubble. When one region encloses another,
+        // the outer one is a white area bounded by line art — often a whole panel — whose "ink"
+        // is the inner bubble's outline and text, which would otherwise be read a second time.
+        return bubbles.filter { outer in
+            !bubbles.contains { inner in inner.bounds != outer.bounds && outer.bounds.contains(inner.bounds) }
+        }
     }
 
     private static func visit(

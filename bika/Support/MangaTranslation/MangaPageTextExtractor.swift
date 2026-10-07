@@ -59,17 +59,16 @@ nonisolated struct MangaPageTextExtractor: Sendable {
         if !unsure.isEmpty {
             let alternatives = try recognizer.recognize(unsure.map { bubbles[$0].1[1].1 })
             for (index, result) in zip(unsure, alternatives) where !result.text.isEmpty {
-                // The likelier reading only loses by a clear margin, so a near-tie never flips
-                // a vertical bubble to horizontal.
-                let current = best[index]?.result.confidence ?? -1
-                if best[index] == nil || result.confidence > current + configuration.alternativeReadingMargin {
+                if Self.alternativeWins(result, over: best[index]?.result, margin: configuration.alternativeReadingMargin) {
                     best[index] = (bubbles[index].1[1].0, result)
                 }
             }
         }
 
         let blocks = zip(bubbles, best).compactMap { bubble, reading -> MangaTextBlock? in
-            guard let reading, reading.result.confidence >= configuration.minimumConfidence else { return nil }
+            guard let reading,
+                  reading.result.confidence >= configuration.minimumConfidence,
+                  JapaneseTextRecognizer.looksLikeJapanese(reading.result.text) else { return nil }
             let lines = reading.text.lines
             let textBounds = lines.map(\.bounds).reduce(lines[0].bounds) { $0.union($1) }
             return MangaTextBlock(
@@ -81,6 +80,23 @@ nonisolated struct MangaPageTextExtractor: Sendable {
             )
         }
         return Self.readingOrder(blocks)
+    }
+
+    /// Whether a less likely reading of a bubble should replace the first one.
+    ///
+    /// Confidence alone was not enough: on a device, two-column vertical bubbles were read as
+    /// horizontal because the horizontal reading — which picks up only part of the text, a row
+    /// across both columns — came back slightly more confident. The alternative now has to be
+    /// clearly more confident *and* read at least as many kana and kanji.
+    static func alternativeWins(
+        _ alternative: JapaneseTextRecognizer.Result,
+        over current: JapaneseTextRecognizer.Result?,
+        margin: Double
+    ) -> Bool {
+        guard let current else { return true }
+        return alternative.confidence > current.confidence + margin
+            && JapaneseTextRecognizer.japaneseLetterCount(alternative.text)
+                >= JapaneseTextRecognizer.japaneseLetterCount(current.text)
     }
 
     /// Manga pages read top to bottom, and right to left within a row. Bubbles whose tops are
