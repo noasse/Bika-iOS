@@ -13,7 +13,7 @@ Bika 是一个使用 SwiftUI 构建的 iOS 与 macOS 漫画阅读应用。
 
 截至 `2026-06-24`，工程已经通过：
 
-- macOS target：`./script/build_and_run.sh --verify`
+- macOS target：`./scripts/build_and_run.sh --verify`
 - iOS 既有测试入口仍保留：`./scripts/test.sh unit`、`./scripts/test.sh ui-smoke`
 
 ## 当前代码结构
@@ -315,7 +315,7 @@ macOS target 名为 `BikaMacos`，位于 [BikaMacos](BikaMacos)。
 
 - PR 至少通过 `unit`
 - 改动主链路时通过 `ui-smoke`
-- 改动 macOS target 时至少通过 `./script/build_and_run.sh --verify`
+- 改动 macOS target 时至少通过 `./scripts/build_and_run.sh --verify`
 - 新增分页列表优先复用共享抽象
 - 新增网络请求通过可注入 client 进入
 - 新增模型解码时写清楚关键字段与降级字段

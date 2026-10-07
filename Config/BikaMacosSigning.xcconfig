@@ -1,0 +1,18 @@
+// Signing for the BikaMacos and BikaMacosTests targets.
+//
+// The committed default is ad-hoc signing with no development team, so anyone can build and
+// run the macOS app without an Apple developer account, and CI (which passes
+// CODE_SIGNING_ALLOWED=NO) is unaffected. Ad-hoc signing is also why the macOS build stays on
+// the file-based keychain: see the kSecAttrAccessible note in bika/Network/APIClient.swift.
+//
+// To sign with your own team, copy Signing.local.xcconfig.example to Signing.local.xcconfig in
+// this directory and fill it in. That file is git-ignored, so your team never lands in the repo
+// and Xcode stops rewriting project.pbxproj. Set signing there, not in Xcode's Signing &
+// Capabilities pane: the pane writes target-level settings back into project.pbxproj, and those
+// override everything in this file.
+
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+
+#include? "Signing.local.xcconfig"

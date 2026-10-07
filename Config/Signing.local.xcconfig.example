@@ -1,0 +1,6 @@
+// Copy to Signing.local.xcconfig (git-ignored) to sign the macOS targets with your own team.
+// See BikaMacosSigning.xcconfig for why this lives outside project.pbxproj.
+
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = Apple Development
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
