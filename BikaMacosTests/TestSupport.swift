@@ -125,3 +125,82 @@ actor TestAsyncGate {
         pendingWaiters.forEach { $0.resume() }
     }
 }
+
+/// Records image-cache maintenance so tests can assert on it without touching the real caches.
+final class SpyImageCacheManager: MacImageCacheManaging, @unchecked Sendable {
+    private let state = LockedValue(State())
+
+    private struct State {
+        var clearCount = 0
+        var usage = MacImageCacheUsage(memoryBytes: 0, diskBytes: 0)
+    }
+
+    init(usage: MacImageCacheUsage = MacImageCacheUsage(memoryBytes: 0, diskBytes: 0)) {
+        state.value = State(clearCount: 0, usage: usage)
+    }
+
+    var clearCount: Int { state.value.clearCount }
+
+    func usage() async -> MacImageCacheUsage {
+        state.value.usage
+    }
+
+    func clear() async {
+        var current = state.value
+        current.clearCount += 1
+        current.usage = MacImageCacheUsage(memoryBytes: 0, diskBytes: 0)
+        state.value = current
+    }
+}
+
+/// Wraps a store so tests can count how often a key is actually rewritten.
+final class CountingKeyValueStore: KeyValueStore, @unchecked Sendable {
+    private let wrapped: any KeyValueStore
+    private let counts = LockedValue<[String: Int]>([:])
+
+    init(wrapping wrapped: any KeyValueStore = InMemoryKeyValueStore()) {
+        self.wrapped = wrapped
+    }
+
+    func writeCount(forKeyPrefix prefix: String) -> Int {
+        counts.value
+            .filter { $0.key.hasPrefix(prefix) }
+            .values
+            .reduce(0, +)
+    }
+
+    private func recordWrite(_ key: String) {
+        var current = counts.value
+        current[key, default: 0] += 1
+        counts.value = current
+    }
+
+    func string(forKey key: String) -> String? { wrapped.string(forKey: key) }
+    func integer(forKey key: String) -> Int { wrapped.integer(forKey: key) }
+    func data(forKey key: String) -> Data? { wrapped.data(forKey: key) }
+    func stringArray(forKey key: String) -> [String]? { wrapped.stringArray(forKey: key) }
+
+    func set(_ value: String?, forKey key: String) {
+        recordWrite(key)
+        wrapped.set(value, forKey: key)
+    }
+
+    func set(_ value: Int, forKey key: String) {
+        recordWrite(key)
+        wrapped.set(value, forKey: key)
+    }
+
+    func set(_ value: Data?, forKey key: String) {
+        recordWrite(key)
+        wrapped.set(value, forKey: key)
+    }
+
+    func set(_ value: [String]?, forKey key: String) {
+        recordWrite(key)
+        wrapped.set(value, forKey: key)
+    }
+
+    func removeObject(forKey key: String) { wrapped.removeObject(forKey: key) }
+    func keys(withPrefix prefix: String) -> [String] { wrapped.keys(withPrefix: prefix) }
+    func resetPersistentState() { wrapped.resetPersistentState() }
+}

@@ -11,32 +11,33 @@ final class MacReaderViewModel {
     var currentPageIndex: Int
     var currentEpisodeIndex: Int
     var readerMode: MacReaderMode
-    var imageScale: Double
 
     let request: MacReaderLaunchRequest
 
     private let client: any APIClientProtocol
     private let readingStore: MacReadingStore
     private let keyValueStore: any KeyValueStore
+    private let progressSaveDelay: Duration
     private var didStart = false
     private var activeLoadID = 0
     private var loadTask: Task<Void, Never>?
+    private var progressFlushTask: Task<Void, Never>?
 
     init(
         request: MacReaderLaunchRequest,
         readingStore: MacReadingStore,
         client: any APIClientProtocol = APIClient.shared,
-        keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore
+        keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore,
+        progressSaveDelay: Duration = .milliseconds(800)
     ) {
         self.request = request
         self.readingStore = readingStore.scopedForReader()
         self.client = client
         self.keyValueStore = keyValueStore
+        self.progressSaveDelay = progressSaveDelay
 
         let savedMode = keyValueStore.string(forKey: "macReaderMode") ?? MacReaderMode.waterfall.rawValue
         readerMode = MacReaderMode(rawValue: savedMode) ?? .waterfall
-        let savedScale = keyValueStore.string(forKey: "macReaderImageScale").flatMap(Double.init)
-        imageScale = savedScale.map { min(max($0, 0.55), 2.4) } ?? 1.0
 
         currentEpisodeIndex = min(max(request.startEpisodeIndex, 0), max(request.episodes.count - 1, 0))
         currentPageIndex = max(request.startPageIndex, 0)
@@ -79,26 +80,17 @@ final class MacReaderViewModel {
         keyValueStore.set(mode.rawValue, forKey: "macReaderMode")
     }
 
-    func setImageScale(_ scale: Double) {
-        imageScale = min(max(scale, 0.55), 2.4)
-        keyValueStore.set(String(imageScale), forKey: "macReaderImageScale")
-    }
-
-    func stepImageScale(_ delta: Double) {
-        setImageScale(imageScale + delta)
-    }
-
     func setCurrentPage(_ index: Int) {
         guard pages.indices.contains(index), currentPageIndex != index else { return }
         currentPageIndex = index
-        saveProgress()
+        scheduleProgressSave()
     }
 
     func nextPage() {
         guard !pages.isEmpty, !isLoading else { return }
         if currentPageIndex < pages.count - 1 {
             currentPageIndex += 1
-            saveProgress()
+            scheduleProgressSave()
         }
     }
 
@@ -106,22 +98,23 @@ final class MacReaderViewModel {
         guard !pages.isEmpty, !isLoading else { return }
         if currentPageIndex > 0 {
             currentPageIndex -= 1
-            saveProgress()
+            scheduleProgressSave()
         }
     }
 
     func goToPage(_ displayPage: Int) {
         guard !pages.isEmpty, !isLoading else { return }
         currentPageIndex = macClampedPage(displayPage, totalPages: pages.count) - 1
-        saveProgress()
+        scheduleProgressSave()
     }
 
     func saveCurrentProgress() {
-        saveProgress()
+        flushProgress()
     }
 
     func nextEpisode() async {
         guard hasNextEpisode else { return }
+        flushProgress()
         currentEpisodeIndex += 1
         currentPageIndex = 0
         await loadCurrentEpisode(preservingExistingPages: false)
@@ -129,6 +122,7 @@ final class MacReaderViewModel {
 
     func previousEpisode() async {
         guard hasPreviousEpisode else { return }
+        flushProgress()
         currentEpisodeIndex -= 1
         currentPageIndex = 0
         await loadCurrentEpisode(preservingExistingPages: false)
@@ -220,7 +214,7 @@ final class MacReaderViewModel {
             currentPageIndex = 0
         } else {
             currentPageIndex = min(max(currentPageIndex, 0), pages.count - 1)
-            saveProgress()
+            flushProgress()
         }
         isLoading = false
     }
@@ -291,7 +285,23 @@ final class MacReaderViewModel {
         return PageLoadOutcome(pages: result, failureMessage: nil)
     }
 
-    private func saveProgress() {
+    /// Coalesces page-turn saves.
+    ///
+    /// Recording rewrites the whole history list and pushes the entry to cloud sync, so doing it
+    /// per page turned a fast scroll through a chapter into dozens of writes and HTTP requests.
+    private func scheduleProgressSave() {
+        progressFlushTask?.cancel()
+        let delay = progressSaveDelay
+        progressFlushTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            self?.flushProgress()
+        }
+    }
+
+    private func flushProgress() {
+        progressFlushTask?.cancel()
+        progressFlushTask = nil
         guard let episode = currentEpisode else { return }
         readingStore.record(request: request, episode: episode, pageIndex: currentPageIndex)
     }

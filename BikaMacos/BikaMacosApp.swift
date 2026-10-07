@@ -37,6 +37,19 @@ struct BikaMacosApp: App {
                 .preferredColorScheme(MacThemeMode(rawValue: themeModeRawValue)?.colorScheme)
                 .frame(minWidth: 760, minHeight: 520)
         }
+        .commands {
+            // A second library window would mirror this one: the library model is a single
+            // instance shared by the whole scene, so the two windows fight over one selection.
+            CommandGroup(replacing: .newItem) {}
+
+            CommandGroup(after: .toolbar) {
+                Button("刷新") {
+                    Task { await libraryModel.refreshCurrentSurface() }
+                }
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(!libraryModel.isAuthenticated)
+            }
+        }
 
         WindowGroup("阅读器", for: MacReaderLaunchRequest.self) { $request in
             if let request {

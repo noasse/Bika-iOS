@@ -96,6 +96,9 @@ nonisolated struct SecurityKeychainAccess: KeychainAccessing {
             kSecValueData as String: data,
         ]
 
+        // `kSecAttrAccessible` only applies to the data protection keychain. macOS would need
+        // `kSecUseDataProtectionKeychain` to honour it, and that in turn requires an
+        // `application-identifier` entitlement the ad-hoc signed macOS build does not carry.
         #if os(iOS) || os(tvOS) || os(watchOS)
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         #endif

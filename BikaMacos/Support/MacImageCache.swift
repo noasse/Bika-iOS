@@ -216,15 +216,6 @@ nonisolated final class MacImageCache: @unchecked Sendable {
         self.init(imageLoader: URLSessionImageDataLoader(session: session))
     }
 
-    func image(for url: URL) async throws -> NSImage {
-        try await asset(
-            for: url,
-            target: .full,
-            pixelScale: 1,
-            maximumPixelSize: 16_384
-        ).image
-    }
-
     func asset(
         for url: URL,
         target: MacImageDecodeTarget,

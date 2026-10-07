@@ -6,6 +6,7 @@ struct MacSettingsView: View {
     let blockedCategoriesStore: MacBlockedCategoriesStore
     let client: any APIClientProtocol
     let keyValueStore: any KeyValueStore
+    let imageCacheManager: any MacImageCacheManaging
 
     @State private var categories: [Category] = []
     @State private var isLoadingCategories = false
@@ -16,18 +17,22 @@ struct MacSettingsView: View {
     @State private var cloudHistoryCertificatePins = ""
     @State private var cloudHistoryMessage: String?
     @State private var isTestingCloudHistoryConnection = false
+    @State private var imageCacheUsageText: String?
+    @State private var isClearingImageCache = false
     @Environment(\.colorScheme) private var colorScheme
 
     init(
         themeModeRawValue: Binding<String>,
         blockedCategoriesStore: MacBlockedCategoriesStore,
         client: any APIClientProtocol = APIClient.shared,
-        keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore
+        keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore,
+        imageCacheManager: any MacImageCacheManaging = MacImageCacheController.shared
     ) {
         _themeModeRawValue = themeModeRawValue
         self.blockedCategoriesStore = blockedCategoriesStore
         self.client = client
         self.keyValueStore = keyValueStore
+        self.imageCacheManager = imageCacheManager
         _imageQualityRawValue = State(
             initialValue: keyValueStore.string(forKey: APIConfig.imageQualityKey)
                 ?? APIConfig.imageQualityDefault
@@ -51,6 +56,7 @@ struct MacSettingsView: View {
         .background(MacUI.appBackground(for: colorScheme))
         .task {
             loadCloudHistorySettings()
+            await refreshImageCacheUsage()
             await loadCategoriesIfNeeded()
         }
     }
@@ -66,6 +72,19 @@ struct MacSettingsView: View {
             Picker("图片质量", selection: imageQualityBinding) {
                 ForEach(ImageQuality.allCases, id: \.self) { quality in
                     Text(quality.macTitle).tag(quality)
+                }
+            }
+
+            LabeledContent("图片缓存") {
+                HStack(spacing: 10) {
+                    Text(imageCacheUsageText ?? "正在统计…")
+                        .foregroundStyle(MacUI.secondaryText(for: colorScheme))
+                        .monospacedDigit()
+
+                    Button(isClearingImageCache ? "正在清理…" : "清理缓存") {
+                        Task { await clearImageCache() }
+                    }
+                    .disabled(isClearingImageCache)
                 }
             }
 
@@ -186,6 +205,22 @@ struct MacSettingsView: View {
 
     func persistImageQuality(_ quality: ImageQuality) {
         keyValueStore.set(quality.rawValue, forKey: APIConfig.imageQualityKey)
+        // Cached bytes were fetched at the previous quality, so drop them or the change is
+        // invisible until the caches happen to evict on their own.
+        Task { await clearImageCache() }
+    }
+
+    private func refreshImageCacheUsage() async {
+        imageCacheUsageText = await imageCacheManager.usage().formattedTotal
+    }
+
+    private func clearImageCache() async {
+        guard !isClearingImageCache else { return }
+        isClearingImageCache = true
+        defer { isClearingImageCache = false }
+
+        await imageCacheManager.clear()
+        await refreshImageCacheUsage()
     }
 
     func fetchCategories() async throws -> [Category] {

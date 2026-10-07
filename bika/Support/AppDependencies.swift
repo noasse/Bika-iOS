@@ -139,8 +139,31 @@ final nonisolated class AppDependencies: @unchecked Sendable {
     private static func makeLiveImageDataLoader() -> any ImageDataLoading {
 #if os(iOS)
         return URLSessionImageDataLoader(cacheController: .shared)
+#elseif os(macOS)
+        let configuration = URLSessionConfiguration.default
+        configuration.urlCache = macImageResponseCache
+        configuration.requestCachePolicy = .returnCacheDataElseLoad
+        return URLSessionImageDataLoader(
+            session: URLSession(configuration: configuration),
+            responseCache: macImageResponseCache
+        )
 #else
         return URLSessionImageDataLoader()
 #endif
     }
+
+#if os(macOS)
+    /// Dedicated on-disk cache for comic images. `URLCache.shared` only gives macOS a few tens
+    /// of megabytes, which made the reader re-download pages constantly.
+    static let macImageResponseCache: URLCache = {
+        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
+            .first?
+            .appendingPathComponent("ImageResponses", isDirectory: true)
+        return URLCache(
+            memoryCapacity: 32 * 1024 * 1024,
+            diskCapacity: 512 * 1024 * 1024,
+            directory: directory
+        )
+    }()
+#endif
 }

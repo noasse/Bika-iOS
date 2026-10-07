@@ -170,11 +170,6 @@ final class MacReadingStore {
         persistHistory(scopedHistory, forKey: historyKey(for: scope))
     }
 
-    private func saveProgress(_ progress: MacReadingProgress, for comicId: String) {
-        guard let scope = prepareActiveScope() else { return }
-        persistProgress(progress, forKey: progressKey(for: comicId, scope: scope))
-    }
-
     private func migrateLegacyDataIfNeeded(to scope: AccountScope) {
         guard accountSessionStore.ownsLegacyData(scope) else { return }
         migrateLegacyHistory(to: scope)
