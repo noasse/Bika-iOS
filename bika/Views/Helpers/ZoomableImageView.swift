@@ -309,24 +309,27 @@ struct ZoomableImageView: UIViewRepresentable {
             scrollView.setTextDebugState(.recognising)
 
             recognitionTask = Task { [weak self, weak scrollView] in
-                let outcome = await Task.detached(priority: .utility) { () -> Result<([MangaTextBlock], Int), Error> in
-                    guard let cgImage = asset.image.cgImage else {
-                        return .failure(CocoaError(.fileReadCorruptFile))
-                    }
-                    let clock = ContinuousClock()
-                    let start = clock.now
-                    do {
+                let outcome: Result<([MangaTextBlock], Int), Error>
+                do {
+                    // One page at a time, newest first, cancellable while waiting or running.
+                    // The time reported is the work itself, not the wait for a turn.
+                    let value = try await MangaTextRecognitionQueue.shared.run { () throws -> ([MangaTextBlock], Int) in
+                        guard let cgImage = asset.image.cgImage else { throw CocoaError(.fileReadCorruptFile) }
+                        let clock = ContinuousClock()
+                        let start = clock.now
                         let blocks = try MangaPageTextExtractor().extract(from: cgImage)
                         let elapsed = start.duration(to: clock.now)
-                        let milliseconds = Int(elapsed.components.seconds * 1000)
-                            + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
-                        return .success((blocks, milliseconds))
-                    } catch {
-                        return .failure(error)
+                        return (blocks, Int(elapsed.components.seconds * 1000)
+                            + Int(elapsed.components.attoseconds / 1_000_000_000_000_000))
                     }
-                }.value
+                    outcome = .success(value)
+                } catch is CancellationError {
+                    // The page went away or changed; whoever replaced it owns the overlay now.
+                    return
+                } catch {
+                    outcome = .failure(error)
+                }
 
-                // The page may have changed while recognition ran.
                 guard !Task.isCancelled, let self, let scrollView, self.recognisedIdentity == identity else { return }
                 switch outcome {
                 case .success(let (blocks, milliseconds)):
@@ -444,6 +447,9 @@ struct ZoomableImageView: UIViewRepresentable {
 #if DEBUG
             recognitionTask?.cancel()
             recognitionTask = nil
+            // Otherwise a page kept by SwiftUI would count as recognised and never retry,
+            // leaving "识别中…" on screen with nothing scheduled to replace it.
+            recognisedIdentity = nil
 #endif
         }
 

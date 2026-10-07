@@ -13,6 +13,38 @@ nonisolated struct DetectedBubble: Sendable {
         guard x >= bounds.minX, x < bounds.maxX, y >= bounds.minY, y < bounds.maxY else { return false }
         return inkMask[(y - bounds.minY) * bounds.width + (x - bounds.minX)]
     }
+
+    /// Ink count per pixel column of `area` (clipped to the bubble), indexed from `area.minX`.
+    func columnInk(in area: PixelRect) -> [Int] {
+        profile(in: area, alongColumns: true)
+    }
+
+    /// Ink count per pixel row of `area` (clipped to the bubble), indexed from `area.minY`.
+    func rowInk(in area: PixelRect) -> [Int] {
+        profile(in: area, alongColumns: false)
+    }
+
+    /// One pass over the mask with plain index arithmetic. The profiles are recomputed for every
+    /// line and every reading, so a per-pixel closure with bounds checks here dominated
+    /// segmentation time.
+    private func profile(in area: PixelRect, alongColumns: Bool) -> [Int] {
+        var counts = [Int](repeating: 0, count: alongColumns ? area.width : area.height)
+        let minX = max(area.minX, bounds.minX), maxX = min(area.maxX, bounds.maxX)
+        let minY = max(area.minY, bounds.minY), maxY = min(area.maxY, bounds.maxY)
+        guard minX < maxX, minY < maxY else { return counts }
+        let stride = bounds.width
+        inkMask.withUnsafeBufferPointer { mask in
+            counts.withUnsafeMutableBufferPointer { counts in
+                for y in minY..<maxY {
+                    let row = (y - bounds.minY) * stride - bounds.minX
+                    for x in minX..<maxX where mask[row + x] {
+                        counts[alongColumns ? x - area.minX : y - area.minY] += 1
+                    }
+                }
+            }
+        }
+        return counts
+    }
 }
 
 /// Finds speech bubbles by their shape rather than by their text.

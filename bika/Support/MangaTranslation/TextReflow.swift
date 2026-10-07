@@ -80,8 +80,11 @@ nonisolated struct TextReflow: Sendable {
             var tallest = 0
             for (lineIndex, line) in text.lines.enumerated() {
                 if lineIndex > 0 { x += lineSpacing }
+                // Computed once per line rather than once per candidate cut row.
+                let inkPerRow = bubble.rowInk(in: line.bounds)
                 let rows = cells(of: line, emSize: em) { row in
-                    (line.bounds.minX..<line.bounds.maxX).reduce(0) { $0 + (bubble.isInk(x: $1, y: row) ? 1 : 0) }
+                    let index = row - line.bounds.minY
+                    return inkPerRow.indices.contains(index) ? inkPerRow[index] : 0
                 }
                 for (cellIndex, rowRange) in rows.enumerated() {
                     if cellIndex > 0 { x += cellSpacing }

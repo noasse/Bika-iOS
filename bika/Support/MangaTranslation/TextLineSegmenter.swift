@@ -32,6 +32,11 @@ nonisolated struct TextLineSegmenter: Sendable {
         var horizontalElongationAdvantage: Double = 1.5
         /// Horizontal text is only plausible when the ink is at least this many lines' heights wide.
         var minimumHorizontalAspect: Double = 2
+        /// Readings whose characters are smaller than this many analysis pixels are not text —
+        /// typically a run of dots or screentone caught inside a bubble.
+        var minimumEmPixels = 10
+        /// A bubble does not hold more lines than this; more means noise was split into lines.
+        var maximumLines = 12
 
         init() {}
     }
@@ -71,7 +76,12 @@ nonisolated struct TextLineSegmenter: Sendable {
             && rowElongation >= columnElongation * configuration.horizontalElongationAdvantage
 
         let ordered = horizontalIsClear ? [horizontal, vertical] : [vertical, horizontal]
-        return ordered.compactMap { $0 }
+        // Rejected here, before any OCR, so noise never costs a Vision call.
+        return ordered.compactMap { $0 }.filter(isPlausibleText)
+    }
+
+    private func isPlausibleText(_ text: SegmentedText) -> Bool {
+        text.emSize >= configuration.minimumEmPixels && text.lines.count <= configuration.maximumLines
     }
 
     /// Re-joins pieces of one glyph: adjacent runs with a small gap whose union is still about
@@ -137,18 +147,12 @@ nonisolated struct TextLineSegmenter: Sendable {
 
     // MARK: - Profiles
 
-    /// Ink count per pixel column of `area`.
     private func columnProfile(_ bubble: DetectedBubble, in area: PixelRect) -> [Int] {
-        (area.minX..<area.maxX).map { x in
-            (area.minY..<area.maxY).reduce(0) { $0 + (bubble.isInk(x: x, y: $1) ? 1 : 0) }
-        }
+        bubble.columnInk(in: area)
     }
 
-    /// Ink count per pixel row of `area`.
     private func rowProfile(_ bubble: DetectedBubble, in area: PixelRect) -> [Int] {
-        (area.minY..<area.maxY).map { y in
-            (area.minX..<area.maxX).reduce(0) { $0 + (bubble.isInk(x: $1, y: y) ? 1 : 0) }
-        }
+        bubble.rowInk(in: area)
     }
 
     /// Maximal runs of non-zero entries, shifted into page coordinates by `offset`.

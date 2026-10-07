@@ -15,6 +15,8 @@ nonisolated struct MangaPageTextExtractor: Sendable {
         /// A later (less likely) reading of a bubble replaces the first only if Vision is this
         /// much more confident in it.
         var alternativeReadingMargin = 0.15
+        /// A first reading at least this confident is kept without trying alternatives.
+        var confidentReading = 0.8
 
         init() {}
     }
@@ -30,43 +32,55 @@ nonisolated struct MangaPageTextExtractor: Sendable {
             return []
         }
         let size = CGSize(width: bitmap.width, height: bitmap.height)
+        try Task.checkCancellation()
 
-        var blocks: [MangaTextBlock] = []
-        for bubble in bubbleDetector.detect(in: bitmap) {
-            try Task.checkCancellation()
-            guard let (text, result) = try bestReading(of: bubble),
-                  result.confidence >= configuration.minimumConfidence else { continue }
-
-            let textBounds = text.lines.map(\.bounds).reduce(text.lines[0].bounds) { $0.union($1) }
-            blocks.append(MangaTextBlock(
-                bubble: NormalizedRect(pixelRect: bubble.bounds.cgRect, in: size),
-                textBounds: NormalizedRect(pixelRect: textBounds.cgRect, in: size),
-                lines: text.lines.map { NormalizedRect(pixelRect: $0.bounds.cgRect, in: size) },
-                orientation: text.orientation,
-                sourceText: result.text
-            ))
+        // Each bubble's plausible readings, most likely first, already turned into strips.
+        let bubbles = bubbleDetector.detect(in: bitmap).compactMap { bubble -> (DetectedBubble, [(SegmentedText, CGImage)])? in
+            let readings = segmenter.candidates(bubble).compactMap { text in
+                reflow.strip(for: text, in: bubble).map { (text, $0) }
+            }
+            return readings.isEmpty ? nil : (bubble, readings)
         }
-        return Self.readingOrder(blocks)
-    }
+        try Task.checkCancellation()
 
-    /// Reads every plausible arrangement of the bubble and keeps the one Vision is most sure
-    /// of. The segmenter lists the likelier arrangement first; a later one has to beat it by a
-    /// margin, so a near-tie never flips a vertical bubble to horizontal.
-    private func bestReading(of bubble: DetectedBubble) throws -> (SegmentedText, JapaneseTextRecognizer.Result)? {
-        var best: (SegmentedText, JapaneseTextRecognizer.Result)?
-        for candidate in segmenter.candidates(bubble) {
-            guard let strip = reflow.strip(for: candidate, in: bubble) else { continue }
-            let result = try recognizer.recognize(strip)
-            guard !result.text.isEmpty else { continue }
-            if let current = best {
-                if result.confidence > current.1.confidence + configuration.alternativeReadingMargin {
-                    best = (candidate, result)
+        // Round one: every bubble's most likely reading, in a single Vision call.
+        var best: [(text: SegmentedText, result: JapaneseTextRecognizer.Result)?] = zip(
+            bubbles,
+            try recognizer.recognize(bubbles.map { $0.1[0].1 })
+        ).map { bubble, result in
+            result.text.isEmpty ? nil : (bubble.1[0].0, result)
+        }
+        try Task.checkCancellation()
+
+        // Round two: alternatives, only for bubbles round one was unsure of — again one call.
+        let unsure = bubbles.indices.filter { index in
+            bubbles[index].1.count > 1 && (best[index]?.result.confidence ?? 0) < configuration.confidentReading
+        }
+        if !unsure.isEmpty {
+            let alternatives = try recognizer.recognize(unsure.map { bubbles[$0].1[1].1 })
+            for (index, result) in zip(unsure, alternatives) where !result.text.isEmpty {
+                // The likelier reading only loses by a clear margin, so a near-tie never flips
+                // a vertical bubble to horizontal.
+                let current = best[index]?.result.confidence ?? -1
+                if best[index] == nil || result.confidence > current + configuration.alternativeReadingMargin {
+                    best[index] = (bubbles[index].1[1].0, result)
                 }
-            } else {
-                best = (candidate, result)
             }
         }
-        return best
+
+        let blocks = zip(bubbles, best).compactMap { bubble, reading -> MangaTextBlock? in
+            guard let reading, reading.result.confidence >= configuration.minimumConfidence else { return nil }
+            let lines = reading.text.lines
+            let textBounds = lines.map(\.bounds).reduce(lines[0].bounds) { $0.union($1) }
+            return MangaTextBlock(
+                bubble: NormalizedRect(pixelRect: bubble.0.bounds.cgRect, in: size),
+                textBounds: NormalizedRect(pixelRect: textBounds.cgRect, in: size),
+                lines: lines.map { NormalizedRect(pixelRect: $0.bounds.cgRect, in: size) },
+                orientation: reading.text.orientation,
+                sourceText: reading.result.text
+            )
+        }
+        return Self.readingOrder(blocks)
     }
 
     /// Manga pages read top to bottom, and right to left within a row. Bubbles whose tops are
