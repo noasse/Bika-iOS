@@ -192,7 +192,8 @@ nonisolated struct JapaneseTextRecognizer: Sendable {
         for character in text where !character.isWhitespace && !dialoguePunctuation.contains(character) {
             if isJapanese(character) {
                 japanese += 1
-            } else if character.isASCII, character.isNumber {
+            } else if character.isNumber {
+                // Half- or full-width: manga-ocr output is converted to full width.
                 foreign += 0.5
             } else {
                 foreign += 1
@@ -205,7 +206,7 @@ nonisolated struct JapaneseTextRecognizer: Sendable {
     /// so they must be listed here or a line of dots would count as Japanese.
     private static let dialoguePunctuation: Set<Character> = [
         "…", "⋯", "‥", "・", "･", "ー", "〜", "~", "、", "。", "，", "．",
-        "！", "？", "!", "?", "「", "」", "『", "』", "（", "）", "(", ")",
+        "！", "？", "!", "?", "「", "」", "『", "』", "（", "）", "(", ")", "～",
         "♡", "♥", "♪", "☆", "★", "―", "—",
     ]
 

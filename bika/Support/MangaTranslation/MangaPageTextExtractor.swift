@@ -12,14 +12,20 @@ nonisolated struct MangaPageTextExtractor: Sendable {
     /// reused.
     ///
     /// 1 bubbles and vertical reflow · 2 batched OCR · 3 line-art and garbage filters ·
-    /// 4 flat-fill bubbles, free horizontal text, across-column misread filter.
-    static let pipelineVersion = 4
+    /// 4 flat-fill bubbles, free horizontal text, across-column misread filter ·
+    /// 5 bubbles read by manga-ocr when bundled.
+    static let pipelineVersion = 5
 
     nonisolated struct Configuration: Sendable {
         /// Analysis happens on a copy whose long side is at most this many pixels.
         var analysisMaxDimension = 2000
         /// Blocks Vision is less sure of than this are dropped rather than translated wrongly.
         var minimumConfidence = 0.3
+        /// The same for the text recogniser model, whose confidence is the mean probability of
+        /// the characters it chose. It always produces something, even for a crop with no text
+        /// in it, so this is what keeps a face mistaken for a bubble from becoming dialogue.
+        /// Provisional: to be calibrated from device reports, which record every confidence.
+        var minimumModelConfidence = 0.5
         /// A later (less likely) reading of a bubble replaces the first only if Vision is this
         /// much more confident in it.
         var alternativeReadingMargin = 0.15
@@ -37,6 +43,18 @@ nonisolated struct MangaPageTextExtractor: Sendable {
     var reflow = TextReflow()
     var recognizer = JapaneseTextRecognizer()
     var captionReader = CaptionTextReader()
+    /// Reads bubble text when available; nil falls back to Vision with column reflow.
+    var textRecognizer: (any MangaTextRecognizing)? = MangaOCRRecognizer.bundled
+
+    /// The path bubbles are read with, as recorded in reports.
+    var recognizerIdentifier: String { textRecognizer?.identifier ?? "vision" }
+
+    /// Reads bubbles with Vision and column reflow even when a recogniser model is bundled.
+    static func vision() -> MangaPageTextExtractor {
+        var extractor = MangaPageTextExtractor()
+        extractor.textRecognizer = nil
+        return extractor
+    }
 
     /// `extract(from:)` plus how long it took in milliseconds.
     func timedExtract(from image: CGImage) throws -> (blocks: [MangaTextBlock], milliseconds: Int) {
@@ -56,46 +74,33 @@ nonisolated struct MangaPageTextExtractor: Sendable {
         let size = CGSize(width: bitmap.width, height: bitmap.height)
         try Task.checkCancellation()
 
-        // Each bubble's plausible readings, most likely first, already turned into strips.
+        // Each bubble's plausible arrangements, most likely first.
         let detected = bubbleDetector.detect(in: bitmap)
-        let bubbles = detected.compactMap { bubble -> (DetectedBubble, [(SegmentedText, CGImage)])? in
-            let readings = segmenter.candidates(bubble).compactMap { text in
-                reflow.strip(for: text, in: bubble).map { (text, $0) }
-            }
-            return readings.isEmpty ? nil : (bubble, readings)
+        let segmented = detected.compactMap { bubble -> (DetectedBubble, [SegmentedText])? in
+            let candidates = segmenter.candidates(bubble)
+            return candidates.isEmpty ? nil : (bubble, candidates)
         }
         try Task.checkCancellation()
 
-        // Round one: every bubble's most likely reading, in a single Vision call.
-        var best: [(text: SegmentedText, result: JapaneseTextRecognizer.Result)?] = zip(
-            bubbles,
-            try recognizer.recognize(bubbles.map { $0.1[0].1 })
-        ).map { bubble, result in
-            result.text.isEmpty ? nil : (bubble.1[0].0, result)
+        let best: [(text: SegmentedText, result: JapaneseTextRecognizer.Result)?]
+        let threshold: Double
+        if let textRecognizer, let page = bitmap.makeImage() {
+            best = try readWithModel(segmented, page: page, recognizer: textRecognizer)
+            threshold = configuration.minimumModelConfidence
+        } else {
+            best = try readWithVision(segmented)
+            threshold = configuration.minimumConfidence
         }
-        try Task.checkCancellation()
-
-        // Round two: alternatives, only for bubbles round one was unsure of — again one call.
-        let unsure = bubbles.indices.filter { index in
-            bubbles[index].1.count > 1 && (best[index]?.result.confidence ?? 0) < configuration.confidentReading
-        }
-        if !unsure.isEmpty {
-            let alternatives = try recognizer.recognize(unsure.map { bubbles[$0].1[1].1 })
-            for (index, result) in zip(unsure, alternatives) where !result.text.isEmpty {
-                if Self.alternativeWins(result, over: best[index]?.result, margin: configuration.alternativeReadingMargin) {
-                    best[index] = (bubbles[index].1[1].0, result)
-                }
-            }
-        }
+        let bubbles = segmented.map(\.0)
 
         var blocks = zip(bubbles, best).compactMap { bubble, reading -> MangaTextBlock? in
             guard let reading,
-                  reading.result.confidence >= configuration.minimumConfidence,
+                  reading.result.confidence >= threshold,
                   JapaneseTextRecognizer.looksLikeJapanese(reading.result.text) else { return nil }
             let lines = reading.text.lines
             let textBounds = lines.map(\.bounds).reduce(lines[0].bounds) { $0.union($1) }
             return MangaTextBlock(
-                bubble: NormalizedRect(pixelRect: bubble.0.bounds.cgRect, in: size),
+                bubble: NormalizedRect(pixelRect: bubble.bounds.cgRect, in: size),
                 textBounds: NormalizedRect(pixelRect: textBounds.cgRect, in: size),
                 lines: lines.map { NormalizedRect(pixelRect: $0.bounds.cgRect, in: size) },
                 orientation: reading.text.orientation,
@@ -126,6 +131,64 @@ nonisolated struct MangaPageTextExtractor: Sendable {
         }
 
         return Self.readingOrder(blocks)
+    }
+
+    /// Reads each bubble's text region with the recogniser model, which handles vertical text
+    /// and multi-column bubbles itself: no reflow, no choosing between arrangements. The most
+    /// likely arrangement is still used for the block's lines and orientation, which layout
+    /// needs. The crop is the bubble's ink with a small margin, kept inside the bubble so its
+    /// outline does not intrude.
+    private func readWithModel(
+        _ segmented: [(DetectedBubble, [SegmentedText])],
+        page: CGImage,
+        recognizer: any MangaTextRecognizing
+    ) throws -> [(text: SegmentedText, result: JapaneseTextRecognizer.Result)?] {
+        try segmented.map { bubble, candidates in
+            try Task.checkCancellation()
+            let margin = max(4, Int(Double(candidates[0].emSize) * 0.3))
+            let ink = bubble.inkBounds
+            let area = PixelRect(
+                minX: max(bubble.bounds.minX, ink.minX - margin),
+                minY: max(bubble.bounds.minY, ink.minY - margin),
+                maxX: min(bubble.bounds.maxX, ink.maxX + margin),
+                maxY: min(bubble.bounds.maxY, ink.maxY + margin)
+            )
+            guard let crop = page.cropping(to: area.cgRect) else { return nil }
+            let result = try recognizer.recognize(crop)
+            return result.text.isEmpty ? nil : (candidates[0], result)
+        }
+    }
+
+    /// Reads bubbles with Vision. Vertical lines are reflowed into strips; every bubble's most
+    /// likely arrangement is read in one call, and alternatives only for bubbles that call was
+    /// unsure of, in a second.
+    private func readWithVision(
+        _ segmented: [(DetectedBubble, [SegmentedText])]
+    ) throws -> [(text: SegmentedText, result: JapaneseTextRecognizer.Result)?] {
+        let readings: [[(SegmentedText, CGImage)]] = segmented.map { bubble, candidates in
+            candidates.compactMap { text in reflow.strip(for: text, in: bubble).map { (text, $0) } }
+        }
+        let readable = readings.indices.filter { !readings[$0].isEmpty }
+
+        var best: [(text: SegmentedText, result: JapaneseTextRecognizer.Result)?] = Array(repeating: nil, count: segmented.count)
+        let first = try recognizer.recognize(readable.map { readings[$0][0].1 })
+        for (index, result) in zip(readable, first) where !result.text.isEmpty {
+            best[index] = (readings[index][0].0, result)
+        }
+        try Task.checkCancellation()
+
+        let unsure = readable.filter { index in
+            readings[index].count > 1 && (best[index]?.result.confidence ?? 0) < configuration.confidentReading
+        }
+        if !unsure.isEmpty {
+            let alternatives = try recognizer.recognize(unsure.map { readings[$0][1].1 })
+            for (index, result) in zip(unsure, alternatives) where !result.text.isEmpty {
+                if Self.alternativeWins(result, over: best[index]?.result, margin: configuration.alternativeReadingMargin) {
+                    best[index] = (readings[index][1].0, result)
+                }
+            }
+        }
+        return best
     }
 
     /// Whether a less likely reading of a bubble should replace the first one.

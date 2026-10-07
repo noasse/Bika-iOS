@@ -35,6 +35,8 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
 
     let exportedAt: Date
     let pipelineVersion: Int
+    /// What read the bubbles: `manga-ocr@<revision>`, or `vision` when the model is not bundled.
+    let textRecognizer: String
     let appVersion: String
     let buildNumber: String
     let deviceModel: String
@@ -48,6 +50,7 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
     init(
         exportedAt: Date = Date(),
         pipelineVersion: Int = MangaPageTextExtractor.pipelineVersion,
+        textRecognizer: String,
         appVersion: String,
         buildNumber: String,
         deviceModel: String,
@@ -59,6 +62,7 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
     ) {
         self.exportedAt = exportedAt
         self.pipelineVersion = pipelineVersion
+        self.textRecognizer = textRecognizer
         self.appVersion = appVersion
         self.buildNumber = buildNumber
         self.deviceModel = deviceModel
@@ -100,7 +104,8 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let safeComic = comicID.filter { $0.isLetter || $0.isNumber }
-        let name = "bika-recognition-\(safeComic)-ep\(episodeOrder)-v\(pipelineVersion)-\(formatter.string(from: exportedAt)).json"
+        let engine = textRecognizer.hasPrefix("manga-ocr") ? "mocr" : "vision"
+        let name = "bika-recognition-\(safeComic)-ep\(episodeOrder)-v\(pipelineVersion)-\(engine)-\(formatter.string(from: exportedAt)).json"
         let url = directory.appendingPathComponent(name)
         try encoded().write(to: url, options: .atomic)
         return url

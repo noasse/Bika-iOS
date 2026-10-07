@@ -12,6 +12,7 @@ final class MangaRecognitionReportTests: XCTestCase {
     private func report(_ pages: [MangaRecognitionReport.Page]) -> MangaRecognitionReport {
         MangaRecognitionReport(
             exportedAt: Date(timeIntervalSince1970: 1_790_000_000),
+            textRecognizer: "manga-ocr@aa6573bd",
             appVersion: "1.0", buildNumber: "7", deviceModel: "iPhone17,1", systemVersion: "18.4",
             comicID: "comic/../42", episodeOrder: 3, episodeTitle: "第3话", pages: pages
         )
@@ -69,7 +70,7 @@ final class MangaRecognitionReportTests: XCTestCase {
 
         // A comic id with path characters must not escape the directory.
         XCTAssertEqual(url.deletingLastPathComponent().standardizedFileURL, directory.standardizedFileURL)
-        XCTAssertTrue(url.lastPathComponent.hasPrefix("bika-recognition-comic42-ep3-v\(MangaPageTextExtractor.pipelineVersion)-"))
+        XCTAssertTrue(url.lastPathComponent.hasPrefix("bika-recognition-comic42-ep3-v\(MangaPageTextExtractor.pipelineVersion)-mocr-"))
         XCTAssertEqual(url.pathExtension, "json")
         XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
     }
@@ -79,7 +80,7 @@ final class MangaRecognitionReportTests: XCTestCase {
             .init(frame: CGRect(x: 650, y: 120, width: 340, height: 520), columns: ["本当に", "それで", "いいの？"]),
         ])
 
-        let block = try XCTUnwrap(try MangaPageTextExtractor().extract(from: page).first)
+        let block = try XCTUnwrap(try MangaPageTextExtractor.vision().extract(from: page).first)
 
         XCTAssertGreaterThan(block.confidence, 0.3)
         XCTAssertLessThanOrEqual(block.confidence, 1)

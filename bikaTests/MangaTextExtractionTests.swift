@@ -150,7 +150,7 @@ final class MangaTextExtractionTests: XCTestCase {
             Bubble(frame: CGRect(x: 650, y: 120, width: 340, height: 520), columns: ["本当に", "それで", "いいの？"]),
         ])
 
-        let blocks = try MangaPageTextExtractor().extract(from: page)
+        let blocks = try MangaPageTextExtractor.vision().extract(from: page)
 
         XCTAssertEqual(blocks.count, 1)
         XCTAssertEqual(blocks.first?.sourceText, "本当にそれでいいの？")
@@ -162,7 +162,7 @@ final class MangaTextExtractionTests: XCTestCase {
             Bubble(frame: CGRect(x: 650, y: 120, width: 300, height: 520), columns: ["ラーメン", "食べたい"]),
         ])
 
-        let blocks = try MangaPageTextExtractor().extract(from: page)
+        let blocks = try MangaPageTextExtractor.vision().extract(from: page)
 
         XCTAssertEqual(blocks.first?.sourceText, "ラーメン食べたい")
     }
@@ -173,7 +173,7 @@ final class MangaTextExtractionTests: XCTestCase {
             Bubble(frame: CGRect(x: 720, y: 120, width: 300, height: 440), columns: ["おい", "待てよ"]),
         ])
 
-        let blocks = try MangaPageTextExtractor().extract(from: page)
+        let blocks = try MangaPageTextExtractor.vision().extract(from: page)
 
         XCTAssertEqual(blocks.map(\.sourceText), ["おい待てよ", "話を聞いて"])
     }
@@ -195,7 +195,7 @@ final class MangaTextExtractionTests: XCTestCase {
             context.stroke(CGRect(x: 360, y: 120, width: 560, height: 600))
         }
 
-        let blocks = try MangaPageTextExtractor().extract(from: page)
+        let blocks = try MangaPageTextExtractor.vision().extract(from: page)
 
         XCTAssertEqual(blocks.map(\.sourceText), ["待ってくれ"])
     }
@@ -207,7 +207,7 @@ final class MangaTextExtractionTests: XCTestCase {
             Bubble(frame: CGRect(x: 650, y: 120, width: 300, height: 560), columns: ["そうか……", "なるほど"]),
         ])
 
-        let blocks = try MangaPageTextExtractor().extract(from: page)
+        let blocks = try MangaPageTextExtractor.vision().extract(from: page)
 
         XCTAssertEqual(blocks.first?.sourceText, "そうか…なるほど")
     }
@@ -261,7 +261,7 @@ final class MangaTextExtractionTests: XCTestCase {
             Bubble(frame: CGRect(x: 650, y: 120, width: 320, height: 480), columns: ["本当に", "いいの？"], fill: 0.55),
         ])
 
-        let blocks = try MangaPageTextExtractor().extract(from: page)
+        let blocks = try MangaPageTextExtractor.vision().extract(from: page)
 
         XCTAssertEqual(blocks.map(\.sourceText), ["本当にいいの？"])
         XCTAssertEqual(blocks.first?.kind, .bubble)
@@ -272,7 +272,7 @@ final class MangaTextExtractionTests: XCTestCase {
             Bubble(frame: CGRect(x: 650, y: 120, width: 320, height: 480), columns: ["話を", "聞いて"], fill: 0.82),
         ])
 
-        XCTAssertEqual(try MangaPageTextExtractor().extract(from: page).map(\.sourceText), ["話を聞いて"])
+        XCTAssertEqual(try MangaPageTextExtractor.vision().extract(from: page).map(\.sourceText), ["話を聞いて"])
     }
 
     func testReadsFreeHorizontalTextAsOneParagraph() throws {
@@ -281,7 +281,7 @@ final class MangaTextExtractionTests: XCTestCase {
             .init(origin: CGPoint(x: 140, y: 700), lines: ["今回は初めての", "合同誌になります", "最後までお楽しみください"], background: nil),
         ])
 
-        let blocks = try MangaPageTextExtractor().extract(from: page)
+        let blocks = try MangaPageTextExtractor.vision().extract(from: page)
 
         XCTAssertEqual(blocks.count, 1)
         XCTAssertEqual(blocks.first?.kind, .caption)
@@ -295,7 +295,7 @@ final class MangaTextExtractionTests: XCTestCase {
             captions: [.init(origin: CGPoint(x: 140, y: 720), lines: ["ここから本編です"], background: nil)]
         )
 
-        let blocks = try MangaPageTextExtractor().extract(from: page)
+        let blocks = try MangaPageTextExtractor.vision().extract(from: page)
 
         XCTAssertEqual(Set(blocks.map(\.sourceText)), ["おい待てよ", "ここから本編です"])
         XCTAssertEqual(blocks.first { $0.sourceText == "ここから本編です" }?.kind, .caption)
@@ -308,7 +308,7 @@ final class MangaTextExtractionTests: XCTestCase {
             .init(origin: CGPoint(x: 140, y: 700), lines: ["今回は初めての", "合同誌になります", "最後までお楽しみください"], background: 0.9),
         ])
 
-        let blocks = try MangaPageTextExtractor().extract(from: page)
+        let blocks = try MangaPageTextExtractor.vision().extract(from: page)
 
         XCTAssertEqual(blocks.map(\.sourceText), ["今回は初めての合同誌になります最後までお楽しみください"])
     }
@@ -333,7 +333,7 @@ final class MangaTextExtractionTests: XCTestCase {
             Bubble(frame: CGRect(x: 600, y: 160, width: 300, height: 440), columns: ["本当に", "いいの？"], outlined: false),
         ])
 
-        let captions = try MangaPageTextExtractor().extract(from: page).filter { $0.kind == .caption }
+        let captions = try MangaPageTextExtractor.vision().extract(from: page).filter { $0.kind == .caption }
 
         XCTAssertEqual(captions.map(\.sourceText), [])
     }
@@ -344,7 +344,7 @@ final class MangaTextExtractionTests: XCTestCase {
             Bubble(frame: CGRect(x: 300, y: 200, width: 640, height: 200), columns: ["ちょっと待って"], vertical: false),
         ])
 
-        let blocks = try MangaPageTextExtractor().extract(from: page)
+        let blocks = try MangaPageTextExtractor.vision().extract(from: page)
 
         XCTAssertEqual(blocks.map(\.sourceText), ["ちょっと待って"])
         XCTAssertEqual(blocks.first?.kind, .bubble)
