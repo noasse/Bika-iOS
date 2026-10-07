@@ -19,6 +19,8 @@ final class MangaOCRRecognizerTests: XCTestCase {
     }
 
     private func requireModel() throws {
+        // Not converted locally: skip. Bundled but failing to load: that is a failure.
+        if let failure = MangaOCRRecognizer.loadFailure { XCTFail("manga-ocr failed to load: \(failure)") }
         try XCTSkipIf(MangaOCRRecognizer.bundled == nil, "manga-ocr not bundled")
     }
 
@@ -69,6 +71,13 @@ final class MangaOCRRecognizerTests: XCTestCase {
         XCTAssertEqual(MangaOCRRecognizer.paddedLength(for: 17, lengths: lengths), 32)
         XCTAssertEqual(MangaOCRRecognizer.paddedLength(for: 299, lengths: lengths), 300)
         XCTAssertNil(MangaOCRRecognizer.paddedLength(for: 301, lengths: lengths))
+    }
+
+    func testDecodeFailureSaysWhereItHappened() {
+        // A device run failed with Core ML's own message only; the report should say at which
+        // decoder length and step.
+        let error = MangaOCRRecognizer.DecodeError(length: 32, step: 17, underlying: CocoaError(.featureUnsupported))
+        XCTAssertTrue(error.localizedDescription.hasPrefix("decoder length 32, step 17: "))
     }
 
     func testPixelValuesAreScaledToMinusOneOne() throws {

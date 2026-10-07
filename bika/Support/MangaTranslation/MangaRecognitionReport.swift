@@ -42,6 +42,8 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
     /// Loading and warming up the recogniser, which happens once per app launch before the
     /// first page is read; nil on the Vision path.
     let recognizerLoadMilliseconds: Int?
+    /// Why a bundled model did not load, leaving the Vision path to read the chapter.
+    let recognizerLoadFailure: String?
     let appVersion: String
     let buildNumber: String
     let deviceModel: String
@@ -57,6 +59,7 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
         pipelineVersion: Int = MangaPageTextExtractor.pipelineVersion,
         textRecognizer: String,
         recognizerLoadMilliseconds: Int? = nil,
+        recognizerLoadFailure: String? = nil,
         appVersion: String,
         buildNumber: String,
         deviceModel: String,
@@ -70,6 +73,7 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
         self.pipelineVersion = pipelineVersion
         self.textRecognizer = textRecognizer
         self.recognizerLoadMilliseconds = recognizerLoadMilliseconds
+        self.recognizerLoadFailure = recognizerLoadFailure
         self.appVersion = appVersion
         self.buildNumber = buildNumber
         self.deviceModel = deviceModel

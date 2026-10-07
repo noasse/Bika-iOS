@@ -19,8 +19,18 @@ nonisolated protocol MangaTextRecognizing: Sendable {
 /// is not committed. When they are not bundled, `bundled` is nil and recognition falls back to
 /// the Vision path.
 nonisolated final class MangaOCRRecognizer: MangaTextRecognizing, @unchecked Sendable {
-    /// Loaded on first use; nil when the models are not in the app bundle.
-    static let bundled: MangaOCRRecognizer? = try? MangaOCRRecognizer(bundle: .main)
+    /// Loaded on first use. Kept with its error: a model that is bundled but fails to load
+    /// falls back to Vision too, and the report should say why.
+    static let loaded = Result { try MangaOCRRecognizer(bundle: .main) }
+    /// nil when the models are not in the app bundle or did not load.
+    static var bundled: MangaOCRRecognizer? { try? loaded.get() }
+
+    /// Why a bundled model did not load; nil when it loaded or simply is not bundled.
+    static var loadFailure: String? {
+        guard case .failure(let error) = loaded else { return nil }
+        if case LoadError.missing = error { return nil }
+        return String(describing: error)
+    }
 
     nonisolated struct Manifest: Decodable, Sendable {
         /// Model interface version written by convert_manga_ocr.py.
@@ -46,6 +56,17 @@ nonisolated final class MangaOCRRecognizer: MangaTextRecognizing, @unchecked Sen
         case missing(String)
         /// Converted for a different interface; reconvert with tools/models/convert_manga_ocr.py.
         case unsupportedFormat(Int?)
+    }
+
+    /// A failed decoder prediction, with where it happened, for the chapter report. Core ML's
+    /// own message ("Error in building plan.") does not say.
+    struct DecodeError: LocalizedError {
+        let length: Int
+        let step: Int
+        let underlying: Error
+        var errorDescription: String? {
+            "decoder length \(length), step \(step): \(underlying.localizedDescription)"
+        }
     }
 
     static func validate(_ manifest: Manifest) throws {
@@ -123,12 +144,16 @@ nonisolated final class MangaOCRRecognizer: MangaTextRecognizing, @unchecked Sen
         }
         let last = try MLMultiArray(shape: [1], dataType: .int32)
         last[0] = NSNumber(value: ids.count - 1)
-        return try decoder.prediction(from: MLDictionaryFeatureProvider(dictionary: [
-            "input_ids": MLFeatureValue(multiArray: input),
-            "cross_keys": keys,
-            "cross_values": values,
-            "last_index": MLFeatureValue(multiArray: last),
-        ])).featureValue(for: "logits")?.multiArrayValue
+        do {
+            return try decoder.prediction(from: MLDictionaryFeatureProvider(dictionary: [
+                "input_ids": MLFeatureValue(multiArray: input),
+                "cross_keys": keys,
+                "cross_values": values,
+                "last_index": MLFeatureValue(multiArray: last),
+            ])).featureValue(for: "logits")?.multiArrayValue
+        } catch {
+            throw DecodeError(length: length, step: ids.count, underlying: error)
+        }
     }
 
     func recognize(_ crop: CGImage) throws -> JapaneseTextRecognizer.Result {
