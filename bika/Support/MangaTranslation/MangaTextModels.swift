@@ -22,15 +22,29 @@ nonisolated struct NormalizedRect: Codable, Hashable, Sendable {
     /// - Parameters:
     ///   - pixelRect: a rectangle in pixel coordinates, origin top-left.
     ///   - imageSize: the pixel size of the image the rectangle was measured in.
+    /// Clipped to the image: a margin added near an edge must not leave the page. A caption
+    /// padded at the left edge came back from a device with a negative x.
     init(pixelRect: CGRect, in imageSize: CGSize) {
         let width = max(imageSize.width, 1)
         let height = max(imageSize.height, 1)
+        let clipped = pixelRect.intersection(CGRect(x: 0, y: 0, width: width, height: height))
+        let rect = clipped.isNull ? .zero : clipped
         self.init(
-            x: Double(pixelRect.minX / width),
-            y: Double(pixelRect.minY / height),
-            width: Double(pixelRect.width / width),
-            height: Double(pixelRect.height / height)
+            x: Double(rect.minX / width),
+            y: Double(rect.minY / height),
+            width: Double(rect.width / width),
+            height: Double(rect.height / height)
         )
+    }
+
+    var area: Double { width * height }
+
+    /// The fraction of the smaller rectangle's area covered by both.
+    func overlap(with other: NormalizedRect) -> Double {
+        let width = min(x + self.width, other.x + other.width) - max(x, other.x)
+        let height = min(y + self.height, other.y + other.height) - max(y, other.y)
+        guard width > 0, height > 0 else { return 0 }
+        return width * height / max(min(area, other.area), .leastNonzeroMagnitude)
     }
 
     /// The rectangle in pixel or point coordinates of a box of `size`, origin top-left.

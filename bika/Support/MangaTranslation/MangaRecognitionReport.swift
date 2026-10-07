@@ -19,6 +19,8 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
         /// Set when the page could not be loaded or recognised.
         let error: String?
         let blocks: [MangaTextBlock]
+        /// Where the page's time went, by stage.
+        var stages: MangaPageTextExtractor.StageTimings? = nil
     }
 
     nonisolated struct Summary: Codable, Sendable, Equatable {

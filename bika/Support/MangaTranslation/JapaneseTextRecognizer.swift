@@ -8,6 +8,8 @@ nonisolated struct JapaneseTextRecognizer: Sendable {
         let text: String
         /// Mean Vision confidence over the recognised lines, 0...1.
         let confidence: Double
+        /// Decoder steps taken, for the model recogniser; 0 for Vision.
+        var steps: Int = 0
     }
 
     func recognize(_ image: CGImage) throws -> Result {

@@ -13,8 +13,9 @@ nonisolated struct MangaPageTextExtractor: Sendable {
     ///
     /// 1 bubbles and vertical reflow · 2 batched OCR · 3 line-art and garbage filters ·
     /// 4 flat-fill bubbles, free horizontal text, across-column misread filter ·
-    /// 5 bubbles read by manga-ocr when bundled.
-    static let pipelineVersion = 5
+    /// 5 bubbles read by manga-ocr when bundled ·
+    /// 6 model threshold calibrated on a device, overlapping duplicates removed, rects clipped.
+    static let pipelineVersion = 6
 
     nonisolated struct Configuration: Sendable {
         /// Analysis happens on a copy whose long side is at most this many pixels.
@@ -24,8 +25,17 @@ nonisolated struct MangaPageTextExtractor: Sendable {
         /// The same for the text recogniser model, whose confidence is the mean probability of
         /// the characters it chose. It always produces something, even for a crop with no text
         /// in it, so this is what keeps a face mistaken for a bubble from becoming dialogue.
-        /// Provisional: to be calibrated from device reports, which record every confidence.
-        var minimumModelConfidence = 0.5
+        /// Calibrated on a device run (33 pages, 210 bubbles): confidences split into readings
+        /// at 0.97 and above with a median of 10 characters, and readings under 0.8 with a
+        /// median of 3 — fragments read off art. Short real lines came back at 0.99.
+        var minimumModelConfidence = 0.8
+        /// Free horizontal text read by Vision. The one garbage caption in that run, a single
+        /// character, sat at exactly the old floor of 0.3.
+        var minimumCaptionConfidence = 0.5
+        /// Two blocks whose boxes share more than this fraction of the smaller one are the same
+        /// text read twice; the more confident reading is kept. On the device run such pairs
+        /// overlapped by 31%–90%.
+        var duplicateOverlap = 0.3
         /// A later (less likely) reading of a bubble replaces the first only if Vision is this
         /// much more confident in it.
         var alternativeReadingMargin = 0.15
@@ -56,21 +66,54 @@ nonisolated struct MangaPageTextExtractor: Sendable {
         return extractor
     }
 
-    /// `extract(from:)` plus how long it took in milliseconds.
-    func timedExtract(from image: CGImage) throws -> (blocks: [MangaTextBlock], milliseconds: Int) {
+    /// Where a page's recognition time went. A device run measured about 1.1 s per page
+    /// before any bubble was read and about 46 ms per character read, against about 5 ms per
+    /// decoder step on a Mac; these split that up so the next run says which part is slow.
+    nonisolated struct StageTimings: Codable, Sendable, Equatable {
+        /// Grayscale copy of the page.
+        var preparation = 0
+        /// Bubble detection and line segmentation.
+        var detection = 0
+        /// Reading the bubbles, with the model or with Vision.
+        var bubbleReading = 0
+        /// The free-text pass.
+        var captions = 0
+        /// Regions handed to the bubble recogniser.
+        var regionsRead = 0
+        /// Decoder steps the model took in total; 0 on the Vision path.
+        var decoderSteps = 0
+    }
+
+    /// `extract(from:)` plus how long it took in milliseconds, in total and by stage.
+    func timedExtract(from image: CGImage) throws -> (blocks: [MangaTextBlock], milliseconds: Int, stages: StageTimings) {
         let clock = ContinuousClock()
         let start = clock.now
-        let blocks = try extract(from: image)
-        let elapsed = start.duration(to: clock.now)
-        let milliseconds = Int(elapsed.components.seconds * 1000)
-            + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
-        return (blocks, milliseconds)
+        let (blocks, stages) = try measuredExtract(from: image)
+        return (blocks, Self.milliseconds(start.duration(to: clock.now)), stages)
     }
 
     func extract(from image: CGImage) throws -> [MangaTextBlock] {
-        guard let bitmap = GrayscaleBitmap(image: image, maxDimension: configuration.analysisMaxDimension) else {
-            return []
+        try measuredExtract(from: image).blocks
+    }
+
+    private static func milliseconds(_ duration: Duration) -> Int {
+        Int(duration.components.seconds * 1000) + Int(duration.components.attoseconds / 1_000_000_000_000_000)
+    }
+
+    private func measuredExtract(from image: CGImage) throws -> (blocks: [MangaTextBlock], stages: StageTimings) {
+        var stages = StageTimings()
+        let clock = ContinuousClock()
+        var mark = clock.now
+        func lap() -> Int {
+            let now = clock.now
+            defer { mark = now }
+            return Self.milliseconds(mark.duration(to: now))
         }
+
+        guard let bitmap = GrayscaleBitmap(image: image, maxDimension: configuration.analysisMaxDimension) else {
+            return ([], stages)
+        }
+        stages.preparation = lap()
         let size = CGSize(width: bitmap.width, height: bitmap.height)
         try Task.checkCancellation()
 
@@ -81,6 +124,7 @@ nonisolated struct MangaPageTextExtractor: Sendable {
             return candidates.isEmpty ? nil : (bubble, candidates)
         }
         try Task.checkCancellation()
+        stages.detection = lap()
 
         let best: [(text: SegmentedText, result: JapaneseTextRecognizer.Result)?]
         let threshold: Double
@@ -92,6 +136,9 @@ nonisolated struct MangaPageTextExtractor: Sendable {
             threshold = configuration.minimumConfidence
         }
         let bubbles = segmented.map(\.0)
+        stages.bubbleReading = lap()
+        stages.regionsRead = segmented.count
+        stages.decoderSteps = best.compactMap { $0?.result.steps }.reduce(0, +)
 
         var blocks = zip(bubbles, best).compactMap { bubble, reading -> MangaTextBlock? in
             guard let reading,
@@ -115,7 +162,7 @@ nonisolated struct MangaPageTextExtractor: Sendable {
             // line art, which the bubble path rejects, can hold a whole paragraph of free text.
             let readBubbles = blocks.map { $0.bubble.rect(in: size) }
             let paragraphs = try captionReader.read(bitmap, excluding: readBubbles)
-            for paragraph in paragraphs where paragraph.confidence >= configuration.minimumConfidence {
+            for paragraph in paragraphs where paragraph.confidence >= configuration.minimumCaptionConfidence {
                 let bounds = paragraph.bounds
                 let lineHeight = paragraph.lines.map(\.height).max() ?? 0
                 blocks.append(MangaTextBlock(
@@ -130,7 +177,21 @@ nonisolated struct MangaPageTextExtractor: Sendable {
             }
         }
 
-        return Self.readingOrder(blocks)
+        stages.captions = lap()
+        return (Self.readingOrder(Self.removingDuplicates(blocks, overlap: configuration.duplicateOverlap)), stages)
+    }
+
+    /// Keeps the most confident of any blocks whose boxes largely coincide. Bubble detection
+    /// can return two overlapping regions for one bubble — neither inside the other, so the
+    /// nesting rule does not catch it — and both get read.
+    static func removingDuplicates(_ blocks: [MangaTextBlock], overlap threshold: Double) -> [MangaTextBlock] {
+        var kept: [MangaTextBlock] = []
+        for block in blocks.sorted(by: { $0.confidence > $1.confidence }) {
+            if !kept.contains(where: { $0.bubble.overlap(with: block.bubble) > threshold }) {
+                kept.append(block)
+            }
+        }
+        return kept
     }
 
     /// Reads each bubble's text region with the recogniser model, which handles vertical text

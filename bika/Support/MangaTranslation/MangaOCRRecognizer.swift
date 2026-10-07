@@ -96,7 +96,7 @@ nonisolated final class MangaOCRRecognizer: MangaTextRecognizing, @unchecked Sen
 
             let text = Self.normalised(Self.detokenise(ids, vocabulary: vocabulary))
             let confidence = probabilities.isEmpty ? 0 : probabilities.reduce(0, +) / Double(probabilities.count)
-            return JapaneseTextRecognizer.Result(text: text, confidence: confidence)
+            return JapaneseTextRecognizer.Result(text: text, confidence: confidence, steps: ids.count - 1)
         }
     }
 

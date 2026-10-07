@@ -134,3 +134,65 @@ final class MangaOCRRecognizerTests: XCTestCase {
         print("TIMING manga-ocr \(modelTime) ms, vision \(visionTime) ms")
     }
 }
+
+/// Rules calibrated on the first device run, tested with a stand-in recogniser so they hold
+/// whether or not the model is bundled.
+final class MangaModelPathRulesTests: XCTestCase {
+    private struct FixedRecognizer: MangaTextRecognizing {
+        let text: String
+        let confidence: Double
+        var identifier: String { "fixed" }
+        func recognize(_ crop: CGImage) throws -> JapaneseTextRecognizer.Result {
+            .init(text: text, confidence: confidence, steps: text.count + 1)
+        }
+    }
+
+    private let page = MangaPageFixtures.page(bubbles: [
+        .init(frame: CGRect(x: 650, y: 120, width: 340, height: 520), columns: ["本当に", "それで", "いいの？"]),
+    ])
+
+    private func extractor(confidence: Double) -> MangaPageTextExtractor {
+        var extractor = MangaPageTextExtractor()
+        extractor.textRecognizer = FixedRecognizer(text: "本当にそれでいいの？", confidence: confidence)
+        extractor.configuration.readsCaptions = false
+        return extractor
+    }
+
+    func testModelReadingsBelowTheCalibratedThresholdAreDropped() throws {
+        // On the device run, readings under 0.8 were three-character fragments read off art.
+        XCTAssertTrue(try extractor(confidence: 0.75).extract(from: page).isEmpty)
+        XCTAssertEqual(try extractor(confidence: 0.85).extract(from: page).map(\.sourceText), ["本当にそれでいいの？"])
+    }
+
+    func testStageTimingsAccountForTheModelPath() throws {
+        let result = try extractor(confidence: 0.9).timedExtract(from: page)
+
+        XCTAssertEqual(result.stages.regionsRead, 1)
+        XCTAssertEqual(result.stages.decoderSteps, "本当にそれでいいの？".count + 1)
+        let parts = result.stages.preparation + result.stages.detection + result.stages.bubbleReading + result.stages.captions
+        XCTAssertLessThanOrEqual(parts, result.milliseconds + 1)
+    }
+
+    func testOverlappingReadingsOfOneBubbleKeepTheMoreConfident() {
+        func block(_ text: String, x: Double, confidence: Double) -> MangaTextBlock {
+            let rect = NormalizedRect(x: x, y: 0.1, width: 0.2, height: 0.3)
+            return MangaTextBlock(bubble: rect, textBounds: rect, lines: [rect], orientation: .vertical,
+                                  sourceText: text, confidence: confidence)
+        }
+        let kept = MangaPageTextExtractor.removingDuplicates([
+            block("weaker", x: 0.10, confidence: 0.82),
+            block("stronger", x: 0.14, confidence: 0.99),  // overlaps the first by 80%
+            block("elsewhere", x: 0.60, confidence: 0.90),
+        ], overlap: 0.3)
+
+        XCTAssertEqual(Set(kept.map(\.sourceText)), ["stronger", "elsewhere"])
+    }
+
+    func testRectsAreClippedToThePage() {
+        // A caption padded at the left edge came back from a device with a negative x.
+        let rect = NormalizedRect(pixelRect: CGRect(x: -60, y: 1700, width: 300, height: 200), in: CGSize(width: 1200, height: 1800))
+        XCTAssertEqual(rect.x, 0)
+        XCTAssertEqual(rect.x + rect.width, 240.0 / 1200, accuracy: 1e-9)
+        XCTAssertEqual(rect.y + rect.height, 1, accuracy: 1e-9)
+    }
+}

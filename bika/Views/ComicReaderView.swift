@@ -636,7 +636,8 @@ extension ComicReaderView {
                 pixelHeight: cgImage.height,
                 milliseconds: result.milliseconds,
                 error: nil,
-                blocks: result.blocks
+                blocks: result.blocks,
+                stages: result.stages
             )
         } catch is CancellationError {
             return failed("已取消")
