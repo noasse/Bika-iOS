@@ -57,6 +57,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		C0F16C0F1A0000000000A001 /* BikaMacosSigning.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = BikaMacosSigning.xcconfig; path = Config/BikaMacosSigning.xcconfig; sourceTree = "<group>"; };
 		EC88BE472FEA2C25004AFB7B /* BikaMacos.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BikaMacos.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		EC88BF002FEA5000004AFB7B /* BikaMacosTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BikaMacosTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		EC88BF0B2FEA5000004AFB7B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = Platforms/MacOSX.platform/Developer/Library/Frameworks/XCTest.framework; sourceTree = DEVELOPER_DIR; };
@@ -85,7 +86,6 @@
 		F10000022F694FA800F6AB0F /* bikaUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = bikaUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F10000032F694FA800F6AB0F /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = Platforms/iPhoneOS.platform/Developer/Library/Frameworks/XCTest.framework; sourceTree = DEVELOPER_DIR; };
 		F10000202F694FA800F6AB0F /* bika.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = bika.xctestplan; sourceTree = "<group>"; };
-		C0F16C0F1A0000000000A001 /* BikaMacosSigning.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = BikaMacosSigning.xcconfig; path = Config/BikaMacosSigning.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
