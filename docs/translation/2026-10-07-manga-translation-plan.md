@@ -1,5 +1,7 @@
 # 日文生肉图片翻译（实验功能）
 
+> **以 [工程设计与实践规划](2026-10-07-manga-translation-engineering-plan.md) 为准。** 本文保留早期验证记录；其中"Vision 对竖排完全不返回结果"一条已被修正：多列竖排时 Vision 可能跨列横读。
+
 - 分支：`feature/manga-translation`
 - 范围：只翻译图片里对话框中的日文；只做 iOS；只用端侧能力（Vision + Apple Translation）
 - 不做：对话框外的文字（拟声词、压在画面上的旁白）、图像修复级抹字、macOS、云端引擎
