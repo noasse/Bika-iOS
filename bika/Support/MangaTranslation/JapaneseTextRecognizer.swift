@@ -36,24 +36,46 @@ nonisolated struct JapaneseTextRecognizer: Sendable {
 
         try VNImageRequestHandler(cgImage: sheet.image, options: [:]).perform([request])
 
-        var linesPerStrip = [[(minX: CGFloat, text: VNRecognizedText)]](repeating: [], count: strips.count)
+        var linesPerStrip = [[(box: CGRect, text: VNRecognizedText)]](repeating: [], count: strips.count)
         let sheetHeight = CGFloat(sheet.image.height)
         for observation in request.results ?? [] {
             guard let candidate = observation.topCandidates(1).first else { continue }
             // Vision boxes are normalised with a bottom-left origin; bands are top-down pixels.
             let midY = (1 - observation.boundingBox.midY) * sheetHeight
             guard let strip = sheet.bands.firstIndex(where: { $0.contains(midY) }) else { continue }
-            linesPerStrip[strip].append((observation.boundingBox.minX, candidate))
+            linesPerStrip[strip].append((observation.boundingBox, candidate))
         }
 
         return linesPerStrip.map { lines in
-            // A strip is one line of text, so reading order is left to right by box position.
-            let ordered = lines.sorted { $0.minX < $1.minX }.map(\.text)
+            let ordered = Self.readingOrder(lines).map(\.text)
             guard !ordered.isEmpty else { return Result(text: "", confidence: 0) }
             let raw = ordered.map(\.string).joined()
             let confidence = ordered.map { Double($0.confidence) }.reduce(0, +) / Double(ordered.count)
             return Result(text: Self.repairReflowArtifacts(raw), confidence: confidence)
         }
+    }
+
+    /// Orders the pieces Vision found in one strip: rows top to bottom, left to right within a
+    /// row. Pieces share a row when their vertical extents overlap by more than half.
+    ///
+    /// A reflowed vertical strip is a single row, so this reduces to left to right. A
+    /// horizontal narration box has several rows that all start at about the same x; sorting
+    /// those by x alone read its lines in arbitrary order — on a test box, bottom line first.
+    static func readingOrder<Piece>(_ pieces: [(box: CGRect, text: Piece)]) -> [(box: CGRect, text: Piece)] {
+        // Vision boxes have a bottom-left origin, so a higher maxY is nearer the top.
+        var rows: [[(box: CGRect, text: Piece)]] = []
+        for piece in pieces.sorted(by: { $0.box.maxY > $1.box.maxY }) {
+            if let index = rows.firstIndex(where: { row in
+                let reference = row[0].box
+                let overlap = min(reference.maxY, piece.box.maxY) - max(reference.minY, piece.box.minY)
+                return overlap > min(reference.height, piece.box.height) * 0.5
+            }) {
+                rows[index].append(piece)
+            } else {
+                rows.append([piece])
+            }
+        }
+        return rows.flatMap { $0.sorted { $0.box.minX < $1.box.minX } }
     }
 
     /// Stacks strips top to bottom on white with a gap as tall as the tallest strip, so Vision

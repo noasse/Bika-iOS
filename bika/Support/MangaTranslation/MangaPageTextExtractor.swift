@@ -17,6 +17,8 @@ nonisolated struct MangaPageTextExtractor: Sendable {
         var alternativeReadingMargin = 0.15
         /// A first reading at least this confident is kept without trying alternatives.
         var confidentReading = 0.8
+        /// Also read horizontal text set straight onto the page (afterwords, notes, narration).
+        var readsCaptions = true
 
         init() {}
     }
@@ -26,6 +28,7 @@ nonisolated struct MangaPageTextExtractor: Sendable {
     var segmenter = TextLineSegmenter()
     var reflow = TextReflow()
     var recognizer = JapaneseTextRecognizer()
+    var captionReader = CaptionTextReader()
 
     func extract(from image: CGImage) throws -> [MangaTextBlock] {
         guard let bitmap = GrayscaleBitmap(image: image, maxDimension: configuration.analysisMaxDimension) else {
@@ -35,7 +38,8 @@ nonisolated struct MangaPageTextExtractor: Sendable {
         try Task.checkCancellation()
 
         // Each bubble's plausible readings, most likely first, already turned into strips.
-        let bubbles = bubbleDetector.detect(in: bitmap).compactMap { bubble -> (DetectedBubble, [(SegmentedText, CGImage)])? in
+        let detected = bubbleDetector.detect(in: bitmap)
+        let bubbles = detected.compactMap { bubble -> (DetectedBubble, [(SegmentedText, CGImage)])? in
             let readings = segmenter.candidates(bubble).compactMap { text in
                 reflow.strip(for: text, in: bubble).map { (text, $0) }
             }
@@ -65,7 +69,7 @@ nonisolated struct MangaPageTextExtractor: Sendable {
             }
         }
 
-        let blocks = zip(bubbles, best).compactMap { bubble, reading -> MangaTextBlock? in
+        var blocks = zip(bubbles, best).compactMap { bubble, reading -> MangaTextBlock? in
             guard let reading,
                   reading.result.confidence >= configuration.minimumConfidence,
                   JapaneseTextRecognizer.looksLikeJapanese(reading.result.text) else { return nil }
@@ -79,6 +83,27 @@ nonisolated struct MangaPageTextExtractor: Sendable {
                 sourceText: reading.result.text
             )
         }
+        if configuration.readsCaptions {
+            try Task.checkCancellation()
+            // Only bubbles that were actually read are excluded. A rejected region produced no
+            // text, so reading it again cannot duplicate anything — and large areas enclosed by
+            // line art, which the bubble path rejects, can hold a whole paragraph of free text.
+            let readBubbles = blocks.map { $0.bubble.rect(in: size) }
+            let paragraphs = try captionReader.read(bitmap, excluding: readBubbles)
+            for paragraph in paragraphs where paragraph.confidence >= configuration.minimumConfidence {
+                let bounds = paragraph.bounds
+                let lineHeight = paragraph.lines.map(\.height).max() ?? 0
+                blocks.append(MangaTextBlock(
+                    kind: .caption,
+                    bubble: NormalizedRect(pixelRect: bounds.insetBy(dx: -lineHeight * 0.3, dy: -lineHeight * 0.3), in: size),
+                    textBounds: NormalizedRect(pixelRect: bounds, in: size),
+                    lines: paragraph.lines.map { NormalizedRect(pixelRect: $0, in: size) },
+                    orientation: .horizontal,
+                    sourceText: paragraph.text
+                ))
+            }
+        }
+
         return Self.readingOrder(blocks)
     }
 

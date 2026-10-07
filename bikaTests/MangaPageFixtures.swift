@@ -18,6 +18,20 @@ enum MangaPageFixtures {
         /// Optional reading aid drawn beside the first column, as real furigana is.
         var furigana: String? = nil
         var vertical = true
+        /// Interior brightness, 0 black ... 1 white. Real bubbles are often gray or tinted.
+        var fill: CGFloat = 1
+        /// `false` draws only the text, straight onto the page — vertical narration over art.
+        var outlined = true
+    }
+
+    /// Horizontal text set straight onto the page, as in an afterword.
+    struct Caption {
+        /// Top-left of the first line, in page pixels.
+        var origin: CGPoint
+        var lines: [String]
+        var fontSize: CGFloat = 22
+        /// Brightness of the block behind the text; `nil` leaves the page as it is.
+        var background: CGFloat? = 0.93
     }
 
     static let pageSize = CGSize(width: 1200, height: 1700)
@@ -29,6 +43,7 @@ enum MangaPageFixtures {
     ///   coordinates — for shapes that only look like bubbles.
     static func page(
         bubbles: [Bubble],
+        captions: [Caption] = [],
         size: CGSize = pageSize,
         screentone: Bool = false,
         decorations: (CGContext) -> Void = { _ in }
@@ -76,16 +91,39 @@ enum MangaPageFixtures {
         context.saveGState()
         decorations(context)
         context.restoreGState()
+        for caption in captions { draw(caption, in: context) }
         for bubble in bubbles { draw(bubble, in: context) }
         return context.makeImage()!
     }
 
+    private static func draw(_ caption: Caption, in context: CGContext) {
+        let font = CTFontCreateWithName("HiraginoSans-W3" as CFString, caption.fontSize, nil)
+        let lineHeight = caption.fontSize * 1.6
+        let width = CGFloat(caption.lines.map(\.count).max() ?? 0) * caption.fontSize
+        if let background = caption.background {
+            context.setFillColor(gray: background, alpha: 1)
+            context.fill(CGRect(x: caption.origin.x - 20, y: caption.origin.y - 20,
+                                width: width + 40, height: CGFloat(caption.lines.count) * lineHeight + 40))
+        }
+        for (index, line) in caption.lines.enumerated() {
+            for (column, character) in line.enumerated() {
+                drawGlyph(character, font: font, vertical: false,
+                          in: CGRect(x: caption.origin.x + CGFloat(column) * caption.fontSize,
+                                     y: caption.origin.y + CGFloat(index) * lineHeight,
+                                     width: caption.fontSize, height: caption.fontSize),
+                          context: context)
+            }
+        }
+    }
+
     private static func draw(_ bubble: Bubble, in context: CGContext) {
-        context.setFillColor(gray: 1, alpha: 1)
-        context.fillEllipse(in: bubble.frame)
-        context.setStrokeColor(gray: 0, alpha: 1)
-        context.setLineWidth(4)
-        context.strokeEllipse(in: bubble.frame)
+        if bubble.outlined {
+            context.setFillColor(gray: bubble.fill, alpha: 1)
+            context.fillEllipse(in: bubble.frame)
+            context.setStrokeColor(gray: 0, alpha: 1)
+            context.setLineWidth(4)
+            context.strokeEllipse(in: bubble.frame)
+        }
 
         let font = CTFontCreateWithName("HiraginoSans-W6" as CFString, bubble.fontSize, nil)
         let cell = bubble.fontSize * 1.15

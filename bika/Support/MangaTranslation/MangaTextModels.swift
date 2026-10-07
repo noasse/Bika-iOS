@@ -50,9 +50,20 @@ nonisolated enum MangaTextOrientation: String, Codable, Sendable {
     case horizontal
 }
 
-/// One run of source text found on a page, normally the contents of a single speech bubble.
+nonisolated enum MangaTextKind: String, Codable, Sendable {
+    /// Text inside a speech bubble, on a flat fill an overlay can paint over.
+    case bubble
+    /// Text set straight onto the page — afterwords, notes, horizontal narration — where an
+    /// overlay must not simply paint over the art behind it.
+    case caption
+}
+
+/// One run of source text found on a page: a speech bubble's contents, or a paragraph of
+/// free text.
 nonisolated struct MangaTextBlock: Codable, Hashable, Sendable {
-    /// The area of the page an overlay may paint over: the bubble's interior.
+    var kind: MangaTextKind = .bubble
+    /// The area of the page an overlay may paint over: the bubble's interior, or for a caption
+    /// the paragraph's bounds with a small margin.
     var bubble: NormalizedRect
     /// The bounding box of the text itself inside the bubble.
     var textBounds: NormalizedRect

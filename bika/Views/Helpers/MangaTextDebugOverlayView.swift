@@ -43,7 +43,8 @@ final class MangaTextDebugOverlayView: UIView {
         case .failed(let message):
             drawBadge("识别失败：\(message)", at: imageRect.origin, color: .systemRed)
         case .finished(let blocks, let milliseconds):
-            drawBadge("\(blocks.count) 个对话框 · \(milliseconds) ms", at: imageRect.origin)
+            let bubbleCount = blocks.filter { $0.kind == .bubble }.count
+            drawBadge("\(bubbleCount) 个对话框 · \(blocks.count - bubbleCount) 段文字 · \(milliseconds) ms", at: imageRect.origin)
             for (index, block) in blocks.enumerated() {
                 draw(block, number: index + 1, in: imageRect)
             }
@@ -57,7 +58,8 @@ final class MangaTextDebugOverlayView: UIView {
 
         let bubble = UIBezierPath(rect: onScreen(block.bubble))
         bubble.lineWidth = 2
-        UIColor.systemBlue.setStroke()
+        // Blue: speech bubble. Green: free text set onto the page.
+        (block.kind == .caption ? UIColor.systemGreen : UIColor.systemBlue).setStroke()
         bubble.stroke()
 
         UIColor.systemRed.withAlphaComponent(0.8).setStroke()
@@ -70,7 +72,7 @@ final class MangaTextDebugOverlayView: UIView {
                   size: 9, color: .systemRed, background: .clear)
         }
 
-        let marker = block.orientation == .vertical ? "縦" : "横"
+        let marker = block.kind == .caption ? "文" : (block.orientation == .vertical ? "縦" : "横")
         let text = "\(number) \(marker) \(block.sourceText)"
         let bubbleRect = onScreen(block.bubble)
         label(text, at: CGPoint(x: bubbleRect.minX, y: bubbleRect.maxY + 2), size: 11,

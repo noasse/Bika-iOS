@@ -50,15 +50,24 @@ nonisolated struct DetectedBubble: Sendable {
 /// Finds speech bubbles by their shape rather than by their text.
 ///
 /// Vision does not detect vertical Japanese at all — not even as text rectangles — so the
-/// pipeline cannot ask it where the text is. Bubbles are found instead as enclosed white
-/// regions: a connected area of light pixels that does not touch the page edge. The text is
-/// whatever dark pixels that area surrounds — the holes in it.
+/// pipeline cannot ask it where the text is. Bubbles are found instead as enclosed flat
+/// regions: a connected area of evenly coloured pixels — white, gray or tinted — that does not
+/// touch the page edge. The text is whatever clearly darker pixels that area surrounds — the
+/// holes in it.
 nonisolated struct SpeechBubbleDetector: Sendable {
     nonisolated struct Configuration: Sendable {
-        /// Pixels at or above this are bubble interior.
-        var lightThreshold: UInt8 = 200
-        /// Holes darker than this count as ink.
-        var inkThreshold: UInt8 = 160
+        /// Neighbouring pixels differing by at most this much belong to the same flat region.
+        /// Comparing neighbours rather than a fixed level is what lets a gray or tinted bubble,
+        /// or one with a soft gradient, count as a bubble; a fixed "at least 200" rule only
+        /// ever found white ones.
+        var flatTolerance: Int = 10
+        /// Regions darker than this on average are not bubbles (dark text on a dark fill is not
+        /// something Vision reads either).
+        var minimumInteriorBrightness: Int = 90
+        /// Holes count as ink when at most this fraction of the region's mean brightness…
+        var inkBrightnessRatio: Double = 0.65
+        /// …and at least this much darker than it. Text contrasts sharply with its bubble.
+        var minimumInkContrast: Int = 60
         /// Bubble area as a fraction of the page.
         var minimumAreaFraction: Double = 0.002
         var maximumAreaFraction: Double = 0.35
@@ -77,17 +86,18 @@ nonisolated struct SpeechBubbleDetector: Sendable {
         let width = bitmap.width
         let height = bitmap.height
         let pageArea = Double(width * height)
-        let lightThreshold = configuration.lightThreshold
 
-        // Label 4-connected light regions. 0 = unlabelled / not light.
+        // Label 4-connected flat regions. 0 = unlabelled.
         var labels = [Int32](repeating: 0, count: width * height)
-        var components: [(label: Int32, bounds: PixelRect, area: Int, touchesEdge: Bool)] = []
+        var components: [(label: Int32, bounds: PixelRect, area: Int, brightnessSum: Int, touchesEdge: Bool)] = []
         var stack: [Int] = []
         var nextLabel: Int32 = 1
+        let tolerance = configuration.flatTolerance
+        let minimumBrightness = configuration.minimumInteriorBrightness
 
         bitmap.pixels.withUnsafeBufferPointer { pixels in
             labels.withUnsafeMutableBufferPointer { labels in
-                for start in 0..<(width * height) where labels[start] == 0 && pixels[start] >= lightThreshold {
+                for start in 0..<(width * height) where labels[start] == 0 && Int(pixels[start]) >= minimumBrightness {
                     let label = nextLabel
                     nextLabel += 1
                     labels[start] = label
@@ -95,9 +105,12 @@ nonisolated struct SpeechBubbleDetector: Sendable {
                     stack.append(start)
                     var bounds = PixelRect(minX: start % width, minY: start / width, maxX: start % width + 1, maxY: start / width + 1)
                     var area = 0
+                    var brightnessSum = 0
                     var touchesEdge = false
                     while let index = stack.popLast() {
                         area += 1
+                        let value = Int(pixels[index])
+                        brightnessSum += value
                         let x = index % width
                         let y = index / width
                         if x == 0 || y == 0 || x == width - 1 || y == height - 1 { touchesEdge = true }
@@ -105,12 +118,12 @@ nonisolated struct SpeechBubbleDetector: Sendable {
                         bounds.minY = min(bounds.minY, y)
                         bounds.maxX = max(bounds.maxX, x + 1)
                         bounds.maxY = max(bounds.maxY, y + 1)
-                        if x > 0 { Self.visit(index - 1, pixels, labels, label, lightThreshold, &stack) }
-                        if x < width - 1 { Self.visit(index + 1, pixels, labels, label, lightThreshold, &stack) }
-                        if y > 0 { Self.visit(index - width, pixels, labels, label, lightThreshold, &stack) }
-                        if y < height - 1 { Self.visit(index + width, pixels, labels, label, lightThreshold, &stack) }
+                        if x > 0 { Self.grow(into: index - 1, from: value, pixels, labels, label, tolerance, minimumBrightness, &stack) }
+                        if x < width - 1 { Self.grow(into: index + 1, from: value, pixels, labels, label, tolerance, minimumBrightness, &stack) }
+                        if y > 0 { Self.grow(into: index - width, from: value, pixels, labels, label, tolerance, minimumBrightness, &stack) }
+                        if y < height - 1 { Self.grow(into: index + width, from: value, pixels, labels, label, tolerance, minimumBrightness, &stack) }
                     }
-                    components.append((label, bounds, area, touchesEdge))
+                    components.append((label, bounds, area, brightnessSum, touchesEdge))
                 }
             }
         }
@@ -124,9 +137,15 @@ nonisolated struct SpeechBubbleDetector: Sendable {
                   areaFraction <= configuration.maximumAreaFraction else { continue }
             guard Double(component.area) / Double(component.bounds.area) >= configuration.minimumFillRatio else { continue }
 
-            guard let bubble = enclosedInk(
+            let meanBrightness = Double(component.brightnessSum) / Double(component.area)
+            let inkLimit = min(
+                meanBrightness * configuration.inkBrightnessRatio,
+                meanBrightness - Double(configuration.minimumInkContrast)
+            )
+            guard inkLimit > 0, let bubble = enclosedInk(
                 of: component.label,
                 bounds: component.bounds,
+                inkLimit: inkLimit,
                 bitmap: bitmap,
                 labels: labels
             ) else { continue }
@@ -140,15 +159,19 @@ nonisolated struct SpeechBubbleDetector: Sendable {
         }
     }
 
-    private static func visit(
-        _ index: Int,
+    private static func grow(
+        into index: Int,
+        from value: Int,
         _ pixels: UnsafeBufferPointer<UInt8>,
         _ labels: UnsafeMutableBufferPointer<Int32>,
         _ label: Int32,
-        _ threshold: UInt8,
+        _ tolerance: Int,
+        _ minimumBrightness: Int,
         _ stack: inout [Int]
     ) {
-        guard labels[index] == 0, pixels[index] >= threshold else { return }
+        guard labels[index] == 0 else { return }
+        let next = Int(pixels[index])
+        guard next >= minimumBrightness, abs(next - value) <= tolerance else { return }
         labels[index] = label
         stack.append(index)
     }
@@ -159,6 +182,7 @@ nonisolated struct SpeechBubbleDetector: Sendable {
     private func enclosedInk(
         of label: Int32,
         bounds: PixelRect,
+        inkLimit: Double,
         bitmap: GrayscaleBitmap,
         labels: [Int32]
     ) -> DetectedBubble? {
@@ -200,7 +224,7 @@ nonisolated struct SpeechBubbleDetector: Sendable {
             for x in bounds.minX..<bounds.maxX {
                 let index = local(x, y)
                 // Light holes are counters inside glyphs (the middle of 口), not ink.
-                guard !outside[index], !isRegion(x, y), bitmap[x, y] < configuration.inkThreshold else { continue }
+                guard !outside[index], !isRegion(x, y), Double(bitmap[x, y]) <= inkLimit else { continue }
                 mask[index] = true
                 inkCount += 1
                 let pixel = PixelRect(minX: x, minY: y, maxX: x + 1, maxY: y + 1)
