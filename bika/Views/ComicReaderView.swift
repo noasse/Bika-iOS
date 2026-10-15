@@ -18,8 +18,9 @@ struct ComicReaderView: View {
     @State private var debugRecognizesText = false
     /// Read when the reader opens; changed in settings.
     @State private var translationSettings = MangaTranslationSettings()
-    /// The toolbar's original/translation switch.
-    @State private var showsTranslation = true
+    /// The toolbar's original/translation switch. Off whenever the reader opens: translation
+    /// is something to switch on, not the way pages are shown.
+    @State private var showsTranslation = false
     @State private var translationPrefetchTask: Task<Void, Never>?
 #if DEBUG
     /// Progress of a chapter recognition report: pages done out of total.
@@ -122,7 +123,14 @@ struct ComicReaderView: View {
         }
         .onAppear {
             translationSettings = MangaTranslationSettings.load(from: AppDependencies.shared.keyValueStore)
-            if translationTarget != nil { MangaTranslationService.shared.prepare() }
+        }
+        .onChange(of: showsTranslation) { _, isOn in
+            if isOn {
+                MangaTranslationService.shared.prepare()
+                scheduleTranslationPrefetch(around: currentPage)
+            } else {
+                translationPrefetchTask?.cancel()
+            }
         }
         .onDisappear {
             viewModel.cancelLoadingPages()
@@ -289,8 +297,7 @@ struct ComicReaderView: View {
                         pageID: readerPageID(for: index),
                         onSingleTap: handleTap,
                         debugRecognizesText: debugRecognizesText,
-                        translationTarget: translationTarget,
-                        showsTranslation: showsTranslation
+                        translationTarget: shownTranslationTarget
                     )
                         .containerRelativeFrame(.horizontal)
                         .id(index)
@@ -325,8 +332,7 @@ struct ComicReaderView: View {
                             },
                             onSingleTap: handleTap,
                             debugRecognizesText: debugRecognizesText,
-                            translationTarget: translationTarget,
-                            showsTranslation: showsTranslation
+                            translationTarget: shownTranslationTarget
                         )
                         .onAppear {
                             guard let pageID else { return }
@@ -372,17 +378,22 @@ struct ComicReaderView: View {
 
     // MARK: - Translation
 
-    /// The language pages are translated into; nil when translation is off, no language is
-    /// chosen, or the system cannot translate outside a view (before iOS 26).
+    /// The language pages can be translated into; nil when translation is off in settings,
+    /// no language is chosen, or the system cannot translate outside a view (before iOS 26).
     private var translationTarget: MangaTranslationLanguage? {
         AppleTranslationEngine.isAvailableOnThisSystem ? translationSettings.activeTarget : nil
+    }
+
+    /// The language pages are translated into right now: only with the reader's switch on.
+    private var shownTranslationTarget: MangaTranslationLanguage? {
+        showsTranslation ? translationTarget : nil
     }
 
     /// Translates the next two pages ahead of the reader, so they are ready on arrival. Their
     /// recognition waits behind any page on screen; scrolling on cancels what is left.
     private func scheduleTranslationPrefetch(around index: Int) {
         translationPrefetchTask?.cancel()
-        guard let language = translationTarget, let decodeTarget = readerDecodeTarget() else { return }
+        guard let language = shownTranslationTarget, let decodeTarget = readerDecodeTarget() else { return }
         let urls = [index + 1, index + 2]
             .filter { viewModel.pages.indices.contains($0) }
             .compactMap { viewModel.pages[$0].media.imageURL }
@@ -511,14 +522,14 @@ struct ComicReaderView: View {
                     Button {
                         showsTranslation.toggle()
                     } label: {
-                        Text(showsTranslation ? "译文" : "原文")
+                        Text(showsTranslation ? "译文" : "翻译")
                             .font(.caption.weight(.semibold))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(Capsule().fill(showsTranslation ? Color.accentPink : Color.gray.opacity(0.5)))
                             .foregroundStyle(.white)
                     }
-                    .accessibilityLabel(showsTranslation ? "显示原文" : "显示译文")
+                    .accessibilityLabel(showsTranslation ? "显示原文" : "翻译本页")
                     .accessibilityIdentifier("reader.translationToggle")
                 }
 

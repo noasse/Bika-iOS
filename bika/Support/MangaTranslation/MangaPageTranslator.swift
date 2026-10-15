@@ -49,10 +49,41 @@ nonisolated struct MangaPageTranslator: Sendable {
     let recognition: Recognition
     let engine: any MangaTranslationEngine
     let cache: MangaTranslationCache
+    /// Pages being recognised and translated right now, shared by everyone who asks.
+    private let recognizing = SharedWork<(blocks: [MangaTextBlock], milliseconds: Int, fromCache: Bool)>()
+    private let translating = SharedWork<(translations: [String], milliseconds: Int, fromCache: Bool)>()
+
+    init(recognition: Recognition, engine: any MangaTranslationEngine, cache: MangaTranslationCache) {
+        self.recognition = recognition
+        self.engine = engine
+        self.cache = cache
+    }
 
     func recognitionKey(for pageURL: URL) -> MangaTranslationCache.RecognitionKey {
         .init(pageURL: pageURL, pipelineVersion: recognition.pipelineVersion,
               detector: recognition.detector, recognizer: recognition.recognizer)
+    }
+
+    /// The page's text, from the cache, from a recognition already running, or recognised now.
+    ///
+    /// - Parameters:
+    ///   - image: the decoded page, asked for only when the page has to be recognised.
+    ///   - urgency: `.prefetch` for a page the reader has not reached, which waits behind
+    ///     pages on screen.
+    func recognize(
+        pageURL: URL,
+        image: @escaping @Sendable () async throws -> CGImage,
+        urgency: MangaTextRecognitionQueue.Urgency = .visible
+    ) async throws -> (blocks: [MangaTextBlock], milliseconds: Int, fromCache: Bool) {
+        let key = recognitionKey(for: pageURL)
+        let recognition = recognition
+        let cache = cache
+        return try await recognizing.value(for: key.value) {
+            if let cached = await cache.recognition(for: key) { return (cached, 0, true) }
+            let result = try await recognition.recognize(try await image(), urgency)
+            await cache.store(result.blocks, for: key)
+            return (result.blocks, result.milliseconds, false)
+        }
     }
 
     /// - Parameters:
@@ -62,48 +93,33 @@ nonisolated struct MangaPageTranslator: Sendable {
     ///     pages on screen.
     func translate(
         pageURL: URL,
-        image: @Sendable () async throws -> CGImage,
+        image: @escaping @Sendable () async throws -> CGImage,
         to target: MangaTranslationLanguage,
         urgency: MangaTextRecognitionQueue.Urgency = .visible
     ) async throws -> MangaPageTranslation {
-        let recognitionKey = recognitionKey(for: pageURL)
-        let blocks: [MangaTextBlock]
-        var recognitionMilliseconds = 0
-        let recognizedFromCache: Bool
-        if let cached = await cache.recognition(for: recognitionKey) {
-            blocks = cached
-            recognizedFromCache = true
-        } else {
-            let result = try await recognition.recognize(try await image(), urgency)
-            blocks = result.blocks
-            recognitionMilliseconds = result.milliseconds
-            recognizedFromCache = false
-            await cache.store(blocks, for: recognitionKey)
-        }
+        let recognized = try await recognize(pageURL: pageURL, image: image, urgency: urgency)
         try Task.checkCancellation()
 
-        let translationKey = MangaTranslationCache.TranslationKey(recognition: recognitionKey, engine: engine.identifier, target: target)
-        if let cached = await cache.translations(for: translationKey), cached.count == blocks.count {
-            return MangaPageTranslation(
-                target: target, blocks: blocks, translations: cached,
-                recognizedFromCache: recognizedFromCache, translatedFromCache: true,
-                recognitionMilliseconds: recognitionMilliseconds
-            )
+        let blocks = recognized.blocks
+        let key = MangaTranslationCache.TranslationKey(recognition: recognitionKey(for: pageURL), engine: engine.identifier, target: target)
+        let engine = engine
+        let cache = cache
+        let translated = try await translating.value(for: key.value) {
+            if let cached = await cache.translations(for: key), cached.count == blocks.count { return (cached, 0, true) }
+            let clock = ContinuousClock()
+            let start = clock.now
+            let translations = blocks.isEmpty ? [] : try await engine.translate(blocks.map(\.sourceText), to: target)
+            guard translations.count == blocks.count else {
+                throw MangaTranslationError.incompleteResponse(expected: blocks.count, received: translations.count)
+            }
+            await cache.store(translations, for: key)
+            return (translations, Int(start.duration(to: clock.now) / .milliseconds(1)), false)
         }
-
-        let clock = ContinuousClock()
-        let start = clock.now
-        let translations = blocks.isEmpty ? [] : try await engine.translate(blocks.map(\.sourceText), to: target)
-        guard translations.count == blocks.count else {
-            throw MangaTranslationError.incompleteResponse(expected: blocks.count, received: translations.count)
-        }
-        let elapsed = start.duration(to: clock.now)
-        await cache.store(translations, for: translationKey)
         return MangaPageTranslation(
-            target: target, blocks: blocks, translations: translations,
-            recognizedFromCache: recognizedFromCache, translatedFromCache: false,
-            recognitionMilliseconds: recognitionMilliseconds,
-            translationMilliseconds: Int(elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
+            target: target, blocks: blocks, translations: translated.translations,
+            recognizedFromCache: recognized.fromCache, translatedFromCache: translated.fromCache,
+            recognitionMilliseconds: recognized.milliseconds,
+            translationMilliseconds: translated.milliseconds
         )
     }
 }

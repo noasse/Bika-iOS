@@ -165,7 +165,7 @@ final class MangaTranslationOverlayViewTests: XCTestCase {
         XCTAssertEqual(overlay.subviews.compactMap { ($0 as? UILabel)?.text }, ["需要先在设置里下载简体中文语言包"])
     }
 
-    func testThePageHidesTheTranslationForTheSwitchAndWhilePressed() throws {
+    func testThePageShowsTheOriginalWhilePressed() throws {
         let scrollView = ZoomingImageScrollView(frame: CGRect(x: 0, y: 0, width: 300, height: 420))
         scrollView.setImage(UIImage(cgImage: MangaPageFixtures.page(bubbles: [])))
         scrollView.layoutIfNeeded()
@@ -176,9 +176,6 @@ final class MangaTranslationOverlayViewTests: XCTestCase {
         scrollView.showsOriginalWhilePressed = true
         XCTAssertTrue(overlay.isHidden)
         scrollView.showsOriginalWhilePressed = false
-        scrollView.hidesTranslation = true
-        XCTAssertTrue(overlay.isHidden)
-        scrollView.hidesTranslation = false
         XCTAssertFalse(overlay.isHidden)
     }
 

@@ -11,8 +11,6 @@ final class ZoomingImageScrollView: UIScrollView {
     private var lastBaseLayoutBoundsSize = CGSize.zero
     private var layoutAspectRatio: CGFloat?
     private var translationOverlay: MangaTranslationOverlayView?
-    /// The reader's original/translation switch.
-    var hidesTranslation = false { didSet { applyTranslationVisibility() } }
     /// While the page is long-pressed, to compare with the original.
     var showsOriginalWhilePressed = false { didSet { applyTranslationVisibility() } }
 
@@ -43,7 +41,7 @@ final class ZoomingImageScrollView: UIScrollView {
     }
 
     private func applyTranslationVisibility() {
-        translationOverlay?.isHidden = hidesTranslation || showsOriginalWhilePressed
+        translationOverlay?.isHidden = showsOriginalWhilePressed
     }
 #if DEBUG
     private var textDebugOverlay: MangaTextDebugOverlayView?
@@ -256,10 +254,9 @@ struct ZoomableImageView: UIViewRepresentable {
     /// Debug builds: run the translation pipeline's text recognition on this page and draw
     /// what it found. Ignored in release builds.
     var debugRecognizesText = false
-    /// Translate this page into the language; nil leaves it as it is.
+    /// Translate this page into the language and show the translation; nil shows the
+    /// original and does no translation work.
     var translationTarget: MangaTranslationLanguage? = nil
-    /// Show the translation, or the original with the translation kept ready.
-    var showsTranslation = true
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -369,12 +366,15 @@ struct ZoomableImageView: UIViewRepresentable {
             recognitionTask = Task { [weak self, weak scrollView] in
                 let outcome: Result<([MangaTextBlock], Int), Error>
                 do {
-                    // One page at a time, newest first, cancellable while waiting or running.
-                    // The time reported is the work itself, not the wait for a turn.
-                    let value = try await MangaTextRecognitionQueue.shared.run {
+                    // Through the translator, so a page being translated is not recognised a
+                    // second time for the overlay: it shares the result, and the cache.
+                    // The time reported is the work itself (0 from the cache), not the wait.
+                    guard let url = self?.parent.url else { return }
+                    let translator = await MangaTranslationService.shared.translator()
+                    let value = try await translator.recognize(pageURL: url, image: {
                         guard let cgImage = asset.image.cgImage else { throw CocoaError(.fileReadCorruptFile) }
-                        return try MangaPageTextExtractor().timedExtract(from: cgImage)
-                    }
+                        return cgImage
+                    })
                     outcome = .success((value.blocks, value.milliseconds))
                 } catch is CancellationError {
                     // The page went away or changed; whoever replaced it owns the overlay now.
@@ -403,8 +403,6 @@ struct ZoomableImageView: UIViewRepresentable {
                 scrollView.setTranslationState(nil)
                 return
             }
-            // Hidden, not stopped: switching back to the translation is then instant.
-            scrollView.hidesTranslation = !parent.showsTranslation
             guard let page = loadedIdentity, let asset = displayedAsset else { return }
             let identity = TranslationIdentity(page: page, target: target)
             guard identity != translatedIdentity else { return }

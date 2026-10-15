@@ -39,9 +39,11 @@ private final class FakeRecognition: @unchecked Sendable {
         }
     }
 
-    func recognition(version: Int = 8) -> MangaPageTranslator.Recognition {
+    /// - Parameter delay: how long recognising takes, so callers can overlap.
+    func recognition(version: Int = 8, delay: Duration = .zero) -> MangaPageTranslator.Recognition {
         MangaPageTranslator.Recognition(pipelineVersion: version, detector: "ctd@test", recognizer: "mocr@test") { [self] _, _ in
             lock.withLock { _calls += 1 }
+            if delay > .zero { try await Task.sleep(for: delay) }
             return (blocks, 5)
         }
     }
@@ -191,6 +193,25 @@ final class MangaPageTranslatorTests: XCTestCase {
         XCTAssertEqual(engine.calls, [["おはよう", "待って"]])
     }
 
+    func testRequestsForAPageAlreadyInProgressShareItsWork() async throws {
+        let (cache, directory) = temporaryCache()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recognition = FakeRecognition(texts: ["おはよう"])
+        let engine = FakeTranslationEngine()
+        // The page on screen, the prefetcher and the debug overlay asking at once.
+        let translator = MangaPageTranslator(recognition: recognition.recognition(delay: .milliseconds(200)), engine: engine, cache: cache)
+
+        async let visible = translator.translate(pageURL: pageURL, image: { page }, to: .english)
+        async let prefetched = translator.translate(pageURL: pageURL, image: { page }, to: .english, urgency: .prefetch)
+        async let overlay = translator.recognize(pageURL: pageURL, image: { page })
+        let results = try await (visible, prefetched, overlay)
+
+        XCTAssertEqual(results.0.translations, results.1.translations)
+        XCTAssertEqual(results.2.blocks, results.0.blocks)
+        XCTAssertEqual(recognition.calls, 1)
+        XCTAssertEqual(engine.calls.count, 1)
+    }
+
     func testAnotherLanguageReusesTheRecognition() async throws {
         let (cache, directory) = temporaryCache()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -290,4 +311,66 @@ final class MangaTranslationSettingsViewModelTests: XCTestCase {
         await model.refreshMangaTranslationAvailability()
         XCTAssertNil(model.mangaTranslationAvailability)
     }
+}
+
+final class SharedWorkTests: XCTestCase {
+    /// Work that runs until cancelled, recording that it was.
+    private final class Endless: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _cancelled = false
+        private var _starts = 0
+        var cancelled: Bool { lock.withLock { _cancelled } }
+        var starts: Int { lock.withLock { _starts } }
+
+        func run() async throws -> Int {
+            lock.withLock { _starts += 1 }
+            do {
+                while true { try await Task.sleep(for: .milliseconds(10)) }
+            } catch {
+                lock.withLock { _cancelled = true }
+                throw error
+            }
+        }
+    }
+
+    private func waitUntil(_ condition: @escaping () async -> Bool) async throws {
+        for _ in 0..<200 {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("timed out")
+    }
+
+    func testWorkStopsOnlyWhenEveryoneWaitingHasLeft() async throws {
+        let shared = SharedWork<Int>()
+        let work = Endless()
+        let first = Task { try await shared.value(for: "page") { try await work.run() } }
+        try await waitUntil { work.starts == 1 }
+        let second = Task { try await shared.value(for: "page") { try await work.run() } }
+        try await Task.sleep(for: .milliseconds(50))
+
+        first.cancel()                          // the page scrolled away; the prefetcher still wants it
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(work.cancelled)
+        XCTAssertEqual(work.starts, 1, "the second caller joined, it did not start again")
+
+        second.cancel()
+        try await waitUntil { work.cancelled }
+        let remaining = await shared.inProgressCount
+        XCTAssertEqual(remaining, 0)
+    }
+
+    func testFinishedWorkIsNotReused() async throws {
+        let shared = SharedWork<Int>()
+        let counter = OSAllocatedCounter()
+        let first = try await shared.value(for: "page") { counter.next() }
+        let second = try await shared.value(for: "page") { counter.next() }
+        XCTAssertEqual([first, second], [1, 2], "results are the cache's job, not this one's")
+    }
+}
+
+private final class OSAllocatedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    func next() -> Int { lock.withLock { value += 1; return value } }
 }
