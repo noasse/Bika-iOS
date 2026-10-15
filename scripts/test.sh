@@ -12,6 +12,9 @@ SIMULATOR_NAME="${SIMULATOR_NAME:-iPhone 17}"
 DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-/tmp/bika-derived}"
 MAC_DERIVED_DATA_PATH="${MAC_DERIVED_DATA_PATH:-/tmp/bika-derived-mac}"
 RESULTS_DIR="${RESULTS_DIR:-$ROOT_DIR/artifacts/test-results}"
+# On a failure xcodebuild otherwise runs a sysdiagnose-like collection that can take up to
+# ten minutes before the run reports anything. Set to on-failure to get those diagnostics.
+TEST_DIAGNOSTICS="${TEST_DIAGNOSTICS:-never}"
 DESTINATION="platform=iOS Simulator,name=${SIMULATOR_NAME},OS=latest"
 MAC_DESTINATION="${MAC_DESTINATION:-platform=macOS}"
 
@@ -33,6 +36,7 @@ usage() {
   BUILD_CONFIGURATION  默认 Debug
   MAC_SCHEME_NAME      默认 BikaMacos
   MAC_DESTINATION      默认 platform=macOS
+  TEST_DIAGNOSTICS     默认 never；设为 on-failure 时失败会收集详细诊断（最多约 10 分钟）
 EOF
 }
 
@@ -110,6 +114,7 @@ run_unit_without_building() {
   rm -rf "$RESULTS_DIR/unit.xcresult"
   run_xcodebuild \
     test-without-building \
+    -collect-test-diagnostics "$TEST_DIAGNOSTICS" \
     -only-test-configuration Unit \
     -only-testing:bikaTests \
     -resultBundlePath "$RESULTS_DIR/unit.xcresult"
@@ -120,6 +125,7 @@ run_ui_smoke_without_building() {
   rm -rf "$RESULTS_DIR/ui-smoke.xcresult"
   run_xcodebuild \
     test-without-building \
+    -collect-test-diagnostics "$TEST_DIAGNOSTICS" \
     -only-test-configuration "UI Smoke" \
     -only-testing:bikaUITests \
     -resultBundlePath "$RESULTS_DIR/ui-smoke.xcresult"
@@ -130,6 +136,7 @@ run_mac_unit() {
   rm -rf "$RESULTS_DIR/macos-unit.xcresult"
   run_mac_xcodebuild \
     test \
+    -collect-test-diagnostics "$TEST_DIAGNOSTICS" \
     -only-testing:BikaMacosTests \
     -resultBundlePath "$RESULTS_DIR/macos-unit.xcresult"
 }

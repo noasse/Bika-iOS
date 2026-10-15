@@ -30,7 +30,7 @@
 
 | 平台 | 版本 | 安装包 |
 | --- | --- | --- |
-| iOS | `v1.2.1` | 未签名 IPA |
+| iOS | `v1.3.0` | 未签名 IPA |
 | macOS | `v1.0` | DMG |
 
 两个平台的安装包均可在 [GitHub Releases](https://github.com/noasse/Bika-iOS/releases) 下载。
@@ -70,6 +70,7 @@ Bika 不是只展示几个独立页面的 Demo，而是围绕真实阅读流程�
 | 社区 | 评论与子评论浏览，串联点赞和回复动作。 |
 | 书架 | 收藏、历史记录、主题模式、图片质量和内容过滤设置。 |
 | 云端同步 | 可选的私人云端历史同步，让 iOS 与 macOS 共用自建 HTTPS 服务端。 |
+| 漫画翻译（实验） | iOS 26+：识别日文生肉页面上的文字，在本机翻译成简体中文或英文，并显示在原文位置。默认关闭。 |
 | macOS | 侧边栏导航、独立阅读器窗口、瀑布阅读、触摸板横向翻页、单页双指缩放和独立评论窗口。 |
 
 ## 架构概览
@@ -113,6 +114,22 @@ flowchart LR
 
 - [CloudHistorySync.swift](bika/Support/CloudHistorySync.swift)
 - [CLOUD_HISTORY_SYNC.md](CLOUD_HISTORY_SYNC.md)
+
+### 漫画翻译（实验）
+
+设置里默认关闭；开启并选择目标语言、下载系统语言包后，阅读器顶栏的「翻译」开关会把当前页的日文翻译后盖在原文位置（每次打开阅读器默认显示原文）。全部在本机完成，不上传图片：
+
+1. 找文字：[comic-text-and-bubble-detector](https://huggingface.co/ogkalu/comic-text-and-bubble-detector)（Apache-2.0）框出对话框内外的文字。
+2. 认文字：[manga-ocr](https://huggingface.co/kha-white/manga-ocr-base)（Apache-2.0）直接读竖排、多列与注音。
+3. 翻译：系统 Translation 框架（iOS 26 起可在视图之外创建会话），结果按页缓存。
+4. 显示：用对话框原本的底色盖住原文，译文按气泡大小排版，随页面缩放。
+
+两个模型约 290 MB，**不入库**，需在本机转换后再编译，步骤见 [tools/models/README.md](tools/models/README.md)；缺少模型时回退到规则 + Vision 的识别路径。系统翻译在模拟器上不可用，真实译文只能真机查看。
+
+- [MangaPageTextExtractor.swift](bika/Support/MangaTranslation/MangaPageTextExtractor.swift)
+- [MangaPageTranslator.swift](bika/Support/MangaTranslation/MangaPageTranslator.swift)
+- [MangaTranslationOverlayView.swift](bika/Views/Helpers/MangaTranslationOverlayView.swift)
+- [工程设计与进展](docs/translation/2026-10-07-manga-translation-engineering-plan.md)
 
 ### macOS Target
 

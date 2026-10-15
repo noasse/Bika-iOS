@@ -25,6 +25,9 @@
   - `ReadingProgressManager` 的保存、读取、删除
   - `SettingsViewModel` 的持久化与诊断信息
   - `Media.imageURL` 的路径规范化
+  - 漫画翻译：识别流水线（合成页 fixture）、检测器与 manga-ocr 路径、识别队列、翻译缓存与页面翻译器、译文排版与覆盖层
+- 漫画翻译的模型测试需要本机转换的模型（`bika/MangaModels/`，见 `tools/models/README.md`）：没有模型时跳过（CI 即如此），模型存在但加载失败时报错而不是跳过。
+- 系统翻译在模拟器上不可用（所有语言对都是 `unsupported`），相关测试在模拟器上跳过；翻译逻辑用假引擎测试。
 
 ### 2. UI Smoke
 

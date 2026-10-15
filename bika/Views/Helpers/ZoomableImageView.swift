@@ -10,6 +10,60 @@ final class ZoomingImageScrollView: UIScrollView {
     private var needsBaseImageLayout = true
     private var lastBaseLayoutBoundsSize = CGSize.zero
     private var layoutAspectRatio: CGFloat?
+    private var translationOverlay: MangaTranslationOverlayView?
+    /// While the page is long-pressed, to compare with the original.
+    var showsOriginalWhilePressed = false { didSet { applyTranslationVisibility() } }
+
+    /// Shows the page's translation. `nil` removes it.
+    func setTranslationState(_ state: MangaTranslationOverlayView.State?) {
+        guard let state else {
+            translationOverlay?.removeFromSuperview()
+            translationOverlay = nil
+            return
+        }
+        let overlay = translationOverlay ?? {
+            let overlay = MangaTranslationOverlayView(frame: readerImageView.bounds)
+            // A subview of the image view, so it zooms and pans with the page; below the
+            // debug overlay, so recognition boxes stay visible over translations.
+            readerImageView.insertSubview(overlay, at: 0)
+            translationOverlay = overlay
+            return overlay
+        }()
+        overlay.imageSize = readerImageView.image?.size ?? .zero
+        overlay.zoomScale = zoomScale
+        overlay.state = state
+        applyTranslationVisibility()
+    }
+
+    /// After zooming: re-render translated text at the new scale.
+    func updateTranslationZoom() {
+        translationOverlay?.zoomScale = zoomScale
+    }
+
+    private func applyTranslationVisibility() {
+        translationOverlay?.isHidden = showsOriginalWhilePressed
+    }
+#if DEBUG
+    private var textDebugOverlay: MangaTextDebugOverlayView?
+
+    /// Shows what the translation pipeline found on this page. `nil` removes the overlay.
+    func setTextDebugState(_ state: MangaTextDebugOverlayView.State?) {
+        guard let state else {
+            textDebugOverlay?.removeFromSuperview()
+            textDebugOverlay = nil
+            return
+        }
+        let overlay = textDebugOverlay ?? {
+            let overlay = MangaTextDebugOverlayView(frame: readerImageView.bounds)
+            // A subview of the image view, so it zooms and pans with the page.
+            readerImageView.addSubview(overlay)
+            textDebugOverlay = overlay
+            return overlay
+        }()
+        overlay.imageSize = readerImageView.image?.size ?? .zero
+        overlay.state = state
+    }
+#endif
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -41,6 +95,12 @@ final class ZoomingImageScrollView: UIScrollView {
         }
         readerImageView.image = image
         self.layoutAspectRatio = Self.validatedAspectRatio(layoutAspectRatio, image: image)
+        // Translations belong to the previous image.
+        setTranslationState(nil)
+#if DEBUG
+        // Results belong to the previous image.
+        setTextDebugState(nil)
+#endif
         readerImageView.frame = .zero
         contentSize = .zero
         needsBaseImageLayout = true
@@ -59,6 +119,12 @@ final class ZoomingImageScrollView: UIScrollView {
         super.layoutSubviews()
         layoutImageForCurrentBounds()
         refreshPanInterception()
+        translationOverlay?.frame = readerImageView.bounds
+#if DEBUG
+        // Zoom scales the image view with a transform, which leaves its bounds alone; only a
+        // relayout changes them, and the overlay follows here.
+        textDebugOverlay?.frame = readerImageView.bounds
+#endif
         onBoundsSizeChange?(bounds.size)
     }
 
@@ -185,6 +251,12 @@ struct ZoomableImageView: UIViewRepresentable {
     var diagnostics: any ImageDiagnosticsRecording = ImageDiagnosticsService.shared
     var onImageAspectRatio: ((CGFloat) -> Void)?
     var onSingleTap: ((CGPoint) -> Void)?
+    /// Debug builds: run the translation pipeline's text recognition on this page and draw
+    /// what it found. Ignored in release builds.
+    var debugRecognizesText = false
+    /// Translate this page into the language and show the translation; nil shows the
+    /// original and does no translation work.
+    var translationTarget: MangaTranslationLanguage? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -209,6 +281,14 @@ struct ZoomableImageView: UIViewRepresentable {
         singleTap.require(toFail: doubleTap)
         scrollView.addGestureRecognizer(singleTap)
 
+        // Holding a finger on a translated page shows the original underneath.
+        let press = UILongPressGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleLongPress(_:))
+        )
+        press.minimumPressDuration = 0.35
+        scrollView.addGestureRecognizer(press)
+
         scrollView.onBoundsSizeChange = { [weak coordinator = context.coordinator, weak scrollView] _ in
             guard let scrollView else { return }
             coordinator?.loadImageIfNeeded(in: scrollView)
@@ -219,6 +299,10 @@ struct ZoomableImageView: UIViewRepresentable {
     func updateUIView(_ scrollView: ZoomingImageScrollView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.loadImageIfNeeded(in: scrollView)
+        context.coordinator.refreshTranslation(in: scrollView)
+#if DEBUG
+        context.coordinator.refreshTextDebug(in: scrollView)
+#endif
     }
 
     static func dismantleUIView(_ scrollView: ZoomingImageScrollView, coordinator: Coordinator) {
@@ -237,6 +321,17 @@ struct ZoomableImageView: UIViewRepresentable {
         private var loadedIdentity: DisplayIdentity?
         private var loadingIdentity: DisplayIdentity?
         private var loadTask: Task<Void, Never>?
+        private var displayedAsset: DecodedImageAsset?
+        private struct TranslationIdentity: Equatable {
+            let page: DisplayIdentity
+            let target: MangaTranslationLanguage
+        }
+        private var translatedIdentity: TranslationIdentity?
+        private var translationTask: Task<Void, Never>?
+#if DEBUG
+        private var recognisedIdentity: DisplayIdentity?
+        private var recognitionTask: Task<Void, Never>?
+#endif
 
         init(parent: ZoomableImageView) {
             self.parent = parent
@@ -244,10 +339,109 @@ struct ZoomableImageView: UIViewRepresentable {
 
         deinit {
             loadTask?.cancel()
+            translationTask?.cancel()
+#if DEBUG
+            recognitionTask?.cancel()
+#endif
+        }
+
+#if DEBUG
+        /// Runs text recognition on the page currently shown, once per page, when enabled.
+        func refreshTextDebug(in scrollView: ZoomingImageScrollView) {
+            guard parent.debugRecognizesText else {
+                recognitionTask?.cancel()
+                recognitionTask = nil
+                recognisedIdentity = nil
+                scrollView.setTextDebugState(nil)
+                return
+            }
+            guard let identity = loadedIdentity,
+                  let asset = displayedAsset,
+                  identity != recognisedIdentity else { return }
+
+            recognitionTask?.cancel()
+            recognisedIdentity = identity
+            scrollView.setTextDebugState(.recognising)
+
+            recognitionTask = Task { [weak self, weak scrollView] in
+                let outcome: Result<([MangaTextBlock], Int), Error>
+                do {
+                    // Through the translator, so a page being translated is not recognised a
+                    // second time for the overlay: it shares the result, and the cache.
+                    // The time reported is the work itself (0 from the cache), not the wait.
+                    guard let url = self?.parent.url else { return }
+                    let translator = await MangaTranslationService.shared.translator()
+                    let value = try await translator.recognize(pageURL: url, image: {
+                        guard let cgImage = asset.image.cgImage else { throw CocoaError(.fileReadCorruptFile) }
+                        return cgImage
+                    })
+                    outcome = .success((value.blocks, value.milliseconds))
+                } catch is CancellationError {
+                    // The page went away or changed; whoever replaced it owns the overlay now.
+                    return
+                } catch {
+                    outcome = .failure(error)
+                }
+
+                guard !Task.isCancelled, let self, let scrollView, self.recognisedIdentity == identity else { return }
+                switch outcome {
+                case .success(let (blocks, milliseconds)):
+                    scrollView.setTextDebugState(.finished(blocks: blocks, milliseconds: milliseconds))
+                case .failure(let error):
+                    scrollView.setTextDebugState(.failed(error.localizedDescription))
+                }
+            }
+        }
+#endif
+
+        /// Translates the page shown, once per page and language, when a language is set.
+        func refreshTranslation(in scrollView: ZoomingImageScrollView) {
+            guard let target = parent.translationTarget, let url = parent.url else {
+                translationTask?.cancel()
+                translationTask = nil
+                translatedIdentity = nil
+                scrollView.setTranslationState(nil)
+                return
+            }
+            guard let page = loadedIdentity, let asset = displayedAsset else { return }
+            let identity = TranslationIdentity(page: page, target: target)
+            guard identity != translatedIdentity else { return }
+
+            translationTask?.cancel()
+            translatedIdentity = identity
+            scrollView.setTranslationState(.translating)
+            translationTask = Task { [weak self, weak scrollView] in
+                let state: MangaTranslationOverlayView.State
+                do {
+                    let translator = await MangaTranslationService.shared.translator()
+                    let result = try await translator.translate(pageURL: url, image: {
+                        guard let image = asset.image.cgImage else { throw CocoaError(.fileReadCorruptFile) }
+                        return image
+                    }, to: target)
+                    // Each cover is painted in the tone around its text.
+                    let ground = asset.image.cgImage.flatMap(MangaPageGround.init(image:))
+                    state = .translated(
+                        blocks: result.blocks,
+                        translations: result.translations,
+                        grounds: result.blocks.map { ground?.level(around: $0.textBounds) ?? 1 }
+                    )
+                } catch is CancellationError {
+                    // The page went away or changed; whoever replaced it owns the overlay.
+                    return
+                } catch {
+                    state = .failed(error.localizedDescription)
+                }
+                guard !Task.isCancelled, let self, let scrollView, self.translatedIdentity == identity else { return }
+                scrollView.setTranslationState(state)
+            }
         }
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? {
             (scrollView as? ZoomingImageScrollView)?.readerImageView
+        }
+
+        func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+            (scrollView as? ZoomingImageScrollView)?.updateTranslationZoom()
         }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
@@ -279,6 +473,15 @@ struct ZoomableImageView: UIViewRepresentable {
             loadTask?.cancel()
             loadedIdentity = nil
             loadingIdentity = identity
+            translationTask?.cancel()
+            translationTask = nil
+            translatedIdentity = nil
+            displayedAsset = nil
+#if DEBUG
+            recognitionTask?.cancel()
+            recognitionTask = nil
+            recognisedIdentity = nil
+#endif
             scrollView.setImage(nil)
             scrollView.setLoading(true)
 
@@ -343,6 +546,17 @@ struct ZoomableImageView: UIViewRepresentable {
             loadTask?.cancel()
             loadTask = nil
             loadingIdentity = nil
+            translationTask?.cancel()
+            translationTask = nil
+            // As below: a page kept by SwiftUI must translate again when it comes back.
+            translatedIdentity = nil
+#if DEBUG
+            recognitionTask?.cancel()
+            recognitionTask = nil
+            // Otherwise a page kept by SwiftUI would count as recognised and never retry,
+            // leaving "识别中…" on screen with nothing scheduled to replace it.
+            recognisedIdentity = nil
+#endif
         }
 
         private func display(
@@ -359,6 +573,11 @@ struct ZoomableImageView: UIViewRepresentable {
                 layoutAspectRatio: asset.layoutAspectRatio
             )
             parent.onImageAspectRatio?(asset.layoutAspectRatio)
+            displayedAsset = asset
+            refreshTranslation(in: scrollView)
+#if DEBUG
+            refreshTextDebug(in: scrollView)
+#endif
         }
 
         private static func displayEvent(
@@ -413,6 +632,15 @@ struct ZoomableImageView: UIViewRepresentable {
                     y: location.y - size.height / 2
                 )
                 scrollView.zoom(to: CGRect(origin: origin, size: size), animated: true)
+            }
+        }
+
+        @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+            guard let scrollView = gesture.view as? ZoomingImageScrollView else { return }
+            switch gesture.state {
+            case .began: scrollView.showsOriginalWhilePressed = true
+            case .ended, .cancelled, .failed: scrollView.showsOriginalWhilePressed = false
+            default: break
             }
         }
 

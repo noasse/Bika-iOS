@@ -267,6 +267,16 @@ macOS target 名为 `BikaMacos`，位于 [BikaMacos](BikaMacos)。
 - 管理列表/排行榜的恢复状态
 - 处理图片解码与测试图片加载
 
+`bika/Support/MangaTranslation/` 是实验性的漫画翻译（iOS 26+，默认关闭）：
+
+- `MangaPageTextExtractor` 找字并认字：有本地转换的模型时用文字检测器 + manga-ocr，否则用规则找对话框 + Vision
+- `MangaTextRecognitionQueue` 一次识别一页，屏幕上的页面优先于预取
+- `MangaPageTranslator` 识别 → 翻译，两步各自走磁盘缓存（`MangaTranslationCache`），进行中的同一页工作共享（`SharedWork`）
+- `AppleTranslationEngine` 系统翻译，按目标语言复用会话
+- 呈现层在 `bika/Views/Helpers/`：`MangaTranslationLayout` 计算覆盖与字号，`MangaTranslationOverlayView` 随页面缩放显示
+
+设计与进展见 [docs/translation/](docs/translation/2026-10-07-manga-translation-engineering-plan.md)，模型转换见 [tools/models/README.md](tools/models/README.md)。
+
 ### ViewModels
 
 当前更重要的 ViewModel 包括：
@@ -343,4 +353,6 @@ macOS target 名为 `BikaMacos`，位于 [BikaMacos](BikaMacos)。
 - GitHub 首页说明：`README.md`
 - 中文首页说明：`README.zh-CN.md`
 - 测试说明：[TESTING.md](TESTING.md)
+- 漫画翻译设计与进展：[docs/translation/](docs/translation/2026-10-07-manga-translation-engineering-plan.md)
+- 本地模型转换：[tools/models/README.md](tools/models/README.md)
 - 本文件：项目架构、边界与维护约定

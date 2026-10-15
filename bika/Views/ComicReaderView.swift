@@ -14,6 +14,21 @@ struct ComicReaderView: View {
     /// Both readers lay out inside `.ignoresSafeArea()`, so this — not the safe-area-inset
     /// container — is the size images must be decoded for.
     @State private var contentSize = CGSize.zero
+    /// Debug builds: draw what the translation pipeline recognises on each page.
+    @State private var debugRecognizesText = false
+    /// Read when the reader opens; changed in settings.
+    @State private var translationSettings = MangaTranslationSettings()
+    /// The toolbar's original/translation switch. Off whenever the reader opens: translation
+    /// is something to switch on, not the way pages are shown.
+    @State private var showsTranslation = false
+    @State private var translationPrefetchTask: Task<Void, Never>?
+#if DEBUG
+    /// Progress of a chapter recognition report: pages done out of total.
+    @State private var recognitionReportProgress: (done: Int, total: Int)?
+    @State private var recognitionReportTask: Task<Void, Never>?
+    @State private var recognitionReportItem: DiagnosticsExportItem?
+    @State private var recognitionReportMessage: String?
+#endif
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     private let startPageIndex: Int
@@ -91,6 +106,12 @@ struct ComicReaderView: View {
             if viewModel.showToolbar {
                 toolbarOverlay
             }
+
+#if DEBUG
+            if let progress = recognitionReportProgress {
+                recognitionReportBadge(progress)
+            }
+#endif
         }
         .background(contentGeometryProbe)
         .statusBar(hidden: !viewModel.showToolbar)
@@ -100,10 +121,25 @@ struct ComicReaderView: View {
                 viewModel.showToolbar = true
             }
         }
+        .onAppear {
+            translationSettings = MangaTranslationSettings.load(from: AppDependencies.shared.keyValueStore)
+        }
+        .onChange(of: showsTranslation) { _, isOn in
+            if isOn {
+                MangaTranslationService.shared.prepare()
+                scheduleTranslationPrefetch(around: currentPage)
+            } else {
+                translationPrefetchTask?.cancel()
+            }
+        }
         .onDisappear {
             viewModel.cancelLoadingPages()
             cancelImagePrefetch()
+            translationPrefetchTask?.cancel()
             saveProgress()
+#if DEBUG
+            recognitionReportTask?.cancel()
+#endif
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase != .active {
@@ -112,6 +148,7 @@ struct ComicReaderView: View {
         }
         .onChange(of: currentPage) { _, newPage in
             scheduleImagePrefetch(around: newPage)
+            scheduleTranslationPrefetch(around: newPage)
         }
         .onChange(of: viewModel.pages.count) { _, count in
             guard count > 0 else {
@@ -130,11 +167,28 @@ struct ComicReaderView: View {
         .onChange(of: viewModel.currentEpisodeIndex) { _, _ in
             pageLayout.reset()
             cancelImagePrefetch()
+            translationPrefetchTask?.cancel()
         }
         .onChange(of: viewModel.readerMode) { _, _ in
             imagePrefetchKey = nil
             scheduleImagePrefetch(around: currentPage)
         }
+#if DEBUG
+        .sheet(item: $recognitionReportItem) { item in
+            ActivityShareSheet(fileURL: item.url)
+        }
+        .alert(
+            "识别报告",
+            isPresented: Binding(
+                get: { recognitionReportMessage != nil },
+                set: { if !$0 { recognitionReportMessage = nil } }
+            )
+        ) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(recognitionReportMessage ?? "")
+        }
+#endif
     }
 
     /// `scrollPosition(id:)` reports `nil` whenever the scroll view is between items. Dropping
@@ -241,7 +295,9 @@ struct ComicReaderView: View {
                         imageCache: imageCache,
                         decodeTarget: readerDecodeTarget(),
                         pageID: readerPageID(for: index),
-                        onSingleTap: handleTap
+                        onSingleTap: handleTap,
+                        debugRecognizesText: debugRecognizesText,
+                        translationTarget: shownTranslationTarget
                     )
                         .containerRelativeFrame(.horizontal)
                         .id(index)
@@ -274,7 +330,9 @@ struct ComicReaderView: View {
                                 guard let pageID else { return }
                                 pageLayout.record(aspectRatio, for: pageID)
                             },
-                            onSingleTap: handleTap
+                            onSingleTap: handleTap,
+                            debugRecognizesText: debugRecognizesText,
+                            translationTarget: shownTranslationTarget
                         )
                         .onAppear {
                             guard let pageID else { return }
@@ -316,6 +374,47 @@ struct ComicReaderView: View {
             backendPageID: backendID.flatMap { $0.isEmpty ? nil : $0 },
             imageURL: imageURL
         )
+    }
+
+    // MARK: - Translation
+
+    /// The language pages can be translated into; nil when translation is off in settings,
+    /// no language is chosen, or the system cannot translate outside a view (before iOS 26).
+    private var translationTarget: MangaTranslationLanguage? {
+        AppleTranslationEngine.isAvailableOnThisSystem ? translationSettings.activeTarget : nil
+    }
+
+    /// The language pages are translated into right now: only with the reader's switch on.
+    private var shownTranslationTarget: MangaTranslationLanguage? {
+        showsTranslation ? translationTarget : nil
+    }
+
+    /// Translates the next two pages ahead of the reader, so they are ready on arrival. Their
+    /// recognition waits behind any page on screen; scrolling on cancels what is left.
+    private func scheduleTranslationPrefetch(around index: Int) {
+        translationPrefetchTask?.cancel()
+        guard let language = shownTranslationTarget, let decodeTarget = readerDecodeTarget() else { return }
+        let urls = [index + 1, index + 2]
+            .filter { viewModel.pages.indices.contains($0) }
+            .compactMap { viewModel.pages[$0].media.imageURL }
+        guard !urls.isEmpty else { return }
+        let loader = imageDataLoader
+        let cache = imageCache
+        translationPrefetchTask = Task(priority: .utility) {
+            let translator = await MangaTranslationService.shared.translator()
+            for url in urls {
+                guard !Task.isCancelled else { return }
+                // Failures are left to the page itself, which retries and shows them.
+                _ = try? await translator.translate(pageURL: url, image: {
+                    let asset = try await cache.loadAsset(
+                        for: url, target: decodeTarget, overscan: 2, priority: .utility, imageLoader: loader,
+                        diagnosticContext: ImageDiagnosticContext(purpose: .readerPrefetch, url: url)
+                    )
+                    guard let image = asset.image.cgImage else { throw CocoaError(.fileReadCorruptFile) }
+                    return image
+                }, to: language, urgency: .prefetch)
+            }
+        }
     }
 
     // MARK: - Image Prefetch
@@ -419,6 +518,39 @@ struct ComicReaderView: View {
 
                 Spacer()
 
+                if translationTarget != nil {
+                    Button {
+                        showsTranslation.toggle()
+                    } label: {
+                        Text(showsTranslation ? "译文" : "翻译")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(showsTranslation ? Color.accentPink : Color.gray.opacity(0.5)))
+                            .foregroundStyle(.white)
+                    }
+                    .accessibilityLabel(showsTranslation ? "显示原文" : "翻译本页")
+                    .accessibilityIdentifier("reader.translationToggle")
+                }
+
+#if DEBUG
+                Menu {
+                    Toggle("显示识别框", isOn: $debugRecognizesText)
+                        .onChange(of: debugRecognizesText) { _, isOn in
+                            if isOn { MangaPageTextExtractor.preloadModels() }
+                        }
+                    Button("识别并导出本章") {
+                        startRecognitionReport()
+                    }
+                    .disabled(recognitionReportTask != nil)
+                } label: {
+                    Image(systemName: debugRecognizesText ? "text.viewfinder" : "viewfinder")
+                        .font(.subheadline)
+                }
+                .accessibilityLabel("文字识别调试")
+                .accessibilityIdentifier("reader.debugTextRecognition")
+#endif
+
                 Text("\(currentPage + 1)/\(viewModel.pages.count)")
                     .font(.caption)
             }
@@ -477,6 +609,162 @@ struct ComicReaderView: View {
         .foregroundStyle(.white)
     }
 }
+
+#if DEBUG
+// MARK: - Recognition report (debug)
+
+extension ComicReaderView {
+    private func recognitionReportBadge(_ progress: (done: Int, total: Int)) -> some View {
+        VStack {
+            HStack(spacing: 10) {
+                ProgressView()
+                    .tint(.white)
+                Text("识别本章 \(progress.done)/\(progress.total)")
+                    .font(.subheadline.monospacedDigit())
+                Button("取消") {
+                    recognitionReportTask?.cancel()
+                }
+                .font(.subheadline.weight(.semibold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial, in: Capsule())
+            .padding(.top, viewModel.showToolbar ? 64 : 12)
+            Spacer()
+        }
+    }
+
+    /// Recognises every page of the current chapter, one at a time through the same queue as
+    /// the overlay, and offers the result as a JSON file. A page that fails is recorded and the
+    /// run continues; cancelling, or leaving the reader, stops it without exporting.
+    private func startRecognitionReport() {
+        guard recognitionReportTask == nil else { return }
+        MangaPageTextExtractor.preloadModels()
+        guard let episode = viewModel.currentEpisode,
+              !viewModel.pages.isEmpty,
+              let target = readerDecodeTarget() else {
+            recognitionReportMessage = "页面尚未加载完成，请稍后再试。"
+            return
+        }
+
+        let urls = viewModel.pages.map(\.media.imageURL)
+        let loader = imageDataLoader
+        let cache = imageCache
+        let comicID = viewModel.comicId
+        // With translation switched on and a language chosen, the report carries translations.
+        let translationTarget = MangaTranslationSettings.load(from: AppDependencies.shared.keyValueStore).activeTarget
+        let translationEngine: any MangaTranslationEngine = AppleTranslationEngine()
+        recognitionReportProgress = (0, urls.count)
+
+        recognitionReportTask = Task {
+            defer {
+                recognitionReportTask = nil
+                recognitionReportProgress = nil
+            }
+            var pages: [MangaRecognitionReport.Page] = []
+            for (index, url) in urls.enumerated() {
+                guard !Task.isCancelled else { return }
+                pages.append(await Self.recognisePage(
+                    index: index, url: url, target: target, loader: loader, cache: cache,
+                    translateTo: translationTarget, engine: translationEngine
+                ))
+                recognitionReportProgress = (index + 1, urls.count)
+            }
+            guard !Task.isCancelled else { return }
+
+            let report = MangaRecognitionReport(
+                textRecognizer: MangaPageTextExtractor().recognizerIdentifier,
+                recognizerLoadMilliseconds: MangaOCRRecognizer.bundled?.loadMilliseconds,
+                recognizerLoadFailure: MangaOCRRecognizer.loadFailure,
+                textDetector: MangaPageTextExtractor().detectorIdentifier,
+                detectorLoadMilliseconds: ComicTextDetector.bundled?.loadMilliseconds,
+                detectorLoadFailure: ComicTextDetector.loadFailure,
+                translationTarget: translationTarget?.rawValue,
+                translationEngine: translationTarget.map { _ in translationEngine.identifier },
+                appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?",
+                buildNumber: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?",
+                deviceModel: Self.deviceModelIdentifier(),
+                systemVersion: UIDevice.current.systemVersion,
+                comicID: comicID,
+                episodeOrder: episode.order,
+                episodeTitle: episode.title,
+                pages: pages
+            )
+            do {
+                recognitionReportItem = DiagnosticsExportItem(url: try report.write())
+            } catch {
+                recognitionReportMessage = "写入报告失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private static func recognisePage(
+        index: Int,
+        url: URL?,
+        target: ImageDecodeTarget,
+        loader: any ImageDataLoading,
+        cache: ImageCache,
+        translateTo translationTarget: MangaTranslationLanguage?,
+        engine: any MangaTranslationEngine
+    ) async -> MangaRecognitionReport.Page {
+        func failed(_ message: String) -> MangaRecognitionReport.Page {
+            .init(index: index, pixelWidth: nil, pixelHeight: nil, milliseconds: nil, error: message, blocks: [])
+        }
+        guard let url else { return failed("页面没有图片地址") }
+        do {
+            // Same decode target and cache as the reader, so pages already on screen are not
+            // downloaded or decoded again.
+            let asset = try await cache.loadAsset(
+                for: url,
+                target: target,
+                overscan: 2,
+                priority: .utility,
+                imageLoader: loader,
+                diagnosticContext: ImageDiagnosticContext(purpose: .readerPrefetch, url: url)
+            )
+            guard let cgImage = asset.image.cgImage else { return failed("图片无法解码") }
+            let result = try await MangaTextRecognitionQueue.shared.run {
+                try MangaPageTextExtractor().timedExtract(from: cgImage)
+            }
+            var page = MangaRecognitionReport.Page(
+                index: index,
+                pixelWidth: cgImage.width,
+                pixelHeight: cgImage.height,
+                milliseconds: result.milliseconds,
+                error: nil,
+                blocks: result.blocks,
+                stages: result.stages
+            )
+            if let translationTarget, !result.blocks.isEmpty {
+                // Straight to the engine, not through the cache: the report measures it.
+                let clock = ContinuousClock()
+                let start = clock.now
+                do {
+                    page.translations = try await engine.translate(result.blocks.map(\.sourceText), to: translationTarget)
+                    page.translationMilliseconds = Int(start.duration(to: clock.now) / .milliseconds(1))
+                } catch {
+                    page.translationError = error.localizedDescription
+                }
+            }
+            return page
+        } catch is CancellationError {
+            return failed("已取消")
+        } catch {
+            return failed(error.localizedDescription)
+        }
+    }
+
+    /// The hardware identifier, e.g. iPhone17,1 — more useful than "iPhone" when comparing runs.
+    private static func deviceModelIdentifier() -> String {
+        var info = utsname()
+        uname(&info)
+        return withUnsafeBytes(of: &info.machine) { bytes in
+            String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
+    }
+}
+#endif
 
 nonisolated enum ReaderImagePrefetchPlan {
     static func indices(

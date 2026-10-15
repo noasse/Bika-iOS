@@ -53,6 +53,11 @@ final class SettingsViewModel {
     var isRefreshingImageDiagnostics = false
     var isClearingImageDiagnostics = false
     var isExportingImageDiagnostics = false
+    private(set) var mangaTranslation: MangaTranslationSettings
+    /// Whether the chosen target language's pack is installed; nil until checked or with no
+    /// target chosen.
+    private(set) var mangaTranslationAvailability: MangaTranslationAvailability?
+    let isMangaTranslationSupported: Bool
 
     private let blockedCategoriesManager: BlockedCategoriesManager
     private let keyValueStore: any KeyValueStore
@@ -61,6 +66,7 @@ final class SettingsViewModel {
     private let buildNumber: String
     private let deviceInfo: ImageDiagnosticsDeviceInfo
     private let imageDiagnosticsDateFormatter: DateFormatter
+    private let translationEngine: any MangaTranslationEngine
 
     init(
         themeManager: ThemeManager = .shared,
@@ -68,6 +74,8 @@ final class SettingsViewModel {
         keyValueStore: any KeyValueStore = AppDependencies.shared.keyValueStore,
         imageCacheManager: any ImageCacheManaging = ImageCacheController.shared,
         imageDiagnostics: any ImageDiagnosticsManaging = ImageDiagnosticsService.shared,
+        translationEngine: any MangaTranslationEngine = AppleTranslationEngine(),
+        isMangaTranslationSupported: Bool = AppleTranslationEngine.isAvailableOnThisSystem,
         isUITesting: Bool = AppDependencies.shared.isUITesting,
         appVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知版本",
         buildNumber: String = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "未知",
@@ -78,6 +86,9 @@ final class SettingsViewModel {
         self.keyValueStore = keyValueStore
         self.imageCacheManager = imageCacheManager
         self.imageDiagnostics = imageDiagnostics
+        self.translationEngine = translationEngine
+        self.isMangaTranslationSupported = isMangaTranslationSupported
+        mangaTranslation = MangaTranslationSettings.load(from: keyValueStore)
         self.isUITesting = isUITesting
         self.appVersion = appVersion
         self.buildNumber = buildNumber
@@ -98,6 +109,27 @@ final class SettingsViewModel {
 
     func setThemeMode(_ mode: ThemeMode) {
         themeManager.themeMode = mode
+    }
+
+    func setMangaTranslationEnabled(_ isEnabled: Bool) {
+        mangaTranslation.isEnabled = isEnabled
+        mangaTranslation.save(to: keyValueStore)
+    }
+
+    func setMangaTranslationTarget(_ target: MangaTranslationLanguage?) {
+        mangaTranslation.target = target
+        mangaTranslation.save(to: keyValueStore)
+        mangaTranslationAvailability = nil
+    }
+
+    func refreshMangaTranslationAvailability() async {
+        guard let target = mangaTranslation.target else {
+            mangaTranslationAvailability = nil
+            return
+        }
+        let availability = await translationEngine.availability(of: target)
+        // The target may have changed while this was checked.
+        if mangaTranslation.target == target { mangaTranslationAvailability = availability }
     }
 
     func setImageQuality(_ quality: ImageQuality) {

@@ -10,3 +10,8 @@ artifacts/test-results/
 
 # Per-developer signing override (see Config/BikaMacosSigning.xcconfig)
 Config/Signing.local.xcconfig
+
+# On-device models: converted locally by tools/models, never committed (size; third-party weights)
+tools/models/.venv/
+tools/models/.cache/
+bika/MangaModels/

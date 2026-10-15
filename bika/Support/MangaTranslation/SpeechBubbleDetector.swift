@@ -1,0 +1,243 @@
+import Foundation
+
+/// A speech bubble found on a page: a white region and the ink enclosed by it.
+nonisolated struct DetectedBubble: Sendable {
+    /// Bounding box of the bubble's white interior.
+    let bounds: PixelRect
+    /// Bounding box of the ink inside the bubble.
+    let inkBounds: PixelRect
+    /// Ink mask over `bounds`, row-major, `true` for text pixels.
+    let inkMask: [Bool]
+
+    func isInk(x: Int, y: Int) -> Bool {
+        guard x >= bounds.minX, x < bounds.maxX, y >= bounds.minY, y < bounds.maxY else { return false }
+        return inkMask[(y - bounds.minY) * bounds.width + (x - bounds.minX)]
+    }
+
+    /// Ink count per pixel column of `area` (clipped to the bubble), indexed from `area.minX`.
+    func columnInk(in area: PixelRect) -> [Int] {
+        profile(in: area, alongColumns: true)
+    }
+
+    /// Ink count per pixel row of `area` (clipped to the bubble), indexed from `area.minY`.
+    func rowInk(in area: PixelRect) -> [Int] {
+        profile(in: area, alongColumns: false)
+    }
+
+    /// One pass over the mask with plain index arithmetic. The profiles are recomputed for every
+    /// line and every reading, so a per-pixel closure with bounds checks here dominated
+    /// segmentation time.
+    private func profile(in area: PixelRect, alongColumns: Bool) -> [Int] {
+        var counts = [Int](repeating: 0, count: alongColumns ? area.width : area.height)
+        let minX = max(area.minX, bounds.minX), maxX = min(area.maxX, bounds.maxX)
+        let minY = max(area.minY, bounds.minY), maxY = min(area.maxY, bounds.maxY)
+        guard minX < maxX, minY < maxY else { return counts }
+        let stride = bounds.width
+        inkMask.withUnsafeBufferPointer { mask in
+            counts.withUnsafeMutableBufferPointer { counts in
+                for y in minY..<maxY {
+                    let row = (y - bounds.minY) * stride - bounds.minX
+                    for x in minX..<maxX where mask[row + x] {
+                        counts[alongColumns ? x - area.minX : y - area.minY] += 1
+                    }
+                }
+            }
+        }
+        return counts
+    }
+}
+
+/// Finds speech bubbles by their shape rather than by their text.
+///
+/// Vision does not detect vertical Japanese at all — not even as text rectangles — so the
+/// pipeline cannot ask it where the text is. Bubbles are found instead as enclosed flat
+/// regions: a connected area of evenly coloured pixels — white, gray or tinted — that does not
+/// touch the page edge. The text is whatever clearly darker pixels that area surrounds — the
+/// holes in it.
+nonisolated struct SpeechBubbleDetector: Sendable {
+    nonisolated struct Configuration: Sendable {
+        /// Neighbouring pixels differing by at most this much belong to the same flat region.
+        /// Comparing neighbours rather than a fixed level is what lets a gray or tinted bubble,
+        /// or one with a soft gradient, count as a bubble; a fixed "at least 200" rule only
+        /// ever found white ones.
+        var flatTolerance: Int = 10
+        /// Regions darker than this on average are not bubbles (dark text on a dark fill is not
+        /// something Vision reads either).
+        var minimumInteriorBrightness: Int = 90
+        /// Holes count as ink when at most this fraction of the region's mean brightness…
+        var inkBrightnessRatio: Double = 0.65
+        /// …and at least this much darker than it. Text contrasts sharply with its bubble.
+        var minimumInkContrast: Int = 60
+        /// Bubble area as a fraction of the page.
+        var minimumAreaFraction: Double = 0.002
+        var maximumAreaFraction: Double = 0.35
+        /// Bubbles are compact; long thin white strips are panel gutters.
+        var minimumFillRatio: Double = 0.30
+        /// Ink as a fraction of the bubble area. Below: an empty shape. Above: not a bubble.
+        var minimumInkFraction: Double = 0.003
+        var maximumInkFraction: Double = 0.55
+
+        init() {}
+    }
+
+    var configuration = Configuration()
+
+    func detect(in bitmap: GrayscaleBitmap) -> [DetectedBubble] {
+        let width = bitmap.width
+        let height = bitmap.height
+        let pageArea = Double(width * height)
+
+        // Label 4-connected flat regions. 0 = unlabelled.
+        var labels = [Int32](repeating: 0, count: width * height)
+        var components: [(label: Int32, bounds: PixelRect, area: Int, brightnessSum: Int, touchesEdge: Bool)] = []
+        var stack: [Int] = []
+        var nextLabel: Int32 = 1
+        let tolerance = configuration.flatTolerance
+        let minimumBrightness = configuration.minimumInteriorBrightness
+
+        bitmap.pixels.withUnsafeBufferPointer { pixels in
+            labels.withUnsafeMutableBufferPointer { labels in
+                for start in 0..<(width * height) where labels[start] == 0 && Int(pixels[start]) >= minimumBrightness {
+                    let label = nextLabel
+                    nextLabel += 1
+                    labels[start] = label
+                    stack.removeAll(keepingCapacity: true)
+                    stack.append(start)
+                    var bounds = PixelRect(minX: start % width, minY: start / width, maxX: start % width + 1, maxY: start / width + 1)
+                    var area = 0
+                    var brightnessSum = 0
+                    var touchesEdge = false
+                    while let index = stack.popLast() {
+                        area += 1
+                        let value = Int(pixels[index])
+                        brightnessSum += value
+                        let x = index % width
+                        let y = index / width
+                        if x == 0 || y == 0 || x == width - 1 || y == height - 1 { touchesEdge = true }
+                        bounds.minX = min(bounds.minX, x)
+                        bounds.minY = min(bounds.minY, y)
+                        bounds.maxX = max(bounds.maxX, x + 1)
+                        bounds.maxY = max(bounds.maxY, y + 1)
+                        if x > 0 { Self.grow(into: index - 1, from: value, pixels, labels, label, tolerance, minimumBrightness, &stack) }
+                        if x < width - 1 { Self.grow(into: index + 1, from: value, pixels, labels, label, tolerance, minimumBrightness, &stack) }
+                        if y > 0 { Self.grow(into: index - width, from: value, pixels, labels, label, tolerance, minimumBrightness, &stack) }
+                        if y < height - 1 { Self.grow(into: index + width, from: value, pixels, labels, label, tolerance, minimumBrightness, &stack) }
+                    }
+                    components.append((label, bounds, area, brightnessSum, touchesEdge))
+                }
+            }
+        }
+
+        var bubbles: [DetectedBubble] = []
+        for component in components {
+            // The page background and gutters reach the edge; bubbles are enclosed.
+            guard !component.touchesEdge else { continue }
+            let areaFraction = Double(component.area) / pageArea
+            guard areaFraction >= configuration.minimumAreaFraction,
+                  areaFraction <= configuration.maximumAreaFraction else { continue }
+            guard Double(component.area) / Double(component.bounds.area) >= configuration.minimumFillRatio else { continue }
+
+            let meanBrightness = Double(component.brightnessSum) / Double(component.area)
+            let inkLimit = min(
+                meanBrightness * configuration.inkBrightnessRatio,
+                meanBrightness - Double(configuration.minimumInkContrast)
+            )
+            guard inkLimit > 0, let bubble = enclosedInk(
+                of: component.label,
+                bounds: component.bounds,
+                inkLimit: inkLimit,
+                bitmap: bitmap,
+                labels: labels
+            ) else { continue }
+            bubbles.append(bubble)
+        }
+        // A speech bubble never holds another speech bubble. When one region encloses another,
+        // the outer one is a white area bounded by line art — often a whole panel — whose "ink"
+        // is the inner bubble's outline and text, which would otherwise be read a second time.
+        return bubbles.filter { outer in
+            !bubbles.contains { inner in inner.bounds != outer.bounds && outer.bounds.contains(inner.bounds) }
+        }
+    }
+
+    private static func grow(
+        into index: Int,
+        from value: Int,
+        _ pixels: UnsafeBufferPointer<UInt8>,
+        _ labels: UnsafeMutableBufferPointer<Int32>,
+        _ label: Int32,
+        _ tolerance: Int,
+        _ minimumBrightness: Int,
+        _ stack: inout [Int]
+    ) {
+        guard labels[index] == 0 else { return }
+        let next = Int(pixels[index])
+        guard next >= minimumBrightness, abs(next - value) <= tolerance else { return }
+        labels[index] = label
+        stack.append(index)
+    }
+
+    /// The ink a region encloses: pixels inside its bounding box that are not part of it and
+    /// cannot reach the box edge without crossing it. Pixels outside the bubble outline can
+    /// reach the edge; the text strokes inside it cannot.
+    private func enclosedInk(
+        of label: Int32,
+        bounds: PixelRect,
+        inkLimit: Double,
+        bitmap: GrayscaleBitmap,
+        labels: [Int32]
+    ) -> DetectedBubble? {
+        let boxWidth = bounds.width
+        let boxHeight = bounds.height
+        var outside = [Bool](repeating: false, count: boxWidth * boxHeight)
+        var stack: [Int] = []
+
+        func local(_ x: Int, _ y: Int) -> Int { (y - bounds.minY) * boxWidth + (x - bounds.minX) }
+        func isRegion(_ x: Int, _ y: Int) -> Bool { labels[y * bitmap.width + x] == label }
+
+        func seed(_ x: Int, _ y: Int) {
+            let index = local(x, y)
+            guard !outside[index], !isRegion(x, y) else { return }
+            outside[index] = true
+            stack.append(index)
+        }
+        for x in bounds.minX..<bounds.maxX {
+            seed(x, bounds.minY)
+            seed(x, bounds.maxY - 1)
+        }
+        for y in bounds.minY..<bounds.maxY {
+            seed(bounds.minX, y)
+            seed(bounds.maxX - 1, y)
+        }
+        while let index = stack.popLast() {
+            let x = index % boxWidth + bounds.minX
+            let y = index / boxWidth + bounds.minY
+            if x > bounds.minX { seed(x - 1, y) }
+            if x < bounds.maxX - 1 { seed(x + 1, y) }
+            if y > bounds.minY { seed(x, y - 1) }
+            if y < bounds.maxY - 1 { seed(x, y + 1) }
+        }
+
+        var mask = [Bool](repeating: false, count: boxWidth * boxHeight)
+        var inkCount = 0
+        var inkBounds: PixelRect?
+        for y in bounds.minY..<bounds.maxY {
+            for x in bounds.minX..<bounds.maxX {
+                let index = local(x, y)
+                // Light holes are counters inside glyphs (the middle of 口), not ink.
+                guard !outside[index], !isRegion(x, y), Double(bitmap[x, y]) <= inkLimit else { continue }
+                mask[index] = true
+                inkCount += 1
+                let pixel = PixelRect(minX: x, minY: y, maxX: x + 1, maxY: y + 1)
+                inkBounds = inkBounds.map { $0.union(pixel) } ?? pixel
+            }
+        }
+
+        let inkFraction = Double(inkCount) / Double(bounds.area)
+        guard let inkBounds,
+              inkFraction >= configuration.minimumInkFraction,
+              inkFraction <= configuration.maximumInkFraction else {
+            return nil
+        }
+        return DetectedBubble(bounds: bounds, inkBounds: inkBounds, inkMask: mask)
+    }
+}
