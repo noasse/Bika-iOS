@@ -1,4 +1,5 @@
 import SwiftUI
+import Translation
 
 struct SettingsView: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -7,6 +8,8 @@ struct SettingsView: View {
     @State private var showImageDiagnosticsExportConfirmation = false
     @State private var showClearImageDiagnosticsConfirmation = false
     @State private var diagnosticsExportItem: DiagnosticsExportItem?
+    /// Set to ask the system to download a language pack; it shows its own confirmation.
+    @State private var languagePackDownload: TranslationSession.Configuration?
 
     init(viewModel: SettingsViewModel = SettingsViewModel()) {
         _viewModel = State(initialValue: viewModel)
@@ -208,6 +211,10 @@ struct SettingsView: View {
                 Text("留空或关闭时只使用本地历史。DuckDNS/Let's Encrypt 可不填证书 pin；自签名证书才需要填写。服务地址、Token 和证书 pin 只保存在本机，不会写入仓库。")
             }
 
+            if viewModel.isMangaTranslationSupported {
+                mangaTranslationSection
+            }
+
             // About
             Section("关于") {
                 HStack {
@@ -353,6 +360,72 @@ extension ImageQuality {
         case .low: "低"
         case .medium: "中"
         case .high: "高"
+        }
+    }
+}
+
+extension SettingsView {
+    private var mangaTranslationSection: some View {
+        Section {
+            Toggle("漫画翻译（实验）", isOn: Binding(
+                get: { viewModel.mangaTranslation.isEnabled },
+                set: { viewModel.setMangaTranslationEnabled($0) }
+            ))
+            .accessibilityIdentifier("settings.mangaTranslation.enabled")
+
+            if viewModel.mangaTranslation.isEnabled {
+                Picker("翻译成", selection: Binding(
+                    get: { viewModel.mangaTranslation.target },
+                    set: { viewModel.setMangaTranslationTarget($0) }
+                )) {
+                    Text("未选择").tag(MangaTranslationLanguage?.none)
+                    ForEach(MangaTranslationLanguage.allCases, id: \.self) { language in
+                        Text(language.displayName).tag(Optional(language))
+                    }
+                }
+                .accessibilityIdentifier("settings.mangaTranslation.target")
+
+                if let target = viewModel.mangaTranslation.target {
+                    languagePackRow(for: target)
+                }
+            }
+        } header: {
+            Text("实验功能")
+        } footer: {
+            Text("把日文漫画里的文字翻译后显示在原来的位置。识别和翻译都在本机完成，不上传图片。效果仍在调试中。")
+        }
+        .task(id: viewModel.mangaTranslation.target) {
+            await viewModel.refreshMangaTranslationAvailability()
+        }
+        .translationTask(languagePackDownload) { session in
+            try? await session.prepareTranslation()
+            languagePackDownload = nil
+            await viewModel.refreshMangaTranslationAvailability()
+        }
+    }
+
+    @ViewBuilder
+    private func languagePackRow(for target: MangaTranslationLanguage) -> some View {
+        HStack {
+            Text("语言包")
+            Spacer()
+            switch viewModel.mangaTranslationAvailability {
+            case nil:
+                ProgressView()
+            case .installed:
+                Text("已就绪").foregroundStyle(.secondary)
+            case .needsDownload:
+                Button("下载") {
+                    languagePackDownload = TranslationSession.Configuration(
+                        source: MangaTranslationLanguage.source, target: target.language
+                    )
+                }
+                .accessibilityIdentifier("settings.mangaTranslation.download")
+            case .unsupported:
+                Text("此设备不支持").foregroundStyle(.secondary)
+            case .unavailableOnThisSystem:
+                Text("需要 iOS 26").foregroundStyle(.secondary)
+            }
         }
     }
 }

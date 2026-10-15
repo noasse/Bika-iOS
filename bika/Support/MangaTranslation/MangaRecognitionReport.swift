@@ -21,6 +21,10 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
         let blocks: [MangaTextBlock]
         /// Where the page's time went, by stage.
         var stages: MangaPageTextExtractor.StageTimings? = nil
+        /// One per block when a translation target is set.
+        var translations: [String]? = nil
+        var translationMilliseconds: Int? = nil
+        var translationError: String? = nil
     }
 
     nonisolated struct Summary: Codable, Sendable, Equatable {
@@ -48,6 +52,9 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
     let textDetector: String
     let detectorLoadMilliseconds: Int?
     let detectorLoadFailure: String?
+    /// The language pages were translated into, when one was set; and with what.
+    let translationTarget: String?
+    let translationEngine: String?
     let appVersion: String
     let buildNumber: String
     let deviceModel: String
@@ -67,6 +74,8 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
         textDetector: String = "rules",
         detectorLoadMilliseconds: Int? = nil,
         detectorLoadFailure: String? = nil,
+        translationTarget: String? = nil,
+        translationEngine: String? = nil,
         appVersion: String,
         buildNumber: String,
         deviceModel: String,
@@ -84,6 +93,8 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
         self.textDetector = textDetector
         self.detectorLoadMilliseconds = detectorLoadMilliseconds
         self.detectorLoadFailure = detectorLoadFailure
+        self.translationTarget = translationTarget
+        self.translationEngine = translationEngine
         self.appVersion = appVersion
         self.buildNumber = buildNumber
         self.deviceModel = deviceModel
@@ -127,6 +138,7 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
         let safeComic = comicID.filter { $0.isLetter || $0.isNumber }
         let engine = (textRecognizer.hasPrefix("manga-ocr") ? "mocr" : "vision")
             + (textDetector.hasPrefix("ctd") ? "-ctd" : "")
+            + (translationTarget.map { "-\($0)" } ?? "")
         let name = "bika-recognition-\(safeComic)-ep\(episodeOrder)-v\(pipelineVersion)-\(engine)-\(formatter.string(from: exportedAt)).json"
         let url = directory.appendingPathComponent(name)
         try encoded().write(to: url, options: .atomic)

@@ -574,6 +574,9 @@ extension ComicReaderView {
         let loader = imageDataLoader
         let cache = imageCache
         let comicID = viewModel.comicId
+        // With translation switched on and a language chosen, the report carries translations.
+        let translationTarget = MangaTranslationSettings.load(from: AppDependencies.shared.keyValueStore).activeTarget
+        let translationEngine: any MangaTranslationEngine = AppleTranslationEngine()
         recognitionReportProgress = (0, urls.count)
 
         recognitionReportTask = Task {
@@ -584,7 +587,10 @@ extension ComicReaderView {
             var pages: [MangaRecognitionReport.Page] = []
             for (index, url) in urls.enumerated() {
                 guard !Task.isCancelled else { return }
-                pages.append(await Self.recognisePage(index: index, url: url, target: target, loader: loader, cache: cache))
+                pages.append(await Self.recognisePage(
+                    index: index, url: url, target: target, loader: loader, cache: cache,
+                    translateTo: translationTarget, engine: translationEngine
+                ))
                 recognitionReportProgress = (index + 1, urls.count)
             }
             guard !Task.isCancelled else { return }
@@ -596,6 +602,8 @@ extension ComicReaderView {
                 textDetector: MangaPageTextExtractor().detectorIdentifier,
                 detectorLoadMilliseconds: ComicTextDetector.bundled?.loadMilliseconds,
                 detectorLoadFailure: ComicTextDetector.loadFailure,
+                translationTarget: translationTarget?.rawValue,
+                translationEngine: translationTarget.map { _ in translationEngine.identifier },
                 appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?",
                 buildNumber: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?",
                 deviceModel: Self.deviceModelIdentifier(),
@@ -618,7 +626,9 @@ extension ComicReaderView {
         url: URL?,
         target: ImageDecodeTarget,
         loader: any ImageDataLoading,
-        cache: ImageCache
+        cache: ImageCache,
+        translateTo translationTarget: MangaTranslationLanguage?,
+        engine: any MangaTranslationEngine
     ) async -> MangaRecognitionReport.Page {
         func failed(_ message: String) -> MangaRecognitionReport.Page {
             .init(index: index, pixelWidth: nil, pixelHeight: nil, milliseconds: nil, error: message, blocks: [])
@@ -639,7 +649,7 @@ extension ComicReaderView {
             let result = try await MangaTextRecognitionQueue.shared.run {
                 try MangaPageTextExtractor().timedExtract(from: cgImage)
             }
-            return .init(
+            var page = MangaRecognitionReport.Page(
                 index: index,
                 pixelWidth: cgImage.width,
                 pixelHeight: cgImage.height,
@@ -648,6 +658,18 @@ extension ComicReaderView {
                 blocks: result.blocks,
                 stages: result.stages
             )
+            if let translationTarget, !result.blocks.isEmpty {
+                // Straight to the engine, not through the cache: the report measures it.
+                let clock = ContinuousClock()
+                let start = clock.now
+                do {
+                    page.translations = try await engine.translate(result.blocks.map(\.sourceText), to: translationTarget)
+                    page.translationMilliseconds = Int(start.duration(to: clock.now) / .milliseconds(1))
+                } catch {
+                    page.translationError = error.localizedDescription
+                }
+            }
+            return page
         } catch is CancellationError {
             return failed("已取消")
         } catch {
