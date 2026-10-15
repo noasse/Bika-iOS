@@ -9,7 +9,7 @@ extension MangaPageTextExtractor {
         let detection: ComicTextDetection
         /// The detected box in analysis-bitmap pixels.
         let bounds: PixelRect
-        /// `bounds` with a margin, clipped to the page: what the recogniser sees.
+        /// The text's ink with a margin, clipped to the page: what the recogniser sees.
         let crop: PixelRect
         /// Light text on a dark ground; the crop is inverted before reading.
         let isInverted: Bool
@@ -59,11 +59,6 @@ extension MangaPageTextExtractor {
             maxX: min(bitmap.width, Int(rect.maxX.rounded(.up))), maxY: min(bitmap.height, Int(rect.maxY.rounded(.up)))
         )
         guard bounds.width >= 4, bounds.height >= 4 else { return nil }
-        let margin = max(4, Int(Double(min(bounds.width, bounds.height)) * configuration.detectedCropMargin))
-        let crop = PixelRect(
-            minX: max(0, bounds.minX - margin), minY: max(0, bounds.minY - margin),
-            maxX: min(bitmap.width, bounds.maxX + margin), maxY: min(bitmap.height, bounds.maxY + margin)
-        )
 
         // The ground is the region's typical brightness; text is what differs from it strongly.
         var histogram = [Int](repeating: 0, count: 256)
@@ -91,6 +86,19 @@ extension MangaPageTextExtractor {
         // Without a segmentation (sparse or stylised ink, text on busy art), the box's shape
         // decides; Japanese is vertical unless clearly wider than tall.
         let orientation = segmented?.orientation ?? (bounds.width > bounds.height * 2 ? .horizontal : .vertical)
+
+        // The recogniser stretches every crop to a square, and was trained on crops that hug
+        // the text. The detector's box is looser — on a test page a two-column bubble's box was
+        // nearly twice as wide as its text — and read off that box the columns came back
+        // interleaved (`食べーメン` for `ラーメン食べたい`). So the crop follows the ink, with the
+        // same margin as on the rule-based path.
+        let text = inkBounds ?? bounds
+        let margin = segmented.map { max(4, Int(Double($0.emSize) * configuration.detectedCropMarginEms)) }
+            ?? max(4, Int(Double(min(bounds.width, bounds.height)) * 0.08))
+        let crop = PixelRect(
+            minX: max(0, text.minX - margin), minY: max(0, text.minY - margin),
+            maxX: min(bitmap.width, text.maxX + margin), maxY: min(bitmap.height, text.maxY + margin)
+        )
         return TextRegion(
             detection: detection,
             bounds: bounds,

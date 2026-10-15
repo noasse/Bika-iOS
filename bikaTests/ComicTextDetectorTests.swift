@@ -185,6 +185,21 @@ final class ComicTextDetectorTests: XCTestCase {
         XCTAssertEqual(blocks.map(\.orientation), [.vertical, .vertical, .vertical, .vertical])
     }
 
+    func testRegionsAreReadOffTheirTextNotTheDetectorsLooserBox() throws {
+        let extractor = try modelExtractor()
+        // Read off the detector's box, wider than the text, the two-column bubble came back
+        // interleaved (`食べーメン`) and the gray one lost its first column.
+        let page = MangaPageFixtures.page(bubbles: [
+            Bubble(frame: CGRect(x: 760, y: 100, width: 340, height: 460), columns: ["本当に", "それで", "いいの？"]),
+            Bubble(frame: CGRect(x: 380, y: 120, width: 300, height: 400), columns: ["話を", "聞いて"], fill: 0.6),
+            Bubble(frame: CGRect(x: 60, y: 120, width: 300, height: 400), columns: ["おい", "待てよ"], fill: 0, ink: 1),
+            Bubble(frame: CGRect(x: 700, y: 640, width: 400, height: 380), columns: ["ラーメン", "食べたい"]),
+        ], screentone: true)
+
+        XCTAssertEqual(try extractor.extract(from: page).map(\.sourceText),
+                       ["本当にそれでいいの？", "話を聞いて", "おい待てよ", "ラーメン食べたい"])
+    }
+
     func testScreentoneAndLineArtAreNotText() throws {
         let extractor = try modelExtractor()
         let page = MangaPageFixtures.page(

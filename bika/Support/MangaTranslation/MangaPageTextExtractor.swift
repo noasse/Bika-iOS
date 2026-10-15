@@ -17,8 +17,8 @@ nonisolated struct MangaPageTextExtractor: Sendable {
     /// 5 bubbles read by manga-ocr when bundled ·
     /// 6 model threshold calibrated on a device, overlapping duplicates removed, rects clipped ·
     /// 7 text found by a trained detector when bundled · 8 readings of only small kana and
-    /// long-vowel marks dropped.
-    static let pipelineVersion = 8
+    /// long-vowel marks dropped · 9 detected regions cropped to their ink.
+    static let pipelineVersion = 9
 
     nonisolated struct Configuration: Sendable {
         /// Analysis happens on a copy whose long side is at most this many pixels.
@@ -53,8 +53,8 @@ nonisolated struct MangaPageTextExtractor: Sendable {
         var minimumTextScore = 0.3
         /// Bubbles below this are not used to frame the text found in them.
         var minimumBubbleScore = 0.5
-        /// Margin around a detected text box, as a fraction of its shorter side.
-        var detectedCropMargin = 0.08
+        /// Margin around a detected region's text, in characters — as on the rule-based path.
+        var detectedCropMarginEms = 0.3
         /// Within a detected region, pixels at least this far from the ground's brightness are
         /// ink.
         var detectedInkContrast = 60
