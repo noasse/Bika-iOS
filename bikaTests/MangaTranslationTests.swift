@@ -40,7 +40,7 @@ private final class FakeRecognition: @unchecked Sendable {
     }
 
     func recognition(version: Int = 8) -> MangaPageTranslator.Recognition {
-        MangaPageTranslator.Recognition(pipelineVersion: version, detector: "ctd@test", recognizer: "mocr@test") { [self] _ in
+        MangaPageTranslator.Recognition(pipelineVersion: version, detector: "ctd@test", recognizer: "mocr@test") { [self] _, _ in
             lock.withLock { _calls += 1 }
             return (blocks, 5)
         }

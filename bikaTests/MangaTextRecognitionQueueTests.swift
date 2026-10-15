@@ -48,6 +48,31 @@ final class MangaTextRecognitionQueueTests: XCTestCase {
         XCTAssertEqual(order.values, ["newest", "middle", "oldest"])
     }
 
+    func testPrefetchWaitsBehindPagesOnScreen() async throws {
+        let queue = MangaTextRecognitionQueue()
+        let gate = DispatchSemaphore(value: 0)
+        let order = OrderRecorder()
+
+        let holding = OrderRecorder()
+        let blocker = Task { try await queue.run { holding.append("holding"); gate.wait() } }
+        try await waitUntil { !holding.values.isEmpty }
+
+        var tasks: [Task<Void, Error>] = []
+        // The page on screen, then the two after it — prefetched, so requested later.
+        for (name, urgency) in [("visible", MangaTextRecognitionQueue.Urgency.visible),
+                                ("next", .prefetch), ("after next", .prefetch)] {
+            tasks.append(Task { try await queue.run(urgency: urgency) { order.append(name) } })
+            let expected = tasks.count
+            try await waitUntil { await queue.waitingCount == expected }
+        }
+
+        gate.signal()
+        _ = try await blocker.value
+        for task in tasks { try await task.value }
+
+        XCTAssertEqual(order.values, ["visible", "next", "after next"])
+    }
+
     func testCancelledWaitingJobLeavesTheQueueWithoutRunning() async throws {
         let queue = MangaTextRecognitionQueue()
         let gate = DispatchSemaphore(value: 0)

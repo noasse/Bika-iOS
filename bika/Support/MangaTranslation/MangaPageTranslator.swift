@@ -22,7 +22,8 @@ nonisolated struct MangaPageTranslator: Sendable {
         let pipelineVersion: Int
         let detector: String
         let recognizer: String
-        let recognize: @Sendable (CGImage) async throws -> (blocks: [MangaTextBlock], milliseconds: Int)
+        let recognize: @Sendable (CGImage, MangaTextRecognitionQueue.Urgency) async throws
+            -> (blocks: [MangaTextBlock], milliseconds: Int)
 
         /// The page pipeline with the bundled models, one page at a time through the shared
         /// queue. Which models are in use is only known once they have loaded — seconds each —
@@ -36,8 +37,8 @@ nonisolated struct MangaPageTranslator: Sendable {
                 pipelineVersion: MangaPageTextExtractor.pipelineVersion,
                 detector: detector,
                 recognizer: recognizer
-            ) { image in
-                try await MangaTextRecognitionQueue.shared.run {
+            ) { image, urgency in
+                try await MangaTextRecognitionQueue.shared.run(urgency: urgency) {
                     let result = try MangaPageTextExtractor().timedExtract(from: image)
                     return (result.blocks, result.milliseconds)
                 }
@@ -54,12 +55,16 @@ nonisolated struct MangaPageTranslator: Sendable {
               detector: recognition.detector, recognizer: recognition.recognizer)
     }
 
-    /// - Parameter image: the decoded page, asked for only when the page has not been
-    ///   recognised before.
+    /// - Parameters:
+    ///   - image: the decoded page, asked for only when the page has not been recognised
+    ///     before.
+    ///   - urgency: `.prefetch` for a page the reader has not reached, which waits behind
+    ///     pages on screen.
     func translate(
         pageURL: URL,
         image: @Sendable () async throws -> CGImage,
-        to target: MangaTranslationLanguage
+        to target: MangaTranslationLanguage,
+        urgency: MangaTextRecognitionQueue.Urgency = .visible
     ) async throws -> MangaPageTranslation {
         let recognitionKey = recognitionKey(for: pageURL)
         let blocks: [MangaTextBlock]
@@ -69,7 +74,7 @@ nonisolated struct MangaPageTranslator: Sendable {
             blocks = cached
             recognizedFromCache = true
         } else {
-            let result = try await recognition.recognize(try await image())
+            let result = try await recognition.recognize(try await image(), urgency)
             blocks = result.blocks
             recognitionMilliseconds = result.milliseconds
             recognizedFromCache = false

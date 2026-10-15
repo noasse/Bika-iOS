@@ -16,6 +16,11 @@ struct ComicReaderView: View {
     @State private var contentSize = CGSize.zero
     /// Debug builds: draw what the translation pipeline recognises on each page.
     @State private var debugRecognizesText = false
+    /// Read when the reader opens; changed in settings.
+    @State private var translationSettings = MangaTranslationSettings()
+    /// The toolbar's original/translation switch.
+    @State private var showsTranslation = true
+    @State private var translationPrefetchTask: Task<Void, Never>?
 #if DEBUG
     /// Progress of a chapter recognition report: pages done out of total.
     @State private var recognitionReportProgress: (done: Int, total: Int)?
@@ -115,9 +120,14 @@ struct ComicReaderView: View {
                 viewModel.showToolbar = true
             }
         }
+        .onAppear {
+            translationSettings = MangaTranslationSettings.load(from: AppDependencies.shared.keyValueStore)
+            if translationTarget != nil { MangaTranslationService.shared.prepare() }
+        }
         .onDisappear {
             viewModel.cancelLoadingPages()
             cancelImagePrefetch()
+            translationPrefetchTask?.cancel()
             saveProgress()
 #if DEBUG
             recognitionReportTask?.cancel()
@@ -130,6 +140,7 @@ struct ComicReaderView: View {
         }
         .onChange(of: currentPage) { _, newPage in
             scheduleImagePrefetch(around: newPage)
+            scheduleTranslationPrefetch(around: newPage)
         }
         .onChange(of: viewModel.pages.count) { _, count in
             guard count > 0 else {
@@ -148,6 +159,7 @@ struct ComicReaderView: View {
         .onChange(of: viewModel.currentEpisodeIndex) { _, _ in
             pageLayout.reset()
             cancelImagePrefetch()
+            translationPrefetchTask?.cancel()
         }
         .onChange(of: viewModel.readerMode) { _, _ in
             imagePrefetchKey = nil
@@ -276,7 +288,9 @@ struct ComicReaderView: View {
                         decodeTarget: readerDecodeTarget(),
                         pageID: readerPageID(for: index),
                         onSingleTap: handleTap,
-                        debugRecognizesText: debugRecognizesText
+                        debugRecognizesText: debugRecognizesText,
+                        translationTarget: translationTarget,
+                        showsTranslation: showsTranslation
                     )
                         .containerRelativeFrame(.horizontal)
                         .id(index)
@@ -310,7 +324,9 @@ struct ComicReaderView: View {
                                 pageLayout.record(aspectRatio, for: pageID)
                             },
                             onSingleTap: handleTap,
-                            debugRecognizesText: debugRecognizesText
+                            debugRecognizesText: debugRecognizesText,
+                            translationTarget: translationTarget,
+                            showsTranslation: showsTranslation
                         )
                         .onAppear {
                             guard let pageID else { return }
@@ -352,6 +368,42 @@ struct ComicReaderView: View {
             backendPageID: backendID.flatMap { $0.isEmpty ? nil : $0 },
             imageURL: imageURL
         )
+    }
+
+    // MARK: - Translation
+
+    /// The language pages are translated into; nil when translation is off, no language is
+    /// chosen, or the system cannot translate outside a view (before iOS 26).
+    private var translationTarget: MangaTranslationLanguage? {
+        AppleTranslationEngine.isAvailableOnThisSystem ? translationSettings.activeTarget : nil
+    }
+
+    /// Translates the next two pages ahead of the reader, so they are ready on arrival. Their
+    /// recognition waits behind any page on screen; scrolling on cancels what is left.
+    private func scheduleTranslationPrefetch(around index: Int) {
+        translationPrefetchTask?.cancel()
+        guard let language = translationTarget, let decodeTarget = readerDecodeTarget() else { return }
+        let urls = [index + 1, index + 2]
+            .filter { viewModel.pages.indices.contains($0) }
+            .compactMap { viewModel.pages[$0].media.imageURL }
+        guard !urls.isEmpty else { return }
+        let loader = imageDataLoader
+        let cache = imageCache
+        translationPrefetchTask = Task(priority: .utility) {
+            let translator = await MangaTranslationService.shared.translator()
+            for url in urls {
+                guard !Task.isCancelled else { return }
+                // Failures are left to the page itself, which retries and shows them.
+                _ = try? await translator.translate(pageURL: url, image: {
+                    let asset = try await cache.loadAsset(
+                        for: url, target: decodeTarget, overscan: 2, priority: .utility, imageLoader: loader,
+                        diagnosticContext: ImageDiagnosticContext(purpose: .readerPrefetch, url: url)
+                    )
+                    guard let image = asset.image.cgImage else { throw CocoaError(.fileReadCorruptFile) }
+                    return image
+                }, to: language, urgency: .prefetch)
+            }
+        }
     }
 
     // MARK: - Image Prefetch
@@ -454,6 +506,21 @@ struct ComicReaderView: View {
                     .font(.subheadline)
 
                 Spacer()
+
+                if translationTarget != nil {
+                    Button {
+                        showsTranslation.toggle()
+                    } label: {
+                        Text(showsTranslation ? "译文" : "原文")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(showsTranslation ? Color.accentPink : Color.gray.opacity(0.5)))
+                            .foregroundStyle(.white)
+                    }
+                    .accessibilityLabel(showsTranslation ? "显示原文" : "显示译文")
+                    .accessibilityIdentifier("reader.translationToggle")
+                }
 
 #if DEBUG
                 Menu {

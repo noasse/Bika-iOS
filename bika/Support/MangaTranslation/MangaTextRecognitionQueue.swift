@@ -11,11 +11,24 @@ import Foundation
 /// So: one job runs at a time; waiting jobs are served last-in-first-out, because the most
 /// recent request is the page the reader is looking at; a cancelled waiting job leaves the
 /// queue; and cancelling a running job is forwarded into its work, which checks it.
+///
+/// Prefetch jobs — pages ahead of the reader — wait behind every on-screen job however
+/// recent: otherwise prefetching the next pages, requested right after the current one,
+/// would run before it. Among themselves they run in the order requested, which is reading
+/// order.
 actor MangaTextRecognitionQueue {
+    nonisolated enum Urgency: Sendable {
+        /// A page on screen.
+        case visible
+        /// A page the reader has not reached yet.
+        case prefetch
+    }
+
     static let shared = MangaTextRecognitionQueue()
 
     private struct Waiter {
         let id: UUID
+        let urgency: Urgency
         let continuation: CheckedContinuation<Void, Error>
     }
 
@@ -29,9 +42,10 @@ actor MangaTextRecognitionQueue {
     /// while waiting, or if `work` observes cancellation while running.
     func run<Value: Sendable>(
         priority: TaskPriority = .utility,
+        urgency: Urgency = .visible,
         _ work: @escaping @Sendable () throws -> Value
     ) async throws -> Value {
-        try await acquire()
+        try await acquire(urgency)
         defer { release() }
         try Task.checkCancellation()
 
@@ -45,7 +59,7 @@ actor MangaTextRecognitionQueue {
         }
     }
 
-    private func acquire() async throws {
+    private func acquire(_ urgency: Urgency) async throws {
         guard isRunning else {
             isRunning = true
             return
@@ -53,7 +67,7 @@ actor MangaTextRecognitionQueue {
         let id = UUID()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                waiting.append(Waiter(id: id, continuation: continuation))
+                waiting.append(Waiter(id: id, urgency: urgency, continuation: continuation))
             }
         } onCancel: {
             Task { await self.cancelWaiter(id) }
@@ -66,11 +80,13 @@ actor MangaTextRecognitionQueue {
     }
 
     private func release() {
-        // Hand the turn straight to the newest waiter; the queue stays busy.
-        if let next = waiting.popLast() {
-            next.continuation.resume()
-        } else {
+        // Hand the turn straight to the newest on-screen waiter, else the oldest prefetch;
+        // the queue stays busy.
+        guard let index = waiting.lastIndex(where: { $0.urgency == .visible })
+                ?? waiting.firstIndex(where: { $0.urgency == .prefetch }) else {
             isRunning = false
+            return
         }
+        waiting.remove(at: index).continuation.resume()
     }
 }
