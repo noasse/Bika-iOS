@@ -3,8 +3,10 @@ import CoreML
 import XCTest
 @testable import bika
 
-/// The manga-ocr path. Model tests skip when bika/MangaModels was not converted locally
-/// (tools/models/README.md), as on CI; the pure steps are tested regardless.
+/// The manga-ocr path, with bubbles found by rule (the fallback when the text detector is not
+/// bundled; ComicTextDetectorTests covers the detector path). Model tests skip when
+/// bika/MangaModels was not converted locally (tools/models/README.md), as on CI; the pure
+/// steps are tested regardless.
 final class MangaOCRRecognizerTests: XCTestCase {
     private typealias Bubble = MangaPageFixtures.Bubble
 
@@ -13,7 +15,7 @@ final class MangaOCRRecognizerTests: XCTestCase {
             MangaOCRRecognizer.bundled,
             "manga-ocr is not bundled; convert it with tools/models/convert_manga_ocr.py"
         )
-        var extractor = MangaPageTextExtractor()
+        var extractor = MangaPageTextExtractor.rules()
         extractor.textRecognizer = recognizer
         return extractor
     }
@@ -203,7 +205,7 @@ final class MangaModelPathRulesTests: XCTestCase {
     ])
 
     private func extractor(confidence: Double) -> MangaPageTextExtractor {
-        var extractor = MangaPageTextExtractor()
+        var extractor = MangaPageTextExtractor.rules()
         extractor.textRecognizer = FixedRecognizer(text: "本当にそれでいいの？", confidence: confidence)
         extractor.configuration.readsCaptions = false
         return extractor

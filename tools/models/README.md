@@ -23,3 +23,19 @@ tools/models/.venv/bin/python tools/models/verify_manga_ocr.py tools/models/.cac
 ```
 
 Each sample must decode to identical text with both.
+
+## Comic text detector (finding the text)
+
+Source: [`ogkalu/comic-text-and-bubble-detector`](https://huggingface.co/ogkalu/comic-text-and-bubble-detector)
+at revision `16e8a622`, Apache-2.0. An RT-DETR-v2 that finds speech bubbles, text inside
+them, and text outside them (narration and notes on the art).
+
+```bash
+tools/models/.venv/bin/python tools/models/convert_comic_detector.py
+```
+
+Downloads about 170 MB and writes `ComicTextDetectorModel.mlpackage` (about 82 MB) next to
+manga-ocr. The script checks the converted model against PyTorch on a rendered page, on CPU
+and GPU, which is what the app runs it on; the Neural Engine moved boxes past tolerance.
+
+The detector is only used together with manga-ocr. Without it, bubbles are found by rule.

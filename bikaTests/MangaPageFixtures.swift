@@ -20,6 +20,8 @@ enum MangaPageFixtures {
         var vertical = true
         /// Interior brightness, 0 black ... 1 white. Real bubbles are often gray or tinted.
         var fill: CGFloat = 1
+        /// Text brightness; 1 with a fill of 0 is a white-on-black bubble.
+        var ink: CGFloat = 0
         /// `false` draws only the text, straight onto the page — vertical narration over art.
         var outlined = true
     }
@@ -120,7 +122,7 @@ enum MangaPageFixtures {
         if bubble.outlined {
             context.setFillColor(gray: bubble.fill, alpha: 1)
             context.fillEllipse(in: bubble.frame)
-            context.setStrokeColor(gray: 0, alpha: 1)
+            context.setStrokeColor(gray: bubble.fill < 0.5 ? 1 : 0, alpha: 1)
             context.setLineWidth(4)
             context.strokeEllipse(in: bubble.frame)
         }
@@ -139,7 +141,8 @@ enum MangaPageFixtures {
                 let x = right - CGFloat(columnIndex + 1) * cell
                 for (row, character) in column.enumerated() {
                     drawGlyph(character, font: font, vertical: true,
-                              in: CGRect(x: x, y: top + CGFloat(row) * cell, width: cell, height: cell), context: context)
+                              in: CGRect(x: x, y: top + CGFloat(row) * cell, width: cell, height: cell),
+                              ink: bubble.ink, context: context)
                 }
                 if columnIndex == 0, let furigana = bubble.furigana {
                     let small = CTFontCreateWithName("HiraginoSans-W6" as CFString, bubble.fontSize * 0.4, nil)
@@ -147,7 +150,7 @@ enum MangaPageFixtures {
                     for (row, character) in furigana.enumerated() {
                         drawGlyph(character, font: small, vertical: true,
                                   in: CGRect(x: x + cell + 2, y: top + CGFloat(row) * smallCell, width: smallCell, height: smallCell),
-                                  context: context)
+                                  ink: bubble.ink, context: context)
                     }
                 }
             }
@@ -159,7 +162,7 @@ enum MangaPageFixtures {
                 for (index, character) in line.enumerated() {
                     drawGlyph(character, font: font, vertical: false,
                               in: CGRect(x: left + CGFloat(index) * cell, y: top + CGFloat(lineIndex) * cell, width: cell, height: cell),
-                              context: context)
+                              ink: bubble.ink, context: context)
                 }
             }
         }
@@ -171,7 +174,9 @@ enum MangaPageFixtures {
     /// characters like ー and 、 while leaving every glyph upright — as on a real page.
     /// kCTVerticalFormsAttributeName is not a substitute: inside a horizontal line it also
     /// rotates each glyph 90°, producing sideways text no manga contains.
-    private static func drawGlyph(_ character: Character, font: CTFont, vertical: Bool, in cell: CGRect, context: CGContext) {
+    private static func drawGlyph(
+        _ character: Character, font: CTFont, vertical: Bool, in cell: CGRect, ink: CGFloat = 0, context: CGContext
+    ) {
         let drawingFont = vertical ? verticalAlternates(of: font) : font
         let attributes: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): drawingFont,
@@ -181,7 +186,7 @@ enum MangaPageFixtures {
         let bounds = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
 
         context.saveGState()
-        context.setFillColor(gray: 0, alpha: 1)
+        context.setFillColor(gray: ink, alpha: 1)
         // CoreText draws in a bottom-left space; undo the page flip locally around the cell.
         context.translateBy(x: 0, y: cell.midY * 2)
         context.scaleBy(x: 1, y: -1)

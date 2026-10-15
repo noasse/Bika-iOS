@@ -44,6 +44,10 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
     let recognizerLoadMilliseconds: Int?
     /// Why a bundled model did not load, leaving the Vision path to read the chapter.
     let recognizerLoadFailure: String?
+    /// What found the text: `ctd@<revision>`, or `rules` when the detector is not bundled.
+    let textDetector: String
+    let detectorLoadMilliseconds: Int?
+    let detectorLoadFailure: String?
     let appVersion: String
     let buildNumber: String
     let deviceModel: String
@@ -60,6 +64,9 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
         textRecognizer: String,
         recognizerLoadMilliseconds: Int? = nil,
         recognizerLoadFailure: String? = nil,
+        textDetector: String = "rules",
+        detectorLoadMilliseconds: Int? = nil,
+        detectorLoadFailure: String? = nil,
         appVersion: String,
         buildNumber: String,
         deviceModel: String,
@@ -74,6 +81,9 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
         self.textRecognizer = textRecognizer
         self.recognizerLoadMilliseconds = recognizerLoadMilliseconds
         self.recognizerLoadFailure = recognizerLoadFailure
+        self.textDetector = textDetector
+        self.detectorLoadMilliseconds = detectorLoadMilliseconds
+        self.detectorLoadFailure = detectorLoadFailure
         self.appVersion = appVersion
         self.buildNumber = buildNumber
         self.deviceModel = deviceModel
@@ -115,7 +125,8 @@ nonisolated struct MangaRecognitionReport: Codable, Sendable {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let safeComic = comicID.filter { $0.isLetter || $0.isNumber }
-        let engine = textRecognizer.hasPrefix("manga-ocr") ? "mocr" : "vision"
+        let engine = (textRecognizer.hasPrefix("manga-ocr") ? "mocr" : "vision")
+            + (textDetector.hasPrefix("ctd") ? "-ctd" : "")
         let name = "bika-recognition-\(safeComic)-ep\(episodeOrder)-v\(pipelineVersion)-\(engine)-\(formatter.string(from: exportedAt)).json"
         let url = directory.appendingPathComponent(name)
         try encoded().write(to: url, options: .atomic)

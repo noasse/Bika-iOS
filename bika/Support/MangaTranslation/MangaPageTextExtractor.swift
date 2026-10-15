@@ -3,9 +3,10 @@ import Foundation
 
 /// Finds and reads the Japanese text on one manga page.
 ///
-/// Pipeline: speech bubbles → lines inside each bubble → vertical lines reflowed into a
-/// horizontal strip → Vision OCR. Text outside bubbles (sound effects, narration boxes drawn
-/// over art) is out of scope for this experiment.
+/// With the text detector and recogniser model bundled: detector → each text region read by
+/// the model (DetectedTextReading.swift). Otherwise the rule-based pipeline: speech bubbles →
+/// lines inside each bubble → read by the model, or reflowed into horizontal strips for Vision
+/// → a Vision pass for horizontal free text.
 nonisolated struct MangaPageTextExtractor: Sendable {
     /// Bumped whenever a change can alter what is recognised on a page. Reports record it so
     /// two evaluation runs can be compared, and cached results from another version are not
@@ -14,8 +15,9 @@ nonisolated struct MangaPageTextExtractor: Sendable {
     /// 1 bubbles and vertical reflow · 2 batched OCR · 3 line-art and garbage filters ·
     /// 4 flat-fill bubbles, free horizontal text, across-column misread filter ·
     /// 5 bubbles read by manga-ocr when bundled ·
-    /// 6 model threshold calibrated on a device, overlapping duplicates removed, rects clipped.
-    static let pipelineVersion = 6
+    /// 6 model threshold calibrated on a device, overlapping duplicates removed, rects clipped ·
+    /// 7 text found by a trained detector when bundled.
+    static let pipelineVersion = 7
 
     nonisolated struct Configuration: Sendable {
         /// Analysis happens on a copy whose long side is at most this many pixels.
@@ -44,6 +46,18 @@ nonisolated struct MangaPageTextExtractor: Sendable {
         /// Also read horizontal text set straight onto the page (afterwords, notes, narration).
         var readsCaptions = true
 
+        // Detector path.
+        /// Detected text regions scoring below this are not read. Loose on purpose: the
+        /// recogniser's confidence filter catches regions with no real text in them.
+        var minimumTextScore = 0.3
+        /// Bubbles below this are not used to frame the text found in them.
+        var minimumBubbleScore = 0.5
+        /// Margin around a detected text box, as a fraction of its shorter side.
+        var detectedCropMargin = 0.08
+        /// Within a detected region, pixels at least this far from the ground's brightness are
+        /// ink.
+        var detectedInkContrast = 60
+
         init() {}
     }
 
@@ -55,14 +69,30 @@ nonisolated struct MangaPageTextExtractor: Sendable {
     var captionReader = CaptionTextReader()
     /// Reads bubble text when available; nil falls back to Vision with column reflow.
     var textRecognizer: (any MangaTextRecognizing)? = MangaOCRRecognizer.bundled
+    /// Finds the text when available, together with `textRecognizer`; nil falls back to
+    /// rule-based bubble finding.
+    var textDetector: (any ComicTextDetecting)? = ComicTextDetector.bundled
 
     /// The path bubbles are read with, as recorded in reports.
     var recognizerIdentifier: String { textRecognizer?.identifier ?? "vision" }
+    /// What found the text, as recorded in reports: the detector, or `rules`.
+    var detectorIdentifier: String {
+        guard let textDetector, textRecognizer != nil else { return "rules" }
+        return textDetector.identifier
+    }
 
     /// Reads bubbles with Vision and column reflow even when a recogniser model is bundled.
     static func vision() -> MangaPageTextExtractor {
         var extractor = MangaPageTextExtractor()
         extractor.textRecognizer = nil
+        extractor.textDetector = nil
+        return extractor
+    }
+
+    /// Finds bubbles by rule even when the detector is bundled.
+    static func rules() -> MangaPageTextExtractor {
+        var extractor = MangaPageTextExtractor()
+        extractor.textDetector = nil
         return extractor
     }
 
@@ -72,7 +102,7 @@ nonisolated struct MangaPageTextExtractor: Sendable {
     nonisolated struct StageTimings: Codable, Sendable, Equatable {
         /// Grayscale copy of the page.
         var preparation = 0
-        /// Bubble detection and line segmentation.
+        /// Finding the text: the detector, or bubble detection and line segmentation.
         var detection = 0
         /// Reading the bubbles, with the model or with Vision.
         var bubbleReading = 0
@@ -116,6 +146,13 @@ nonisolated struct MangaPageTextExtractor: Sendable {
         stages.preparation = lap()
         let size = CGSize(width: bitmap.width, height: bitmap.height)
         try Task.checkCancellation()
+
+        if let textDetector, let textRecognizer {
+            let blocks = try readDetectedText(
+                page: image, bitmap: bitmap, detector: textDetector, recognizer: textRecognizer, stages: &stages, lap: lap
+            )
+            return (blocks, stages)
+        }
 
         // Each bubble's plausible arrangements, most likely first.
         let detected = bubbleDetector.detect(in: bitmap)
