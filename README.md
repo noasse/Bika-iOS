@@ -30,7 +30,7 @@ Current versions:
 
 | Platform | Version | Package |
 | --- | --- | --- |
-| iOS | `v1.2.1` | Unsigned IPA |
+| iOS | `v1.3.0` | Unsigned IPA |
 | macOS | `v1.0` | DMG |
 
 Download both platforms from [GitHub Releases](https://github.com/noasse/Bika-iOS/releases).
@@ -70,6 +70,7 @@ Bika is built around real reading workflows instead of isolated UI demos. It cov
 | Community | Browse comments and child comments, with like and reply actions wired into the app flow. |
 | Library | Manage favourites, reading history, theme mode, image quality, and content filtering settings. |
 | Cloud Sync | Optionally sync history between iOS and macOS through a private self-hosted HTTPS endpoint. |
+| Manga Translation (experimental) | iOS 26+: find the Japanese text on raw pages, translate it on device into Simplified Chinese or English, and show it in place. Off by default. |
 | macOS | Use sidebar navigation, reader windows, waterfall reading, touchpad-friendly paging, per-page pinch zoom, and independent comments. |
 
 ## Architecture
@@ -113,6 +114,22 @@ Cloud history sync is disabled by default and stores no server details in the re
 
 - [CloudHistorySync.swift](bika/Support/CloudHistorySync.swift)
 - [CLOUD_HISTORY_SYNC.md](CLOUD_HISTORY_SYNC.md)
+
+### Manga Translation (Experimental)
+
+Off by default in settings. With it on, a target language chosen and the system language pack downloaded, the reader's top-bar "翻译" switch translates the Japanese on each page and draws it over the original (the reader always opens on the original). Everything runs on device; no image leaves the phone:
+
+1. Finding text: [comic-text-and-bubble-detector](https://huggingface.co/ogkalu/comic-text-and-bubble-detector) (Apache-2.0) boxes text inside and outside bubbles.
+2. Reading it: [manga-ocr](https://huggingface.co/kha-white/manga-ocr-base) (Apache-2.0) reads vertical, multi-column and furigana text directly.
+3. Translating: the system Translation framework (sessions outside a view need iOS 26), cached per page.
+4. Showing: the original is painted over in the bubble's own tone and the translation set to fit, zooming with the page.
+
+The two models (about 290 MB) are **not committed**; convert them locally before building, as described in [tools/models/README.md](tools/models/README.md). Without them recognition falls back to the rule-based + Vision path. System translation is unavailable in the simulator, so real translations can only be seen on a device.
+
+- [MangaPageTextExtractor.swift](bika/Support/MangaTranslation/MangaPageTextExtractor.swift)
+- [MangaPageTranslator.swift](bika/Support/MangaTranslation/MangaPageTranslator.swift)
+- [MangaTranslationOverlayView.swift](bika/Views/Helpers/MangaTranslationOverlayView.swift)
+- [Engineering design and progress (Chinese)](docs/translation/2026-10-07-manga-translation-engineering-plan.md)
 
 ### macOS Target
 
