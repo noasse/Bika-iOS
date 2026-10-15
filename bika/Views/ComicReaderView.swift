@@ -458,6 +458,9 @@ struct ComicReaderView: View {
 #if DEBUG
                 Menu {
                     Toggle("显示识别框", isOn: $debugRecognizesText)
+                        .onChange(of: debugRecognizesText) { _, isOn in
+                            if isOn { MangaPageTextExtractor.preloadModels() }
+                        }
                     Button("识别并导出本章") {
                         startRecognitionReport()
                     }
@@ -559,6 +562,7 @@ extension ComicReaderView {
     /// run continues; cancelling, or leaving the reader, stops it without exporting.
     private func startRecognitionReport() {
         guard recognitionReportTask == nil else { return }
+        MangaPageTextExtractor.preloadModels()
         guard let episode = viewModel.currentEpisode,
               !viewModel.pages.isEmpty,
               let target = readerDecodeTarget() else {

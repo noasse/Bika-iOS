@@ -176,7 +176,12 @@ nonisolated struct JapaneseTextRecognizer: Sendable {
     /// that count. Ordinary dialogue punctuation does not count either way — including the ASCII
     /// `?` and `!` Vision often returns for full-width ones — so a one-kana line like `は?`
     /// passes. Stray symbols count against; digits count half, since dialogue does use them.
+    ///
+    /// A reading made only of small kana and the long-vowel mark (`ーッ`, `ッ♥`) is not
+    /// kept either: on a device run with the text detector, those were the tail of a drawn-out
+    /// cry whose lettering the recogniser read only the end of — nothing to translate.
     static func looksLikeJapanese(_ text: String, minimumRatio: Double = 0.6) -> Bool {
+        guard text.contains(where: { isJapanese($0) && !soundTails.contains($0) }) else { return false }
         let counts = characterCounts(text)
         guard counts.japanese >= 1 else { return false }
         return counts.japanese / (counts.japanese + counts.foreign) >= minimumRatio
@@ -210,6 +215,12 @@ nonisolated struct JapaneseTextRecognizer: Sendable {
         "…", "⋯", "‥", "・", "･", "ー", "〜", "~", "、", "。", "，", "．",
         "！", "？", "!", "?", "「", "」", "『", "』", "（", "）", "(", ")", "～",
         "♡", "♥", "♪", "☆", "★", "―", "—",
+    ]
+
+    /// Kana that only extend or cut short the sound before them.
+    private static let soundTails: Set<Character> = [
+        "ッ", "っ", "ァ", "ィ", "ゥ", "ェ", "ォ", "ぁ", "ぃ", "ぅ", "ぇ", "ぉ",
+        "ャ", "ュ", "ョ", "ゃ", "ゅ", "ょ", "ヮ", "ゎ", "ー",
     ]
 
     private static let verticalBarLookalikes: Set<Character> = ["|", "｜", "丨", "l", "I", "1", "︱"]

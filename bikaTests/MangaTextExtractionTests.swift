@@ -216,7 +216,8 @@ final class MangaTextExtractionTests: XCTestCase {
     // numbers) that the bubble detector took for bubbles. Synthetic faces could not reproduce
     // that — Vision returns nothing for them — so the filter is tested on the strings directly.
     func testRejectsTextThatIsNotJapanese() {
-        for garbage in ["し?,", "•…", "12/", "1X", "0.", "6", "※", "、//はい)", "…", "ー"] {
+        // The last few: the tail of a drawn-out cry, read alone off a device page.
+        for garbage in ["し?,", "•…", "12/", "1X", "0.", "6", "※", "、//はい)", "…", "ー", "ーッ", "ーッ♥", "…ッ♥", "っ"] {
             XCTAssertFalse(
                 JapaneseTextRecognizer.looksLikeJapanese(JapaneseTextRecognizer.collapsingDotRuns(garbage)),
                 "\(garbage) should be rejected"
@@ -225,7 +226,7 @@ final class MangaTextExtractionTests: XCTestCase {
     }
 
     func testKeepsShortAndPunctuatedJapanese() {
-        for line in ["は?", "え!?", "本当に?", "そうか…", "…ハハ…", "あと10分", "待ってくれ"] {
+        for line in ["は?", "え!?", "本当に?", "そうか…", "…ハハ…", "あと10分", "待ってくれ", "あーーッ", "んっ", "ひゃッ"] {
             XCTAssertTrue(JapaneseTextRecognizer.looksLikeJapanese(line), "\(line) should be kept")
         }
     }

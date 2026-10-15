@@ -16,8 +16,9 @@ nonisolated struct MangaPageTextExtractor: Sendable {
     /// 4 flat-fill bubbles, free horizontal text, across-column misread filter ·
     /// 5 bubbles read by manga-ocr when bundled ·
     /// 6 model threshold calibrated on a device, overlapping duplicates removed, rects clipped ·
-    /// 7 text found by a trained detector when bundled.
-    static let pipelineVersion = 7
+    /// 7 text found by a trained detector when bundled · 8 readings of only small kana and
+    /// long-vowel marks dropped.
+    static let pipelineVersion = 8
 
     nonisolated struct Configuration: Sendable {
         /// Analysis happens on a copy whose long side is at most this many pixels.
@@ -87,6 +88,20 @@ nonisolated struct MangaPageTextExtractor: Sendable {
         extractor.textRecognizer = nil
         extractor.textDetector = nil
         return extractor
+    }
+
+    /// Starts loading the bundled models, side by side, without waiting for them.
+    ///
+    /// Each takes seconds to load and warm up (5.3 s and 6.0 s on a device), and the first
+    /// extractor otherwise loads them one after the other while the first page waits. Call
+    /// when recognition is about to be wanted; extractors created meanwhile wait for the load
+    /// in progress rather than starting another.
+    static func preloadModels() {
+        DispatchQueue.global(qos: .utility).async {
+            DispatchQueue.concurrentPerform(iterations: 2) { index in
+                if index == 0 { _ = MangaOCRRecognizer.loaded } else { _ = ComicTextDetector.loaded }
+            }
+        }
     }
 
     /// Finds bubbles by rule even when the detector is bundled.
